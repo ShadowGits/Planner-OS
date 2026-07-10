@@ -8,7 +8,14 @@ from typing import Any
 from openpyxl.workbook.workbook import Workbook
 
 from planner_engine.excel import ExcelPlannerStore
-from planner_engine.models import CellUpdate, WriteResult
+from planner_engine.models import (
+    CellUpdate,
+    MonthPlan,
+    MonthlyGoal,
+    PlannerTask,
+    WeekSection,
+    WriteResult,
+)
 
 
 class PlannerEngine:
@@ -39,3 +46,28 @@ class PlannerEngine:
         backup_path = self.backup()
         self.store.write_cell(update.sheet, update.cell, update.value)
         return WriteResult(backup_path=backup_path, update=update)
+
+    def list_months(self) -> list[str]:
+        """List available planner months."""
+
+        return self.store.list_months()
+
+    def get_month_plan(self, month: str) -> MonthPlan:
+        """Read a parsed month plan."""
+
+        return self.store.read_month_plan(month)
+
+    def get_monthly_goals(self, month: str) -> list[MonthlyGoal]:
+        """Read parsed monthly goals."""
+
+        return self.store.read_monthly_goals(month)
+
+    def get_week_sections(self, month: str) -> list[WeekSection]:
+        """Read parsed weekly sections."""
+
+        return self.store.read_week_sections(month)
+
+    def find_task(self, month: str, task_name: str) -> PlannerTask | MonthlyGoal | None:
+        """Find a task or goal by case-insensitive name."""
+
+        return self.store.find_task(month, task_name)
