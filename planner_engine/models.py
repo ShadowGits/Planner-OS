@@ -1,6 +1,7 @@
 """Typed models used by the Planner Engine."""
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,71 @@ class MonthPlan:
     sheet_name: str
     monthly_goals: list[MonthlyGoal]
     week_sections: list[WeekSection]
+
+
+@dataclass(frozen=True)
+class FixedCommitment:
+    """An immovable calendar commitment supplied to the scheduler."""
+
+    title: str
+    start: datetime
+    end: datetime
+    category: str = "fixed"
+    notes: str | None = None
+
+
+@dataclass(frozen=True)
+class SchedulingConflict:
+    """A structured scheduling issue that needs attention."""
+
+    reason: str
+    item: str
+    date: date | None = None
+    severity: str = "warning"
+
+
+@dataclass(frozen=True)
+class ScheduledBlock:
+    """A scheduled time block in a daily or weekly plan."""
+
+    title: str
+    start: datetime
+    end: datetime
+    category: str
+    source: str
+    is_fixed: bool = False
+    priority: Priority = Priority.UNKNOWN
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class DailyPlan:
+    """A scheduled plan for one date."""
+
+    date: date
+    blocks: list[ScheduledBlock]
+    conflicts: list[SchedulingConflict]
+
+
+@dataclass(frozen=True)
+class WeeklyPlan:
+    """A scheduled plan for a week."""
+
+    week_start: date
+    days: list[DailyPlan]
+    conflicts: list[SchedulingConflict]
+
+
+@dataclass(frozen=True)
+class SchedulingRequest:
+    """Inputs for producing a day or week schedule."""
+
+    month_plan: MonthPlan
+    target_date: date | None = None
+    target_week_start: date | None = None
+    fixed_commitments: list[FixedCommitment] | None = None
+    context_overrides: dict[str, Any] | None = None
+    unfinished_tasks: list[PlannerTask | MonthlyGoal] | None = None
 
 
 @dataclass(frozen=True)
