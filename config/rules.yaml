@@ -1,0 +1,51 @@
+profile:
+  name: Shadow
+  timezone: Asia/Kolkata
+  location: Gurgaon, India
+
+sleep:
+  start: "03:00"
+  end: "09:30"
+
+work:
+  july_august:
+    start: "11:00"
+    end: "19:00"
+  september_onward:
+    start: "20:30"
+    end: "03:30"
+
+gym:
+  sessions_per_week: 9
+  double_class_days_per_week: 3
+  single_class_days_per_week: 3
+  one_class_equals_one_session: true
+  dance_forbidden_days:
+    - Tuesday
+    - Wednesday
+
+german:
+  frequency: daily
+  allow_breaks: false
+
+ielts:
+  sessions_per_week: 2
+
+ignou:
+  sessions_per_week_min: 2
+  sessions_per_week_max: 3
+
+piano:
+  duration_minutes: 60
+
+reading:
+  preferred_time: evening
+
+planning:
+  excel_is_source_of_truth: true
+  edit_immediately: true
+  backup_before_write: true
+  move_unfinished_tasks_instead_of_deleting: true
+  daily_follow_up: true
+  alert_on_weekly_slippage: true
+  alert_on_monthly_slippage: true
