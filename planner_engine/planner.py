@@ -34,6 +34,11 @@ class PlannerEngine:
 
         return self.store.create_backup()
 
+    def restore_backup(self, backup_path: str | Path) -> None:
+        """Restore the planner workbook from a backup path."""
+
+        self.store.restore_backup(backup_path)
+
     def read_cell(self, sheet: str, cell: str) -> Any:
         """Read a value from a planner cell."""
 
@@ -47,23 +52,48 @@ class PlannerEngine:
         self.store.write_cell(update.sheet, update.cell, update.value)
         return WriteResult(backup_path=backup_path, update=update)
 
+    def _write_cells_without_backup(self, updates: list[CellUpdate]) -> None:
+        """Write multiple cell updates after the caller has handled backup safety."""
+
+        self.store.write_cells(
+            [(update.sheet, update.cell, update.value) for update in updates]
+        )
+
     def append_monthly_goals(
         self,
         month: str,
         goals: list[dict[str, Any]],
     ) -> int:
-        """Append monthly goals without creating a backup."""
+        """Back up the planner, then append monthly goals."""
 
         return self.store.append_monthly_goals(month, goals)
+
+    def _append_monthly_goals_without_backup(
+        self,
+        month: str,
+        goals: list[dict[str, Any]],
+    ) -> int:
+        """Append monthly goals after the caller has handled backup safety."""
+
+        return self.store._append_monthly_goals_without_backup(month, goals)
 
     def append_weekly_tasks(
         self,
         month: str,
         week_tasks: list[dict[str, Any]],
     ) -> int:
-        """Append weekly tasks without creating a backup."""
+        """Back up the planner, then append weekly tasks."""
 
         return self.store.append_weekly_tasks(month, week_tasks)
+
+    def _append_weekly_tasks_without_backup(
+        self,
+        month: str,
+        week_tasks: list[dict[str, Any]],
+    ) -> int:
+        """Append weekly tasks after the caller has handled backup safety."""
+
+        return self.store._append_weekly_tasks_without_backup(month, week_tasks)
 
     def list_months(self) -> list[str]:
         """List available planner months."""

@@ -121,6 +121,38 @@ def importer_for(planner_path: Path, backup_dir: Path) -> PlannerImporter:
 class PlannerImporterTests(TestCase):
     """Tests for structured JSON planner imports."""
 
+    def test_public_monthly_goal_append_creates_one_backup(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            backup_dir = tmp_path / "backups"
+            create_import_workbook(planner_path)
+            engine = PlannerEngine(ExcelPlannerStore(planner_path, backup_dir))
+
+            imported = engine.append_monthly_goals(
+                "Jul 2026",
+                valid_document()["monthly_goals"],
+            )
+
+            self.assertEqual(imported, 1)
+            self.assertEqual(len(list(backup_dir.glob("*.xlsx"))), 1)
+
+    def test_public_weekly_task_append_creates_one_backup(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            backup_dir = tmp_path / "backups"
+            create_import_workbook(planner_path)
+            engine = PlannerEngine(ExcelPlannerStore(planner_path, backup_dir))
+
+            imported = engine.append_weekly_tasks(
+                "Jul 2026",
+                [{"week": 2, **valid_document()["weeks"][0]["tasks"][0]}],
+            )
+
+            self.assertEqual(imported, 1)
+            self.assertEqual(len(list(backup_dir.glob("*.xlsx"))), 1)
+
     def test_valid_import(self) -> None:
         with TemporaryDirectory() as directory:
             tmp_path = Path(directory)
@@ -244,7 +276,7 @@ class PlannerImporterTests(TestCase):
             def fail_weekly_tasks(month: str, week_tasks: list[dict]) -> int:
                 raise RuntimeError("forced failure")
 
-            engine.append_weekly_tasks = fail_weekly_tasks  # type: ignore[method-assign]
+            engine._append_weekly_tasks_without_backup = fail_weekly_tasks  # type: ignore[method-assign]
             result = PlannerImporter(engine).import_document(valid_document())
 
             self.assertFalse(result.success)

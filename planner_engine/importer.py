@@ -90,8 +90,14 @@ class PlannerImporter:
 
         backup_path = self.engine.backup()
         try:
-            goals_imported = self.engine.append_monthly_goals(month, prepared_goals)
-            tasks_imported = self.engine.append_weekly_tasks(month, prepared_tasks)
+            goals_imported = self.engine._append_monthly_goals_without_backup(
+                month,
+                prepared_goals,
+            )
+            tasks_imported = self.engine._append_weekly_tasks_without_backup(
+                month,
+                prepared_tasks,
+            )
             return ImportResult(
                 goals_imported=goals_imported,
                 tasks_imported=tasks_imported,

@@ -28,6 +28,7 @@ from planner_engine.progress import (
 )
 from planner_engine.rules import RulesEngine, RulesValidationError
 from planner_engine.scheduler import SchedulerEngine
+from planner_engine.writer import Writer, WriterResult
 
 __all__ = [
     "ExcelPlannerStore",
@@ -57,4 +58,6 @@ __all__ = [
     "WeeklyPlan",
     "WeeklyProgress",
     "WeekSection",
+    "Writer",
+    "WriterResult",
 ]

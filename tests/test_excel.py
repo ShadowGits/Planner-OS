@@ -64,6 +64,21 @@ class ExcelPlannerStoreTests(TestCase):
             finally:
                 backup_workbook.close()
 
+    def test_rapid_backups_have_unique_filenames(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            backup_dir = tmp_path / "backups"
+            create_workbook(planner_path)
+            store = ExcelPlannerStore(planner_path, backup_dir)
+
+            backup_paths = [store.create_backup() for _ in range(5)]
+
+            self.assertEqual(len(set(backup_paths)), 5)
+            self.assertEqual(len(list(backup_dir.glob("*.xlsx"))), 5)
+            for backup_path in backup_paths:
+                self.assertTrue(backup_path.exists())
+
     def test_original_formatting_is_preserved_after_write(self) -> None:
         with TemporaryDirectory() as directory:
             tmp_path = Path(directory)
