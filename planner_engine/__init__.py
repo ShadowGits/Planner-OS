@@ -17,6 +17,15 @@ from planner_engine.models import (
     WeekSection,
 )
 from planner_engine.planner import PlannerEngine
+from planner_engine.progress import (
+    DailyProgress,
+    MonthlyProgress,
+    ProgressAlert,
+    ProgressEngine,
+    Streak,
+    TaskExecution,
+    WeeklyProgress,
+)
 from planner_engine.rules import RulesEngine, RulesValidationError
 from planner_engine.scheduler import SchedulerEngine
 
@@ -24,21 +33,28 @@ __all__ = [
     "ExcelPlannerStore",
     "ImportResult",
     "DailyPlan",
+    "DailyProgress",
     "FixedCommitment",
     "MonthPlan",
     "MonthlyGoal",
+    "MonthlyProgress",
     "PlannerTask",
     "PlannerEngine",
     "PlannerImporter",
     "PlannerWorkbookError",
     "Priority",
+    "ProgressAlert",
+    "ProgressEngine",
     "RulesEngine",
     "RulesValidationError",
     "ScheduledBlock",
     "SchedulerEngine",
     "SchedulingConflict",
     "SchedulingRequest",
+    "Streak",
     "TaskStatus",
+    "TaskExecution",
     "WeeklyPlan",
+    "WeeklyProgress",
     "WeekSection",
 ]
