@@ -1,0 +1,283 @@
+{
+  "month": "Jul 2026",
+  "monthly_goals": [
+    {
+      "goal": "Complete A1 German module (Babbel)",
+      "category": "Learning",
+      "priority": "High",
+      "target_week": "W2-W5",
+      "status": "In Progress",
+      "notes": ""
+    },
+    {
+      "goal": "Finish Dark Forest (Book 2)",
+      "category": "Reading",
+      "priority": "Medium",
+      "target_week": "W2-W4",
+      "status": "In Progress",
+      "notes": ""
+    },
+    {
+      "goal": "Finish God Delusion",
+      "category": "Reading",
+      "priority": "Medium",
+      "target_week": "W3-W5",
+      "status": "Not Started",
+      "notes": ""
+    },
+    {
+      "goal": "Gym 9 sessions/week (3 double-class days and 3 single-class days)",
+      "category": "Fitness",
+      "priority": "High",
+      "target_week": "W2-W5",
+      "status": "In Progress",
+      "notes": ""
+    },
+    {
+      "goal": "Piano 60 minutes daily",
+      "category": "Skill",
+      "priority": "Medium",
+      "target_week": "W2-W5",
+      "status": "In Progress",
+      "notes": ""
+    },
+    {
+      "goal": "IELTS prep - start structured study",
+      "category": "Learning",
+      "priority": "High",
+      "target_week": "W2-W5",
+      "status": "Not Started",
+      "notes": ""
+    },
+    {
+      "goal": "IGNOU PGDAST Block 1 maths",
+      "category": "Study",
+      "priority": "High",
+      "target_week": "W2-W4",
+      "status": "Not Started",
+      "notes": ""
+    },
+    {
+      "goal": "Germany college shortlist (5+ universities)",
+      "category": "Planning",
+      "priority": "High",
+      "target_week": "W3-W4",
+      "status": "Not Started",
+      "notes": ""
+    }
+  ],
+  "weeks": [
+    {
+      "week": 2,
+      "tasks": [
+        {
+          "task": "German: Babbel A1 Units 3-4",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Read Dark Forest chapters 1-10",
+          "category": "Reading",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IELTS: Diagnostic test + plan",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IGNOU Block 1: Unit 1 start",
+          "category": "Study",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Piano 60 minutes",
+          "category": "Skill",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: Fri 5 PM HRX",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: Fri 6:30 PM Dance",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: Sat 5 PM Strength",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: Sat 6:30 PM Dance",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: Sun 6 PM HRX",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "week": 3,
+      "tasks": [
+        {
+          "task": "German: Babbel A1 Units 5-6",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Read Dark Forest chapters 11-20",
+          "category": "Reading",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IELTS: Listening practice",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IELTS: Reading practice",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IGNOU Block 1: Units 2-3",
+          "category": "Study",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Piano 60 minutes daily",
+          "category": "Skill",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: 9 sessions across 3 double and 3 single days",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "week": 4,
+      "tasks": [
+        {
+          "task": "German: Babbel A1 Units 7-8",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Finish Dark Forest",
+          "category": "Reading",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IELTS: Writing introduction",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IELTS: Speaking introduction",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IGNOU Block 1: Units 4-5",
+          "category": "Study",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Piano 60 minutes daily",
+          "category": "Skill",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: 9 sessions across 3 double and 3 single days",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Germany: Finalize 5+ university shortlist",
+          "category": "Planning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Start God Delusion chapters 1-5",
+          "category": "Reading",
+          "status": "Not Started",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "week": 5,
+      "tasks": [
+        {
+          "task": "German: Babbel A1 Units 9-10 - finish A1",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "God Delusion chapters 6-12",
+          "category": "Reading",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IELTS: Full mock test",
+          "category": "Learning",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "IGNOU Block 1: Review and wrap up",
+          "category": "Study",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Piano 60 minutes daily",
+          "category": "Skill",
+          "status": "Not Started",
+          "notes": ""
+        },
+        {
+          "task": "Gym: 9 sessions across 3 double and 3 single days",
+          "category": "Fitness",
+          "status": "Not Started",
+          "notes": ""
+        }
+      ]
+    }
+  ]
+}

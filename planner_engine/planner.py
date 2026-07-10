@@ -47,6 +47,24 @@ class PlannerEngine:
         self.store.write_cell(update.sheet, update.cell, update.value)
         return WriteResult(backup_path=backup_path, update=update)
 
+    def append_monthly_goals(
+        self,
+        month: str,
+        goals: list[dict[str, Any]],
+    ) -> int:
+        """Append monthly goals without creating a backup."""
+
+        return self.store.append_monthly_goals(month, goals)
+
+    def append_weekly_tasks(
+        self,
+        month: str,
+        week_tasks: list[dict[str, Any]],
+    ) -> int:
+        """Append weekly tasks without creating a backup."""
+
+        return self.store.append_weekly_tasks(month, week_tasks)
+
     def list_months(self) -> list[str]:
         """List available planner months."""
 

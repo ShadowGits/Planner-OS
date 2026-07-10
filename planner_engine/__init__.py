@@ -1,6 +1,7 @@
 """Planner Engine package for workbook-backed planning."""
 
 from planner_engine.excel import ExcelPlannerStore, PlannerWorkbookError
+from planner_engine.importer import ImportResult, PlannerImporter
 from planner_engine.models import (
     DailyPlan,
     FixedCommitment,
@@ -21,12 +22,14 @@ from planner_engine.scheduler import SchedulerEngine
 
 __all__ = [
     "ExcelPlannerStore",
+    "ImportResult",
     "DailyPlan",
     "FixedCommitment",
     "MonthPlan",
     "MonthlyGoal",
     "PlannerTask",
     "PlannerEngine",
+    "PlannerImporter",
     "PlannerWorkbookError",
     "Priority",
     "RulesEngine",
