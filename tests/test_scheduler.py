@@ -1,7 +1,9 @@
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 
+from planner_engine.decision_log import DecisionLog
 from planner_engine import (
     FixedCommitment,
     MonthPlan,
@@ -98,8 +100,29 @@ def assert_no_overlaps(test_case: TestCase, blocks) -> None:
 class SchedulerEngineTests(TestCase):
     """Tests for Scheduler Engine v1 guardrails."""
 
+    def setUp(self) -> None:
+        self._tmp_directory = TemporaryDirectory()
+        self.decision_log = DecisionLog(
+            Path(self._tmp_directory.name) / "decision_log.jsonl"
+        )
+
+    def tearDown(self) -> None:
+        self._tmp_directory.cleanup()
+
+    def scheduler(
+        self,
+        durations: dict[str, int] | None = None,
+    ) -> SchedulerEngine:
+        """Create a scheduler with an isolated decision log."""
+
+        return SchedulerEngine(
+            rules_engine(),
+            durations=durations,
+            decision_log=self.decision_log,
+        )
+
     def test_weekly_recurring_rules_are_scheduled(self) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
 
         plan = scheduler.plan_week(month_plan(), date(2026, 7, 6))
 
@@ -120,7 +143,7 @@ class SchedulerEngineTests(TestCase):
     def test_gym_target_uses_three_double_and_three_single_days_without_forbidden_dance(
         self,
     ) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
 
         plan = scheduler.plan_week(month_plan(), date(2026, 7, 6))
 
@@ -146,7 +169,7 @@ class SchedulerEngineTests(TestCase):
         )
 
     def test_work_sleep_and_no_overlaps_are_protected(self) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
 
         plan = scheduler.plan_week(month_plan(), date(2026, 7, 6))
 
@@ -162,7 +185,7 @@ class SchedulerEngineTests(TestCase):
             assert_no_overlaps(self, day.blocks)
 
     def test_reading_prefers_evening(self) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
 
         plan = scheduler.plan_week(month_plan(), date(2026, 7, 6))
 
@@ -172,7 +195,7 @@ class SchedulerEngineTests(TestCase):
     def test_fixed_commitments_are_preserved_and_unfinished_tasks_rescheduled(
         self,
     ) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
         appointment = FixedCommitment(
             title="Dentist",
             start=datetime(2026, 7, 6, 9, 45),
@@ -210,10 +233,7 @@ class SchedulerEngineTests(TestCase):
         self.assertTrue(any(block.title == "Carry over admin" for block in plan.blocks))
 
     def test_high_priority_unschedulable_task_creates_conflict(self) -> None:
-        scheduler = SchedulerEngine(
-            rules_engine(),
-            durations={"monthly_goal": 24 * 60},
-        )
+        scheduler = self.scheduler(durations={"monthly_goal": 24 * 60})
 
         plan = scheduler.plan_day(month_plan(), date(2026, 7, 6))
 
@@ -226,7 +246,7 @@ class SchedulerEngineTests(TestCase):
         )
 
     def test_september_overnight_work_hours_are_handled(self) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
 
         plan = scheduler.plan_day(month_plan(), date(2026, 9, 7))
 
@@ -236,7 +256,7 @@ class SchedulerEngineTests(TestCase):
         assert_no_overlaps(self, plan.blocks)
 
     def test_cross_midnight_commitments_are_preserved(self) -> None:
-        scheduler = SchedulerEngine(rules_engine())
+        scheduler = self.scheduler()
         commitment = FixedCommitment(
             title="Late social event",
             start=datetime(2026, 7, 10, 22, 0),

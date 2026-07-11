@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from planner_engine.decision_log import DecisionLog, DecisionOutcome
 from planner_engine.models import CellUpdate, MonthlyGoal, PlannerTask, Priority, TaskStatus
 from planner_engine.planner import PlannerEngine
 from planner_engine.progress import ProgressEngine, TaskExecution
@@ -44,6 +45,7 @@ class WriterResult:
     updated_fields: tuple[str, ...] = ()
     progress_execution: TaskExecution | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
 
 
 class Writer:
@@ -53,9 +55,11 @@ class Writer:
         self,
         engine: PlannerEngine,
         progress_engine: ProgressEngine | None = None,
+        decision_log: DecisionLog | None = None,
     ) -> None:
         self.engine = engine
         self.progress_engine = progress_engine or ProgressEngine()
+        self.decision_log = decision_log or DecisionLog()
 
     def add_monthly_goal(
         self,
@@ -107,6 +111,8 @@ class Writer:
                 [payload],
             ),
             updated_fields=("goal", "category", "priority", "target_week", "status", "notes"),
+            reason="Add monthly goal through Semantic Writer",
+            constraints_considered=("semantic write", "backup before mutation"),
         )
 
     def add_weekly_task(
@@ -158,6 +164,9 @@ class Writer:
                 [payload],
             ),
             updated_fields=("task", "category", "status", "notes"),
+            reason="Add weekly task through Semantic Writer",
+            constraints_considered=("semantic write", "backup before mutation"),
+            metadata={"week": week},
         )
 
     def update_task(
@@ -219,7 +228,13 @@ class Writer:
             )
         except ValueError as error:
             return self._failure(operation, task.name, [str(error)])
-        return self._write_updates(operation, task.name, updates)
+        return self._write_updates(
+            operation,
+            task.name,
+            updates,
+            reason="Update task through Semantic Writer",
+            constraints_considered=("semantic write", "backup before mutation"),
+        )
 
     def complete_task(
         self,
@@ -257,6 +272,7 @@ class Writer:
             updated_fields=result.updated_fields,
             progress_execution=execution,
             metadata=result.metadata,
+            warnings=result.warnings,
         )
 
     def move_task(
@@ -323,6 +339,12 @@ class Writer:
             action=action,
             updated_fields=("week", "task", "category", "status", "notes"),
             metadata={"destination_week": destination_week},
+            reason="Move unfinished task instead of deleting it",
+            constraints_considered=(
+                "preserve metadata",
+                "preserve notes",
+                "backup before mutation",
+            ),
         )
 
     def delete_task(self, month: str, task_name: str) -> WriterResult:
@@ -338,6 +360,8 @@ class Writer:
             task.name,
             self._clear_updates_for_item(task),
             updated_fields=tuple(task.cell_references),
+            reason="Delete task through Semantic Writer",
+            constraints_considered=("semantic write", "backup before mutation"),
         )
 
     def _write_updates(
@@ -346,6 +370,8 @@ class Writer:
         item_name: str,
         updates: list[CellUpdate],
         updated_fields: tuple[str, ...] | None = None,
+        reason: str = "Write task fields through Semantic Writer",
+        constraints_considered: tuple[str, ...] = ("semantic write",),
     ) -> WriterResult:
         """Back up once, write a batch of cell updates, and roll back on failure."""
 
@@ -362,6 +388,8 @@ class Writer:
             item_name=item_name,
             action=lambda: self.engine._write_cells_without_backup(updates),
             updated_fields=updated_fields or tuple(self._field_name(update) for update in updates),
+            reason=reason,
+            constraints_considered=constraints_considered,
         )
 
     def _with_backup(
@@ -371,6 +399,8 @@ class Writer:
         action: Any,
         updated_fields: tuple[str, ...],
         metadata: dict[str, Any] | None = None,
+        reason: str = "Planner mutation through Semantic Writer",
+        constraints_considered: tuple[str, ...] = ("semantic write",),
     ) -> WriterResult:
         """Execute a write operation with one backup and rollback on failure."""
 
@@ -387,6 +417,19 @@ class Writer:
                 metadata=metadata,
             )
 
+        warnings = self._record_decision(
+            action=operation,
+            reason=reason,
+            affected_tasks=[item_name],
+            constraints_considered=list(constraints_considered),
+            outcome=DecisionOutcome.SUCCESS,
+            backup_path=backup_path,
+            metadata={
+                "updated_fields": list(updated_fields),
+                **(metadata or {}),
+            },
+        )
+
         return WriterResult(
             operation=operation,
             success=True,
@@ -394,7 +437,36 @@ class Writer:
             backup_path=backup_path,
             updated_fields=updated_fields,
             metadata=metadata or {},
+            warnings=tuple(warnings),
         )
+
+    def _record_decision(
+        self,
+        *,
+        action: str,
+        reason: str,
+        affected_tasks: list[str],
+        constraints_considered: list[str],
+        outcome: DecisionOutcome,
+        backup_path: Path | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[str]:
+        """Record a decision without breaking the planner action."""
+
+        try:
+            self.decision_log.record(
+                action=action,
+                reason=reason,
+                confidence=1.0,
+                affected_tasks=affected_tasks,
+                constraints_considered=constraints_considered,
+                outcome=outcome,
+                backup_path=backup_path,
+                metadata=metadata,
+            )
+        except Exception as error:
+            return [f"Decision log warning: {error}"]
+        return []
 
     def _updates_for_item(
         self,

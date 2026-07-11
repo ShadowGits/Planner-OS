@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+from planner_engine.decision_log import DecisionLog, DecisionOutcome
 from planner_engine.models import (
     DailyPlan,
     FixedCommitment,
@@ -42,9 +43,12 @@ class SchedulerEngine(
         self,
         rules_engine: RulesEngine,
         durations: dict[str, int] | None = None,
+        decision_log: DecisionLog | None = None,
     ) -> None:
         self.rules_engine = rules_engine
         self.durations = merged_durations(durations)
+        self.decision_log = decision_log or DecisionLog()
+        self.decision_log_warnings: list[str] = []
 
     def plan_day(
         self,
@@ -73,11 +77,26 @@ class SchedulerEngine(
         )
         blocks.extend(scheduled_blocks)
         conflicts.extend(placement_conflicts)
-        return DailyPlan(
+        plan = DailyPlan(
             date=target_date,
             blocks=self._sort_blocks(blocks),
             conflicts=conflicts,
         )
+        self._record_plan_decision(
+            action="plan_day",
+            reason="Generate daily plan from planner goals, rules, and constraints",
+            affected_tasks=[block.title for block in scheduled_blocks],
+            conflicts=conflicts,
+            metadata={
+                "date": target_date.isoformat(),
+                "blocks": len(plan.blocks),
+                "unfinished_tasks": [task.name for task in unfinished_tasks],
+                "moved_or_rescheduled_tasks": [
+                    task.name for task in unfinished_tasks
+                ],
+            },
+        )
+        return plan
 
     def plan_week(
         self,
@@ -127,8 +146,77 @@ class SchedulerEngine(
 
         weekly_conflicts = [conflict for day in days for conflict in day.conflicts]
         self._validate_weekly_gym_target(days, weekly_conflicts)
-        return WeeklyPlan(
+        plan = WeeklyPlan(
             week_start=target_week_start,
             days=days,
             conflicts=weekly_conflicts,
         )
+        self._record_plan_decision(
+            action="plan_week",
+            reason="Generate weekly plan from planner goals, rules, and constraints",
+            affected_tasks=[
+                block.title
+                for day in days
+                for block in day.blocks
+                if not block.is_fixed
+            ],
+            conflicts=weekly_conflicts,
+            metadata={
+                "week_start": target_week_start.isoformat(),
+                "days": len(days),
+                "blocks": sum(len(day.blocks) for day in days),
+                "unfinished_tasks": [task.name for task in unfinished_tasks],
+                "moved_or_rescheduled_tasks": [
+                    task.name for task in unfinished_tasks
+                ],
+            },
+        )
+        return plan
+
+    def _record_plan_decision(
+        self,
+        *,
+        action: str,
+        reason: str,
+        affected_tasks: list[str],
+        conflicts: list[SchedulingConflict],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Record scheduler decisions without affecting plan generation."""
+
+        try:
+            self.decision_log.record(
+                action=action,
+                reason=reason,
+                confidence=0.8,
+                affected_tasks=affected_tasks,
+                constraints_considered=[
+                    "sleep protection",
+                    "work hours",
+                    "recurring rules",
+                    "fixed commitments",
+                    "no overlap",
+                ],
+                outcome=(
+                    DecisionOutcome.WARNING
+                    if conflicts
+                    else DecisionOutcome.GENERATED
+                ),
+                metadata={
+                    **metadata,
+                    "conflicts": [
+                        {
+                            "item": conflict.item,
+                            "reason": conflict.reason,
+                            "severity": conflict.severity,
+                        }
+                        for conflict in conflicts
+                    ],
+                    "unscheduled_reasons": [
+                        f"{conflict.item}: {conflict.reason}"
+                        for conflict in conflicts
+                    ],
+                },
+            )
+        except Exception as error:
+            self.decision_log_warnings.append(f"Decision log warning: {error}")

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Iterator
 from unittest import TestCase
 
 from openpyxl import load_workbook
@@ -99,9 +102,10 @@ class PlannerMCPToolsTests(TestCase):
             create_writer_workbook(planner_path)
             tools = self._tools(tmp_path, planner_path)
 
-            validate = tools.validate()
-            plan = tools.plan_today()
-            status = tools.status()
+            with self._temporary_cwd(tmp_path):
+                validate = tools.validate()
+                plan = tools.plan_today()
+                status = tools.status()
 
             self.assertTrue(validate["success"])
             self.assertEqual(validate["message"], "Everything OK")
@@ -117,16 +121,17 @@ class PlannerMCPToolsTests(TestCase):
             create_writer_workbook(planner_path)
             tools = self._tools(tmp_path, planner_path)
 
-            complete = tools.complete_task("Existing Task")
-            add = tools.add_task(
-                task="MCP Task",
-                week=2,
-                category="Study",
-                notes="from mcp",
-            )
-            update = tools.update_task("MCP Task", status="In Progress")
-            move = tools.move_task("MCP Task", destination_week=1)
-            delete = tools.delete_task("MCP Task")
+            with self._temporary_cwd(tmp_path):
+                complete = tools.complete_task("Existing Task")
+                add = tools.add_task(
+                    task="MCP Task",
+                    week=2,
+                    category="Study",
+                    notes="from mcp",
+                )
+                update = tools.update_task("MCP Task", status="In Progress")
+                move = tools.move_task("MCP Task", destination_week=1)
+                delete = tools.delete_task("MCP Task")
 
             self.assertTrue(complete["success"])
             self.assertTrue(complete["data"]["progress_updated"])
@@ -181,7 +186,8 @@ class PlannerMCPToolsTests(TestCase):
             )
             tools = self._tools(tmp_path, planner_path)
 
-            result = tools.import_plan(str(input_path))
+            with self._temporary_cwd(tmp_path):
+                result = tools.import_plan(str(input_path))
 
             self.assertTrue(result["success"])
             self.assertEqual(result["data"]["goals_imported"], 1)
@@ -194,7 +200,8 @@ class PlannerMCPToolsTests(TestCase):
             create_writer_workbook(planner_path)
             tools = self._tools(tmp_path, planner_path)
 
-            result = tools.complete_task("Missing Task")
+            with self._temporary_cwd(tmp_path):
+                result = tools.complete_task("Missing Task")
 
             self.assertFalse(result["success"])
             self.assertIn("Task not found: Missing Task", result["errors"])
@@ -233,3 +240,12 @@ class PlannerMCPToolsTests(TestCase):
             return json.loads(line)
         except json.JSONDecodeError as error:
             self.fail(f"Non-JSON MCP stdout: {line!r}; error: {error}")
+
+    @contextmanager
+    def _temporary_cwd(self, path: Path) -> Iterator[None]:
+        original_cwd = Path.cwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(original_cwd)

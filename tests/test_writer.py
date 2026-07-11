@@ -10,6 +10,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from planner_engine import ExcelPlannerStore, PlannerEngine, ProgressEngine, Writer
+from planner_engine.decision_log import DecisionLog
 
 
 def create_writer_workbook(path: Path) -> None:
@@ -91,7 +92,8 @@ def writer_for(planner_path: Path, backup_dir: Path) -> tuple[Writer, ProgressEn
 
     progress = ProgressEngine()
     engine = PlannerEngine(ExcelPlannerStore(planner_path, backup_dir))
-    return Writer(engine, progress), progress
+    decision_log = DecisionLog(backup_dir.parent / "decision_log.jsonl")
+    return Writer(engine, progress, decision_log=decision_log), progress
 
 
 class SemanticWriterTests(TestCase):
@@ -281,7 +283,11 @@ class SemanticWriterTests(TestCase):
             create_writer_workbook(planner_path)
             progress = ProgressEngine()
             engine = PlannerEngine(ExcelPlannerStore(planner_path, backup_dir))
-            writer = Writer(engine, progress)
+            writer = Writer(
+                engine,
+                progress,
+                decision_log=DecisionLog(tmp_path / "decision_log.jsonl"),
+            )
             original_write = engine._write_cells_without_backup
 
             def fail_after_write(updates: list) -> None:

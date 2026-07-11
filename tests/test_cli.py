@@ -147,7 +147,7 @@ class ShadowCLITests(TestCase):
                 "Jul 2026",
                 *args,
             ],
-            cwd=repo_root,
+            cwd=tmp_path,
             env=env,
             check=False,
             capture_output=True,
