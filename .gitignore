@@ -4,3 +4,8 @@ __pycache__/
 .DS_Store
 backups/
 logs/*.jsonl
+credentials.json
+token.json
+.planner-os/
+*.credentials.json
+*.token.json

@@ -82,6 +82,8 @@ class PlannerMCPToolsTests(TestCase):
                     "move_task",
                     "delete_task",
                     "import_plan",
+                    "calendar_sync_today",
+                    "calendar_sync_week",
                 },
             )
         finally:

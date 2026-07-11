@@ -116,6 +116,20 @@ def import_plan(input_path: str) -> dict:
     return planner_tools.import_plan(input_path=input_path)
 
 
+@mcp.tool()
+def calendar_sync_today() -> dict:
+    """Generate today's plan and sync it to Google Calendar."""
+
+    return planner_tools.calendar_sync_today()
+
+
+@mcp.tool()
+def calendar_sync_week() -> dict:
+    """Generate this week's plan and sync it to Google Calendar."""
+
+    return planner_tools.calendar_sync_week()
+
+
 def main() -> None:
     """Run the MCP server over STDIO."""
 

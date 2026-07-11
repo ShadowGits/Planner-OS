@@ -14,6 +14,7 @@ from planner_engine.progress import ProgressEngine
 from planner_engine.rules import RulesEngine
 from planner_engine.scheduler import SchedulerEngine
 from planner_engine.writer import Writer, WriterResult
+from planner_integrations.google_calendar import GoogleCalendarClient
 from planner_mcp.models import PlannerMCPConfig, ToolResult
 
 
@@ -255,6 +256,45 @@ class PlannerMCPTools:
             },
         ).to_dict()
 
+    def calendar_sync_today(self) -> dict[str, Any]:
+        """Generate today's plan and sync it to Google Calendar."""
+
+        try:
+            today = date.today()
+            plan = SchedulerEngine(RulesEngine(self.config.rules_path)).plan_day(
+                self._month_plan(today),
+                today,
+            )
+            result = self._calendar_client().sync_plan(plan)
+            return ToolResult(
+                success=result.success,
+                message="Calendar sync complete" if result.success else "Calendar sync had errors",
+                data=result.to_dict(),
+                errors=result.errors,
+            ).to_dict()
+        except Exception as error:
+            return self._error("Could not sync today's calendar plan", error)
+
+    def calendar_sync_week(self) -> dict[str, Any]:
+        """Generate this week's plan and sync it to Google Calendar."""
+
+        try:
+            today = date.today()
+            week_start = today - timedelta(days=today.weekday())
+            plan = SchedulerEngine(RulesEngine(self.config.rules_path)).plan_week(
+                self._month_plan(today),
+                week_start,
+            )
+            result = self._calendar_client().sync_plan(plan)
+            return ToolResult(
+                success=result.success,
+                message="Calendar sync complete" if result.success else "Calendar sync had errors",
+                data=result.to_dict(),
+                errors=result.errors,
+            ).to_dict()
+        except Exception as error:
+            return self._error("Could not sync this week's calendar plan", error)
+
     def _planner_engine(self) -> PlannerEngine:
         """Create a workbook-backed PlannerEngine."""
 
@@ -269,6 +309,11 @@ class PlannerMCPTools:
         """Create a Semantic Writer."""
 
         return Writer(self._planner_engine(), ProgressEngine())
+
+    def _calendar_client(self) -> GoogleCalendarClient:
+        """Create the Google Calendar client."""
+
+        return GoogleCalendarClient()
 
     def _month_plan(self, target_date: date) -> MonthPlan:
         """Load the configured or inferred month plan."""
