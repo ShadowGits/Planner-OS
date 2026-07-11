@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Sequence
 
+from planner_engine.config import (
+    DEFAULT_BACKUP_DIR,
+    DEFAULT_PLANNER_PATH,
+    DEFAULT_RULES_PATH,
+)
 from planner_engine.excel import ExcelPlannerStore
 from planner_engine.importer import PlannerImporter
 from planner_engine.models import MonthPlan, MonthlyGoal, PlannerTask, TaskStatus
@@ -15,15 +20,6 @@ from planner_engine.progress import ProgressEngine
 from planner_engine.rules import RulesEngine
 from planner_engine.scheduler import SchedulerEngine
 from planner_engine.writer import Writer
-
-
-DEFAULT_PLANNER_PATH = Path(
-    "/Users/sparry00/Library/CloudStorage/"
-    "GoogleDrive-sparsh0304@gmail.com/My Drive/"
-    "Life tracking/Master_Planner_Jul26_Jun27.xlsx"
-)
-DEFAULT_BACKUP_DIR = Path("backups")
-DEFAULT_RULES_PATH = Path("config/rules.yaml")
 
 
 class ShadowCLI:
