@@ -10,6 +10,7 @@ from openpyxl.workbook.workbook import Workbook
 from planner_engine.excel import ExcelPlannerStore
 from planner_engine.models import (
     CellUpdate,
+    DatedTask,
     MonthPlan,
     MonthlyGoal,
     PlannerTask,
@@ -95,6 +96,15 @@ class PlannerEngine:
 
         return self.store._append_weekly_tasks_without_backup(month, week_tasks)
 
+    def _append_dated_tasks_without_backup(
+        self,
+        month: str,
+        dated_tasks: list[dict[str, Any]],
+    ) -> int:
+        """Append exact-date tasks after Semantic Writer backup handling."""
+
+        return self.store._append_dated_tasks_without_backup(month, dated_tasks)
+
     def list_months(self) -> list[str]:
         """List available planner months."""
 
@@ -114,6 +124,24 @@ class PlannerEngine:
         """Read parsed weekly sections."""
 
         return self.store.read_week_sections(month)
+
+    def list_dated_tasks(
+        self,
+        month: str,
+        target_date: date | None = None,
+    ) -> list[DatedTask]:
+        """Read exact-date tasks from weekly day columns."""
+
+        return self.store.read_dated_tasks(month, target_date)
+
+    def find_dated_task(self, task_id: str) -> DatedTask | None:
+        """Find a dated task by its stable sheet/row/date identifier."""
+
+        for month in self.list_months():
+            for task in self.list_dated_tasks(month):
+                if task.id == task_id:
+                    return task
+        return None
 
     def find_task(self, month: str, task_name: str) -> PlannerTask | MonthlyGoal | None:
         """Find a task or goal by case-insensitive name."""

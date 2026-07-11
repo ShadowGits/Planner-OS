@@ -5,6 +5,7 @@ from unittest import TestCase
 
 from planner_engine.decision_log import DecisionLog
 from planner_engine import (
+    BoundedSessionRequest,
     FixedCommitment,
     MonthPlan,
     MonthlyGoal,
@@ -177,11 +178,14 @@ class SchedulerEngineTests(TestCase):
             sleep_blocks = [block for block in day.blocks if block.category == "sleep"]
             work_blocks = [block for block in day.blocks if block.category == "work"]
             self.assertEqual(len(sleep_blocks), 1)
-            self.assertEqual(len(work_blocks), 1)
             self.assertEqual(sleep_blocks[0].start.time().isoformat(timespec="minutes"), "03:00")
             self.assertEqual(sleep_blocks[0].end.time().isoformat(timespec="minutes"), "09:30")
-            self.assertEqual(work_blocks[0].start.time().isoformat(timespec="minutes"), "11:00")
-            self.assertEqual(work_blocks[0].end.time().isoformat(timespec="minutes"), "19:00")
+            if day.date.strftime("%A") in {"Saturday", "Sunday"}:
+                self.assertEqual(work_blocks, [])
+            else:
+                self.assertEqual(len(work_blocks), 1)
+                self.assertEqual(work_blocks[0].start.time().isoformat(timespec="minutes"), "11:00")
+                self.assertEqual(work_blocks[0].end.time().isoformat(timespec="minutes"), "19:00")
             assert_no_overlaps(self, day.blocks)
 
     def test_reading_prefers_evening(self) -> None:
@@ -279,3 +283,91 @@ class SchedulerEngineTests(TestCase):
             )
         )
         assert_no_overlaps(self, plan.blocks)
+
+    def test_two_bounded_gym_sessions_fit_inside_requested_window(self) -> None:
+        scheduler = self.scheduler()
+        request = BoundedSessionRequest(
+            title="Gym",
+            category="gym_strength",
+            requested_window_start=datetime(2026, 7, 11, 17, 0),
+            requested_window_end=datetime(2026, 7, 11, 20, 0),
+            session_count=2,
+            session_duration_minutes=60,
+            gap_minutes=15,
+        )
+
+        plan = scheduler.plan_day(
+            month_plan(),
+            date(2026, 7, 11),
+            bounded_sessions=[request],
+        )
+        gym_blocks = [block for block in plan.blocks if block.title == "Gym"]
+
+        self.assertEqual(len(gym_blocks), 2)
+        self.assertTrue(
+            all(block.end - block.start == timedelta(minutes=60) for block in gym_blocks)
+        )
+        self.assertTrue(
+            all(
+                request.requested_window_start <= block.start < block.end
+                <= request.requested_window_end
+                for block in gym_blocks
+            )
+        )
+        self.assertGreaterEqual(
+            gym_blocks[1].start - gym_blocks[0].end,
+            timedelta(minutes=15),
+        )
+
+    def test_bounded_gym_conflict_is_atomic_and_never_leaves_window(self) -> None:
+        scheduler = self.scheduler()
+        request = BoundedSessionRequest(
+            title="Gym",
+            category="gym_strength",
+            requested_window_start=datetime(2026, 7, 11, 17, 0),
+            requested_window_end=datetime(2026, 7, 11, 18, 45),
+            session_count=2,
+            session_duration_minutes=60,
+            gap_minutes=15,
+        )
+
+        plan = scheduler.plan_day(
+            month_plan(),
+            date(2026, 7, 11),
+            bounded_sessions=[request],
+        )
+
+        self.assertFalse(any(block.title == "Gym" for block in plan.blocks))
+        self.assertTrue(
+            any(
+                conflict.item == "Gym"
+                and "cannot fit inside the requested window" in conflict.reason
+                for conflict in plan.conflicts
+            )
+        )
+
+    def test_bounded_dance_request_still_respects_forbidden_days(self) -> None:
+        scheduler = self.scheduler()
+        request = BoundedSessionRequest(
+            title="Dance class",
+            category="gym_dance",
+            requested_window_start=datetime(2026, 7, 7, 19, 0),
+            requested_window_end=datetime(2026, 7, 7, 21, 0),
+            session_count=1,
+            allowed_session_types=("gym_dance",),
+        )
+
+        plan = scheduler.plan_day(
+            month_plan(),
+            date(2026, 7, 7),
+            bounded_sessions=[request],
+        )
+
+        self.assertFalse(any(block.title == "Dance class" for block in plan.blocks))
+        self.assertTrue(
+            any(
+                conflict.item == "Dance class"
+                and conflict.reason == "Dance is not allowed on Tuesday"
+                for conflict in plan.conflicts
+            )
+        )

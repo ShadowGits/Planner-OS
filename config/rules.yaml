@@ -8,6 +8,15 @@ sleep:
   end: "09:30"
 
 work:
+  active_days:
+    - Monday
+    - Tuesday
+    - Wednesday
+    - Thursday
+    - Friday
+  no_work_days:
+    - Saturday
+    - Sunday
   july_august:
     start: "11:00"
     end: "19:00"

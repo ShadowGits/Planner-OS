@@ -122,11 +122,50 @@ class ShadowCLITests(TestCase):
             self.assertIn("Gym:", result.stdout)
             self.assertIn("Active slippage alerts:", result.stdout)
 
+    def test_rules_list_and_set_work_days(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            rules_path = tmp_path / "rules.yaml"
+            create_writer_workbook(planner_path)
+            rules_path.write_text(
+                (Path(__file__).resolve().parents[1] / "config" / "rules.yaml").read_text(
+                    encoding="utf-8"
+                ),
+                encoding="utf-8",
+            )
+
+            listed = self._run_shadow(
+                tmp_path,
+                planner_path,
+                "rules",
+                "list",
+                rules_path=rules_path,
+            )
+            updated = self._run_shadow(
+                tmp_path,
+                planner_path,
+                "rules",
+                "set-work-days",
+                "Monday",
+                "Tuesday",
+                rules_path=rules_path,
+            )
+
+            self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+            self.assertIn("active_days:", listed.stdout)
+            self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
+            self.assertIn("Work days updated", updated.stdout)
+            persisted = rules_path.read_text(encoding="utf-8")
+            self.assertIn("- Monday", persisted)
+            self.assertIn("- Sunday", persisted)
+
     def _run_shadow(
         self,
         tmp_path: Path,
         planner_path: Path,
         *args: str,
+        rules_path: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         repo_root = Path(__file__).resolve().parents[1]
         python_bin = Path(sys.executable).parent
@@ -142,7 +181,7 @@ class ShadowCLITests(TestCase):
                 "--backup-dir",
                 str(tmp_path / "backups"),
                 "--rules",
-                str(repo_root / "config" / "rules.yaml"),
+                str(rules_path or (repo_root / "config" / "rules.yaml")),
                 "--month",
                 "Jul 2026",
                 *args,

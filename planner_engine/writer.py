@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
 from planner_engine.decision_log import DecisionLog, DecisionOutcome
-from planner_engine.models import CellUpdate, MonthlyGoal, PlannerTask, Priority, TaskStatus
+from planner_engine.models import CellUpdate, DatedTask, MonthlyGoal, PlannerTask, Priority, TaskStatus
 from planner_engine.planner import PlannerEngine
 from planner_engine.progress import ProgressEngine, TaskExecution
 
@@ -168,6 +168,314 @@ class Writer:
             constraints_considered=("semantic write", "backup before mutation"),
             metadata={"week": week},
         )
+
+    def add_weekly_tasks(
+        self,
+        month: str,
+        tasks: list[dict[str, Any]],
+        *,
+        overwrite_existing: bool = False,
+    ) -> WriterResult:
+        """Apply an approved planning batch with one backup and decision record."""
+
+        operation = "apply_planning_batch"
+        if not tasks:
+            return WriterResult(operation=operation, success=True, item_name="Approved plan")
+        payloads: list[dict[str, Any]] = []
+        skipped: list[str] = []
+        target_weeks = {int(task["week"]) for task in tasks}
+        for task in tasks:
+            name = self._required_text(task.get("task"), "task")
+            week = int(task["week"])
+            if not name:
+                return self._failure(operation, "Approved plan", ["task is required"])
+            if self._task_exists_in_week(month, week, name):
+                if not overwrite_existing:
+                    skipped.append(name)
+                    continue
+            payloads.append(
+                {
+                    "week": week,
+                    "task": name,
+                    "category": self._optional_text(task.get("category")),
+                    "status": self._normalize_status(task.get("status", "Not Started")),
+                    "notes": self._optional_text(task.get("notes")),
+                }
+            )
+        if not payloads:
+            return WriterResult(
+                operation=operation,
+                success=True,
+                item_name="Approved plan",
+                metadata={"written": 0, "skipped": skipped},
+            )
+        names = [payload["task"] for payload in payloads]
+        clear_updates: list[CellUpdate] = []
+        if overwrite_existing:
+            month_plan = self.engine.get_month_plan(month)
+            for week_number in target_weeks:
+                if week_number < 1 or week_number > len(month_plan.week_sections):
+                    return self._failure(
+                        operation,
+                        "Approved plan",
+                        [f"Unknown week {week_number} in month {month}"],
+                    )
+                for existing in month_plan.week_sections[week_number - 1].tasks:
+                    if not existing.scheduled_dates:
+                        clear_updates.extend(self._clear_updates_for_item(existing))
+
+        def action() -> None:
+            if clear_updates:
+                self.engine._write_cells_without_backup(clear_updates)
+            self.engine._append_weekly_tasks_without_backup(month, payloads)
+
+        return self._with_backup(
+            operation=operation,
+            item_name="Approved plan",
+            action=action,
+            updated_fields=("week", "task", "category", "status", "notes"),
+            metadata={
+                "written": len(payloads),
+                "skipped": skipped,
+                "tasks": names,
+                "overwritten_weeks": sorted(target_weeks) if overwrite_existing else [],
+            },
+            reason="Apply explicitly approved planning preview",
+            constraints_considered=(
+                "preview before apply",
+                "semantic write",
+                "single backup before batch mutation",
+                "calendar not synced",
+            ),
+        )
+
+    def add_dated_task(
+        self,
+        task_date: date,
+        title: str,
+        estimated_minutes: int,
+        *,
+        preferred_daypart: str | None = None,
+        start_time: str | time | None = None,
+        end_time: str | time | None = None,
+        hard_time: bool | None = None,
+        category: str | None = None,
+        notes: str | None = None,
+    ) -> WriterResult:
+        """Add a task to one exact workbook day column."""
+
+        operation = "add_dated_task"
+        title = self._required_text(title, "title")
+        try:
+            payload = self._dated_payload(
+                task_date,
+                title,
+                estimated_minutes,
+                preferred_daypart,
+                start_time,
+                end_time,
+                hard_time,
+                category,
+                notes,
+            )
+            if any(
+                task.title.casefold() == title.casefold()
+                for task in self.engine.list_dated_tasks(task_date.strftime("%b %Y"), task_date)
+            ):
+                return self._failure(operation, title, [f"Duplicate dated task on {task_date}: {title}"])
+        except Exception as error:
+            return self._failure(operation, title, [str(error)])
+        return self._with_backup(
+            operation=operation,
+            item_name=title,
+            action=lambda: self.engine._append_dated_tasks_without_backup(
+                task_date.strftime("%b %Y"), [payload]
+            ),
+            updated_fields=("date", "title", "time_block", "category", "status", "notes"),
+            metadata={"date": task_date.isoformat(), "time_value": payload["time_value"]},
+            reason="Add exact-date task to workbook day column",
+            constraints_considered=("exact date preserved", "backup before mutation", "not a generic weekly task"),
+        )
+
+    def add_dated_tasks(
+        self,
+        tasks: list[dict[str, Any]],
+        *,
+        overwrite_generated: bool = False,
+        overwrite_start: date | None = None,
+        overwrite_end: date | None = None,
+    ) -> WriterResult:
+        """Add multiple exact-date tasks with one workbook backup."""
+
+        operation = "add_dated_task_batch"
+        if not tasks:
+            return self._failure(operation, "Dated task batch", ["At least one dated task is required"])
+        payloads_by_month: dict[str, list[dict[str, Any]]] = {}
+        titles: list[str] = []
+        try:
+            for item in tasks:
+                task_date = item.get("date")
+                if isinstance(task_date, str):
+                    task_date = date.fromisoformat(task_date)
+                if not isinstance(task_date, date):
+                    raise ValueError("date is required for every dated task")
+                payload = self._dated_payload(
+                    task_date,
+                    str(item.get("title", "")),
+                    int(item.get("estimated_minutes", 0)),
+                    item.get("preferred_daypart"),
+                    item.get("start_time"),
+                    item.get("end_time"),
+                    item.get("hard_time"),
+                    item.get("category"),
+                    item.get("notes"),
+                    status=item.get("status", "Not Started"),
+                )
+                month = task_date.strftime("%b %Y")
+                duplicates = [
+                    existing
+                    for existing in self.engine.list_dated_tasks(month, task_date)
+                    if existing.title.casefold() == payload["title"].casefold()
+                ]
+                if duplicates and not (
+                    overwrite_generated
+                    and all(
+                        "planner os generated" in (existing.notes or "").casefold()
+                        for existing in duplicates
+                    )
+                ):
+                    raise ValueError(
+                        f"Duplicate dated task on {task_date}: {payload['title']}"
+                    )
+                payloads_by_month.setdefault(month, []).append(payload)
+                titles.append(payload["title"])
+        except Exception as error:
+            return self._failure(operation, "Dated task batch", [str(error)])
+
+        clear_updates: list[CellUpdate] = []
+        if overwrite_generated:
+            seen_rows: set[tuple[str, int]] = set()
+            for month, payloads in payloads_by_month.items():
+                target_dates = {payload["date"] for payload in payloads}
+                for existing in self.engine.list_dated_tasks(month):
+                    row_key = (existing.sheet_name, existing.row_number)
+                    in_overwrite_range = (
+                        overwrite_start is not None
+                        and overwrite_end is not None
+                        and overwrite_start <= existing.date <= overwrite_end
+                    )
+                    if (
+                        (existing.date in target_dates or in_overwrite_range)
+                        and "planner os generated" in (existing.notes or "").casefold()
+                        and row_key not in seen_rows
+                    ):
+                        clear_updates.extend(self._clear_updates_for_item(existing))
+                        seen_rows.add(row_key)
+
+        def action() -> None:
+            if clear_updates:
+                self.engine._write_cells_without_backup(clear_updates)
+            for month, payloads in payloads_by_month.items():
+                self.engine._append_dated_tasks_without_backup(month, payloads)
+
+        return self._with_backup(
+            operation=operation,
+            item_name="Dated task batch",
+            action=action,
+            updated_fields=("date", "title", "time_block", "category", "status", "notes"),
+            metadata={
+                "written": len(titles),
+                "tasks": titles,
+                "overwrote_generated_rows": len(clear_updates) > 0,
+            },
+            reason="Add approved exact-date task batch to workbook day columns",
+            constraints_considered=(
+                "exact dates preserved",
+                "single backup before batch mutation",
+                "not generic weekly tasks",
+            ),
+        )
+
+    def update_dated_task(self, task_id: str, **changes: Any) -> WriterResult:
+        """Update or move an exact-date workbook task with one backup."""
+
+        operation = "update_dated_task"
+        task = self.engine.find_dated_task(task_id)
+        if task is None:
+            return self._failure(operation, task_id, [f"Dated task not found: {task_id}"])
+        task_date = changes.get("date", task.date)
+        if isinstance(task_date, str):
+            task_date = date.fromisoformat(task_date)
+        try:
+            payload = self._dated_payload(
+                task_date,
+                changes.get("title", task.title),
+                int(changes.get("estimated_minutes", task.estimated_minutes)),
+                changes.get("preferred_daypart", task.preferred_daypart),
+                changes.get("start_time", task.start_time),
+                changes.get("end_time", task.end_time),
+                changes.get("hard_time", task.hard_time),
+                changes.get("category", task.category),
+                changes.get("notes", task.notes),
+                status=changes.get("status", task.status.value),
+            )
+        except Exception as error:
+            return self._failure(operation, task.title, [str(error)])
+
+        if task_date != task.date:
+            clear = self._clear_updates_for_item(task)
+
+            def action() -> None:
+                self.engine._append_dated_tasks_without_backup(task_date.strftime("%b %Y"), [payload])
+                self.engine._write_cells_without_backup(clear)
+
+            return self._with_backup(
+                operation=operation,
+                item_name=task.title,
+                action=action,
+                updated_fields=("date", "title", "time_block", "category", "status", "notes"),
+                metadata={"old_date": task.date.isoformat(), "date": task_date.isoformat()},
+                reason="Move exact-date task only after an explicit dated-task update",
+                constraints_considered=("exact destination date", "backup before mutation"),
+            )
+
+        values = {
+            "name": payload["title"],
+            "category": payload["category"],
+            "status": payload["status"],
+            "notes": payload["notes"],
+            "time_block": payload["time_value"],
+        }
+        return self._write_updates(
+            operation,
+            task.title,
+            self._updates_for_item(task, values),
+            reason="Update exact-date task through Semantic Writer",
+            constraints_considered=("exact date preserved", "backup before mutation"),
+        )
+
+    def delete_dated_task(self, task_id: str) -> WriterResult:
+        """Delete one exact-date task row through Semantic Writer."""
+
+        task = self.engine.find_dated_task(task_id)
+        if task is None:
+            return self._failure("delete_dated_task", task_id, [f"Dated task not found: {task_id}"])
+        return self._write_updates(
+            "delete_dated_task",
+            task.title,
+            self._clear_updates_for_item(task),
+            updated_fields=tuple(task.cell_references),
+            reason="Delete exact-date task through Semantic Writer",
+            constraints_considered=("exact dated task", "backup before mutation"),
+        )
+
+    def list_dated_tasks(
+        self,
+        task_date: date,
+    ) -> list[DatedTask]:
+        """Return exact-date tasks without mutating the workbook."""
+
+        return self.engine.list_dated_tasks(task_date.strftime("%b %Y"), task_date)
 
     def update_task(
         self,
@@ -470,7 +778,7 @@ class Writer:
 
     def _updates_for_item(
         self,
-        item: PlannerTask | MonthlyGoal,
+        item: PlannerTask | MonthlyGoal | DatedTask,
         values: dict[str, Any],
     ) -> list[CellUpdate]:
         """Create cell updates for available semantic fields on an item."""
@@ -489,7 +797,7 @@ class Writer:
             raise ValueError(f"Field not available for task: {', '.join(unavailable_fields)}")
         return updates
 
-    def _clear_updates_for_item(self, item: PlannerTask | MonthlyGoal) -> list[CellUpdate]:
+    def _clear_updates_for_item(self, item: PlannerTask | MonthlyGoal | DatedTask) -> list[CellUpdate]:
         """Create updates that clear semantic values from a parsed item row."""
 
         return [
@@ -588,6 +896,66 @@ class Writer:
         """Best-effort field label for a cell update."""
 
         return update.cell
+
+    def _dated_payload(
+        self,
+        task_date: date,
+        title: str,
+        estimated_minutes: int,
+        preferred_daypart: str | None,
+        start_time: str | time | None,
+        end_time: str | time | None,
+        hard_time: bool | None,
+        category: str | None,
+        notes: str | None,
+        *,
+        status: str = "Not Started",
+    ) -> dict[str, Any]:
+        if not title.strip():
+            raise ValueError("title is required")
+        if estimated_minutes <= 0:
+            raise ValueError("estimated_minutes must be positive")
+        parsed_start = self._parse_time(start_time)
+        parsed_end = self._parse_time(end_time)
+        if (parsed_start is None) != (parsed_end is None):
+            raise ValueError("start_time and end_time must be provided together")
+        if parsed_start and parsed_end and parsed_end <= parsed_start:
+            raise ValueError("end_time must be after start_time")
+        if hard_time and not (parsed_start and parsed_end):
+            raise ValueError("hard_time requires start_time and end_time")
+        allowed_dayparts = {"morning", "afternoon", "evening", "night"}
+        daypart = preferred_daypart.casefold() if preferred_daypart else None
+        if daypart and daypart not in allowed_dayparts:
+            raise ValueError(f"Unknown preferred_daypart: {preferred_daypart}")
+        if parsed_start and parsed_end:
+            time_value = f"{parsed_start.strftime('%H:%M')}-{parsed_end.strftime('%H:%M')}"
+            estimated_minutes = int(
+                (
+                    datetime.combine(task_date, parsed_end)
+                    - datetime.combine(task_date, parsed_start)
+                ).total_seconds()
+                // 60
+            )
+        else:
+            time_value = f"{estimated_minutes} min"
+            if daypart:
+                time_value += f" · {daypart}"
+        normalized_status = self._normalize_status(status) or "Not Started"
+        return {
+            "date": task_date,
+            "title": title.strip(),
+            "estimated_minutes": estimated_minutes,
+            "preferred_daypart": daypart,
+            "time_value": time_value,
+            "category": self._optional_text(category) or "Personal",
+            "status": normalized_status,
+            "notes": self._optional_text(notes),
+        }
+
+    def _parse_time(self, value: str | time | None) -> time | None:
+        if value is None or value == "":
+            return None
+        return value if isinstance(value, time) else time.fromisoformat(str(value))
 
     def _failure(
         self,

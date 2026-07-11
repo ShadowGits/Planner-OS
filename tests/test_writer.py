@@ -9,7 +9,14 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from planner_engine import ExcelPlannerStore, PlannerEngine, ProgressEngine, Writer
+from planner_engine import (
+    ExcelPlannerStore,
+    PlannerEngine,
+    ProgressEngine,
+    RulesEngine,
+    SchedulerEngine,
+    Writer,
+)
 from planner_engine.decision_log import DecisionLog
 
 
@@ -159,6 +166,98 @@ class SemanticWriterTests(TestCase):
                 self.assertEqual(sheet["L39"].value, "Task note")
             finally:
                 workbook.close()
+
+    def test_full_week_expands_with_formatting_validation_and_reader_support(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            backup_dir = tmp_path / "backups"
+            create_writer_workbook(planner_path)
+            workbook = load_workbook(planner_path)
+            try:
+                sheet = workbook["Jul 2026"]
+                for row in range(23, 35):
+                    sheet.cell(row, 2).value = f"Existing Week 1 Task {row}"
+                    sheet.cell(row, 3).value = "Learning"
+                    sheet.cell(row, 11).value = "Not Started"
+                sheet["B34"].font = Font(bold=True, color="001122")
+                sheet["B34"].fill = PatternFill(
+                    fill_type="solid",
+                    start_color="AABBCC",
+                    end_color="AABBCC",
+                )
+                sheet["M34"] = "=LEN(B34)"
+                sheet["N1"] = '=COUNTIF(K10:K200,"Done")'
+                sheet.merge_cells("D34:J34")
+                sheet.data_validations.dataValidation[0].add("K34")
+
+                category_validation = DataValidation(
+                    type="list",
+                    formula1='"Work,Learning,Health,Personal"',
+                )
+                category_validation.add("C23:C34")
+                category_validation.add("C38:C48")
+                sheet.add_data_validation(category_validation)
+                workbook.save(planner_path)
+            finally:
+                workbook.close()
+
+            writer, _ = writer_for(planner_path, backup_dir)
+            result = writer.add_weekly_task(
+                "Jul 2026",
+                1,
+                "Expanded Weekly Task",
+                category="Health",
+                status="To Do",
+                notes="Inserted row",
+            )
+
+            self.assertTrue(result.success, result.errors)
+            workbook = load_workbook(planner_path)
+            try:
+                sheet = workbook["Jul 2026"]
+                self.assertEqual(sheet["B35"].value, "Expanded Weekly Task")
+                self.assertEqual(sheet["B36"].value, "WEEK 2  ·  06 Jul – 12 Jul 2026")
+                self.assertEqual(sheet["B35"].style_id, sheet["B34"].style_id)
+                self.assertEqual(sheet["M35"].value, "=LEN(B35)")
+                self.assertEqual(sheet["M1"].value, '=COUNTIF(K39:K49,"Done")')
+                self.assertEqual(sheet["N1"].value, '=COUNTIF(K10:K201,"Done")')
+                self.assertIn("D35:J35", {str(cell_range) for cell_range in sheet.merged_cells.ranges})
+                validation_ranges = [
+                    cell_range
+                    for validation in sheet.data_validations.dataValidation
+                    for cell_range in validation.ranges.ranges
+                ]
+                self.assertTrue(
+                    any("C35" in cell_range for cell_range in validation_ranges)
+                )
+                self.assertTrue(
+                    any("K35" in cell_range for cell_range in validation_ranges)
+                )
+            finally:
+                workbook.close()
+
+            engine = PlannerEngine(ExcelPlannerStore(planner_path, backup_dir))
+            month_plan = engine.get_month_plan("Jul 2026")
+            self.assertEqual(month_plan.week_sections[1].heading_row, 36)
+            self.assertIn(
+                "Expanded Weekly Task",
+                [
+                    task.name
+                    for section in month_plan.week_sections
+                    for task in section.tasks
+                ],
+            )
+            schedule = SchedulerEngine(
+                RulesEngine(Path("config/rules.yaml")),
+                decision_log=DecisionLog(tmp_path / "scheduler_log.jsonl"),
+            ).plan_week(month_plan, date(2026, 7, 6))
+            scheduler_items = {
+                block.title for day in schedule.days for block in day.blocks
+            } | {conflict.item for conflict in schedule.conflicts}
+            self.assertIn("Expanded Weekly Task", scheduler_items)
 
     def test_update_task(self) -> None:
         with TemporaryDirectory() as directory:

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from planner_engine.models import Priority, ScheduledBlock, SchedulingConflict
+from planner_engine.models import (
+    BoundedSessionRequest,
+    Priority,
+    ScheduledBlock,
+    SchedulingConflict,
+)
 from planner_engine.scheduler.durations import ScheduleDemand
 
 
@@ -46,6 +51,115 @@ class AllocatorMixin:
             else:
                 scheduled.append(placed)
         return scheduled, conflicts
+
+    def _place_bounded_session_requests(
+        self,
+        target_date: date,
+        existing_blocks: list[ScheduledBlock],
+        requests: list[BoundedSessionRequest],
+    ) -> tuple[list[ScheduledBlock], list[SchedulingConflict]]:
+        """Place each bounded request atomically inside its requested window."""
+
+        scheduled: list[ScheduledBlock] = []
+        conflicts: list[SchedulingConflict] = []
+        for request in requests:
+            validation_error = self._bounded_request_error(request, target_date)
+            if validation_error:
+                conflicts.append(
+                    SchedulingConflict(
+                        reason=validation_error,
+                        item=request.title,
+                        date=target_date,
+                        severity="error",
+                    )
+                )
+                continue
+
+            provisional: list[ScheduledBlock] = []
+            for session_index in range(request.session_count):
+                category = self._bounded_session_category(request, session_index)
+                demand = ScheduleDemand(
+                    title=request.title,
+                    category=category,
+                    duration_minutes=request.session_duration_minutes,
+                    source=request.source,
+                    requested_window_start=request.requested_window_start,
+                    requested_window_end=request.requested_window_end,
+                    hard_window=request.hard_window,
+                    metadata={
+                        "sessions": 1,
+                        "session_index": session_index + 1,
+                        "session_count": request.session_count,
+                        "gap_minutes": request.gap_minutes,
+                        "requested_window_start": (
+                            request.requested_window_start.isoformat()
+                        ),
+                        "requested_window_end": request.requested_window_end.isoformat(),
+                        "hard_window": request.hard_window,
+                    },
+                )
+                placed = self._place_one_demand(
+                    target_date=target_date,
+                    demand=demand,
+                    blocks=existing_blocks + scheduled + provisional,
+                )
+                if placed is None:
+                    provisional = []
+                    conflicts.append(
+                        SchedulingConflict(
+                            reason=(
+                                f"{request.session_count} sessions of "
+                                f"{request.session_duration_minutes} minutes with "
+                                f"{request.gap_minutes}-minute gaps cannot fit inside "
+                                "the requested window"
+                            ),
+                            item=request.title,
+                            date=target_date,
+                            severity="error",
+                        )
+                    )
+                    break
+                provisional.append(placed)
+            scheduled.extend(provisional)
+        return scheduled, conflicts
+
+    def _bounded_request_error(
+        self,
+        request: BoundedSessionRequest,
+        target_date: date,
+    ) -> str | None:
+        """Return a clear validation or hard-rule error for a bounded request."""
+
+        if request.requested_window_end <= request.requested_window_start:
+            return "Requested window end must be after its start"
+        if (
+            request.requested_window_start.date() != target_date
+            or request.requested_window_end.date() != target_date
+        ):
+            return "Requested window must fall entirely on the target date"
+        if request.session_count < 1:
+            return "Session count must be at least 1"
+        if request.session_duration_minutes < 1:
+            return "Session duration must be at least 1 minute"
+        if request.gap_minutes < 0:
+            return "Gap minutes cannot be negative"
+        requested_types = request.allowed_session_types or (request.category,)
+        if any("dance" in session_type.casefold() for session_type in requested_types):
+            if not self.rules_engine.is_dance_allowed(target_date.strftime("%A")):
+                return f"Dance is not allowed on {target_date.strftime('%A')}"
+        return None
+
+    def _bounded_session_category(
+        self,
+        request: BoundedSessionRequest,
+        session_index: int,
+    ) -> str:
+        """Choose an allowed session category deterministically."""
+
+        allowed = request.allowed_session_types
+        if not allowed:
+            return request.category
+        return allowed[session_index % len(allowed)]
 
     def _place_one_demand(
         self,
@@ -128,6 +242,12 @@ class AllocatorMixin:
             if block.is_fixed or block.category.startswith("gym"):
                 start -= buffer
                 end += buffer
+            if block.metadata and "gap_minutes" in block.metadata:
+                end = max(
+                    end,
+                    block.end
+                    + timedelta(minutes=int(block.metadata["gap_minutes"])),
+                )
             intervals.append((start, end))
         return sorted(intervals, key=lambda interval: interval[0])
 

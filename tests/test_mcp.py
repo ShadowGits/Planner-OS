@@ -74,16 +74,41 @@ class PlannerMCPToolsTests(TestCase):
                 tool_names,
                 {
                     "validate",
+                    "list_rules",
+                    "update_rule",
+                    "set_work_days",
+                    "set_no_work_days",
                     "plan_today",
+                    "plan_today_from_now",
+                    "replan_today_from_now",
+                    "preview_month_plan",
+                    "apply_month_plan",
+                    "preview_week_plan",
+                    "apply_week_plan",
+                    "preview_day_replan",
+                    "apply_day_replan",
                     "status",
                     "complete_task",
                     "add_task",
                     "update_task",
                     "move_task",
                     "delete_task",
+                    "add_dated_task",
+                    "update_dated_task",
+                    "delete_dated_task",
+                    "list_dated_tasks",
                     "import_plan",
                     "calendar_sync_today",
                     "calendar_sync_week",
+                    "calendar_sync_current_week",
+                    "calendar_sync_next_week",
+                    "calendar_sync_week_number",
+                    "calendar_sync_range",
+                    "calendar_sync_month",
+                    "calendar_sync_date",
+                    "daily_checkin",
+                    "parse_common_intent",
+                    "route_planner_command",
                 },
             )
         finally:
@@ -115,6 +140,40 @@ class PlannerMCPToolsTests(TestCase):
             self.assertIn("blocks", plan["data"])
             self.assertTrue(status["success"])
             self.assertIn("gym_sessions_required", status["data"])
+
+    def test_rule_tools_update_yaml_data(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            rules_path = tmp_path / "rules.yaml"
+            create_writer_workbook(planner_path)
+            rules_path.write_text(
+                (Path(__file__).resolve().parents[1] / "config" / "rules.yaml").read_text(
+                    encoding="utf-8"
+                ),
+                encoding="utf-8",
+            )
+            tools = PlannerMCPTools(
+                PlannerMCPConfig(
+                    planner_path=planner_path,
+                    backup_dir=tmp_path / "backups",
+                    rules_path=rules_path,
+                    month="Jul 2026",
+                )
+            )
+
+            listed = tools.list_rules()
+            updated = tools.set_no_work_days(["Friday", "Saturday", "Sunday"])
+            rejected = tools.update_rule("work.python_override", True)
+
+            self.assertTrue(listed["success"])
+            self.assertTrue(updated["success"])
+            self.assertEqual(
+                updated["data"]["rules"]["work"]["no_work_days"],
+                ["Friday", "Saturday", "Sunday"],
+            )
+            self.assertFalse(rejected["success"])
+            self.assertIn("Unknown rule path", rejected["errors"][0])
 
     def test_complete_add_update_move_delete_task(self) -> None:
         with TemporaryDirectory() as directory:

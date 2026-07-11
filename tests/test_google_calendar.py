@@ -127,6 +127,26 @@ class GoogleCalendarClientTests(TestCase):
             self.assertEqual(FakeFlow.last_secrets_path, str(credentials_path))
             self.assertEqual(FakeFlow.last_scopes, ("https://www.googleapis.com/auth/calendar.events",))
 
+    def test_existing_valid_token_skips_oauth_flow_import(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            credentials_path = tmp_path / "credentials.json"
+            token_path = tmp_path / "token.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            token_path.write_text("{}", encoding="utf-8")
+            modules = self._fake_google_modules(FakeCredentials())
+            modules["google_auth_oauthlib.flow"] = None
+
+            with patch.dict(sys.modules, modules):
+                client = GoogleCalendarClient(
+                    credentials_path=credentials_path,
+                    token_path=token_path,
+                )
+                service = client.authenticate()
+
+            self.assertEqual(service, "calendar-service")
+            self.assertEqual(json.loads(token_path.read_text(encoding="utf-8")), {"ok": True})
+
     def test_event_mapping_timezone_category_and_stable_identifier(self) -> None:
         with TemporaryDirectory() as directory:
             client = GoogleCalendarClient(
@@ -138,6 +158,8 @@ class GoogleCalendarClientTests(TestCase):
             event = client.event_from_block(scheduled)
 
             self.assertEqual(event["summary"], "Study")
+            self.assertEqual(event["start"]["dateTime"], "2026-07-11T19:00:00+05:30")
+            self.assertEqual(event["end"]["dateTime"], "2026-07-11T20:00:00+05:30")
             self.assertEqual(event["start"]["timeZone"], "Asia/Kolkata")
             self.assertEqual(event["end"]["timeZone"], "Asia/Kolkata")
             private = event["extendedProperties"]["private"]
@@ -164,8 +186,20 @@ class GoogleCalendarClientTests(TestCase):
 
             event = client.event_from_block(scheduled)
 
-            self.assertEqual(event["start"]["dateTime"], "2026-09-07T20:30:00")
-            self.assertEqual(event["end"]["dateTime"], "2026-09-08T03:30:00")
+            self.assertEqual(event["start"]["dateTime"], "2026-09-07T20:30:00+05:30")
+            self.assertEqual(event["end"]["dateTime"], "2026-09-08T03:30:00+05:30")
+
+    def test_list_events_uses_timezone_aware_api_range(self) -> None:
+        service = FakeService()
+        client = GoogleCalendarClient(service=service)
+
+        client.list_events(
+            datetime(2026, 7, 11, 19, 0),
+            datetime(2026, 7, 11, 20, 0),
+        )
+
+        self.assertEqual(service.calls[0][1]["timeMin"], "2026-07-11T19:00:00+05:30")
+        self.assertEqual(service.calls[0][1]["timeMax"], "2026-07-11T20:00:00+05:30")
 
     def test_idempotent_sync_create_update_delete_unchanged_and_preserve_manual(self) -> None:
         with TemporaryDirectory() as directory:

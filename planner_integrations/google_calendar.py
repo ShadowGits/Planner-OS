@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from planner_engine.config import (
     DEFAULT_GOOGLE_CALENDAR_ID,
@@ -35,6 +36,9 @@ class CalendarSyncResult:
     unchanged: int = 0
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    start_date: str | None = None
+    end_date: str | None = None
+    sync_scope: str | None = None
 
     @property
     def success(self) -> bool:
@@ -81,9 +85,7 @@ class GoogleCalendarClient:
             )
 
         try:
-            from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
-            from google_auth_oauthlib.flow import InstalledAppFlow
             from googleapiclient.discovery import build
         except ImportError as error:
             raise GoogleCalendarError(
@@ -98,9 +100,21 @@ class GoogleCalendarClient:
             )
 
         if credentials and credentials.expired and credentials.refresh_token:
+            try:
+                from google.auth.transport.requests import Request
+            except ImportError as error:
+                raise GoogleCalendarError(
+                    "Google Calendar dependencies are missing. Install requirements.txt."
+                ) from error
             credentials.refresh(Request())
 
         if not credentials or not credentials.valid:
+            try:
+                from google_auth_oauthlib.flow import InstalledAppFlow
+            except ImportError as error:
+                raise GoogleCalendarError(
+                    "Google Calendar dependencies are missing. Install requirements.txt."
+                ) from error
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(self.credentials_path),
                 SCOPES,
@@ -109,7 +123,12 @@ class GoogleCalendarClient:
 
         self.token_path.parent.mkdir(parents=True, exist_ok=True)
         self.token_path.write_text(credentials.to_json(), encoding="utf-8")
-        self.service = build("calendar", "v3", credentials=credentials)
+        self.service = build(
+            "calendar",
+            "v3",
+            credentials=credentials,
+            cache_discovery=False,
+        )
         return self.service
 
     def list_events(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
@@ -120,8 +139,8 @@ class GoogleCalendarClient:
             service.events()
             .list(
                 calendarId=self.calendar_id,
-                timeMin=start.isoformat(),
-                timeMax=end.isoformat(),
+                timeMin=self._api_datetime(start),
+                timeMax=self._api_datetime(end),
                 singleEvents=True,
                 orderBy="startTime",
             )
@@ -163,26 +182,49 @@ class GoogleCalendarClient:
             .execute()
         )
 
-    def sync_plan(self, plan: DailyPlan | WeeklyPlan) -> CalendarSyncResult:
+    def sync_plan(
+        self,
+        plan: DailyPlan | WeeklyPlan,
+        *,
+        start: datetime | date | None = None,
+        end: datetime | date | None = None,
+        scope: str | None = None,
+    ) -> CalendarSyncResult:
         """Idempotently synchronize a daily or weekly plan."""
 
         blocks = self._blocks_for_plan(plan)
-        if not blocks:
-            result = CalendarSyncResult()
+        sync_start = self._range_datetime(start, beginning=True)
+        sync_end = self._range_datetime(end, beginning=False)
+        if sync_start is None and blocks:
+            sync_start = min(block.start for block in blocks)
+        if sync_end is None and blocks:
+            sync_end = max(block.end for block in blocks)
+        if sync_start is None or sync_end is None:
+            result = CalendarSyncResult(sync_scope=scope)
             self._record_sync(plan, result)
             return result
-
-        start = min(block.start for block in blocks)
-        end = max(block.end for block in blocks)
+        start_date = sync_start.date().isoformat()
+        end_date = (sync_end - timedelta(microseconds=1)).date().isoformat()
         try:
             existing_events = self.list_events(
-                start - timedelta(minutes=1),
-                end + timedelta(minutes=1),
+                sync_start,
+                sync_end,
             )
         except Exception as error:
-            result = CalendarSyncResult(errors=[f"list_events: {error}"])
+            result = CalendarSyncResult(
+                errors=[f"list_events: {error}"],
+                start_date=start_date,
+                end_date=end_date,
+                sync_scope=scope,
+            )
             warnings = self._record_sync(plan, result)
-            return CalendarSyncResult(errors=result.errors, warnings=warnings)
+            return CalendarSyncResult(
+                errors=result.errors,
+                warnings=warnings,
+                start_date=start_date,
+                end_date=end_date,
+                sync_scope=scope,
+            )
 
         planner_events = {
             self._planner_block_id_from_event(event): event
@@ -224,6 +266,9 @@ class GoogleCalendarClient:
             deleted=deleted,
             unchanged=unchanged,
             errors=errors,
+            start_date=start_date,
+            end_date=end_date,
+            sync_scope=scope,
         )
         warnings = self._record_sync(plan, result)
         return CalendarSyncResult(
@@ -233,6 +278,9 @@ class GoogleCalendarClient:
             unchanged=result.unchanged,
             errors=result.errors,
             warnings=warnings,
+            start_date=start_date,
+            end_date=end_date,
+            sync_scope=scope,
         )
 
     def event_from_block(self, block: ScheduledBlock) -> dict[str, Any]:
@@ -247,11 +295,11 @@ class GoogleCalendarClient:
                 f"Source: {block.source}"
             ),
             "start": {
-                "dateTime": block.start.isoformat(),
+                "dateTime": self._api_datetime(block.start),
                 "timeZone": self.timezone,
             },
             "end": {
-                "dateTime": block.end.isoformat(),
+                "dateTime": self._api_datetime(block.end),
                 "timeZone": self.timezone,
             },
             "extendedProperties": {
@@ -350,3 +398,24 @@ class GoogleCalendarClient:
         except Exception as error:
             return [f"Decision log warning: {error}"]
         return []
+
+    def _api_datetime(self, value: datetime) -> str:
+        """Return an RFC3339 timestamp acceptable to Google Calendar APIs."""
+
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=ZoneInfo(self.timezone))
+        return value.isoformat()
+
+    def _range_datetime(
+        self,
+        value: datetime | date | None,
+        *,
+        beginning: bool,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if beginning:
+            return datetime.combine(value, time.min, ZoneInfo(self.timezone))
+        return datetime.combine(value + timedelta(days=1), time.min, ZoneInfo(self.timezone))

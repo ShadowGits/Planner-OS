@@ -7,6 +7,7 @@ from typing import Any
 
 from planner_engine.decision_log import DecisionLog, DecisionOutcome
 from planner_engine.models import (
+    BoundedSessionRequest,
     DailyPlan,
     FixedCommitment,
     MonthPlan,
@@ -57,15 +58,26 @@ class SchedulerEngine(
         fixed_commitments: list[FixedCommitment] | None = None,
         context_overrides: dict[str, Any] | None = None,
         unfinished_tasks: list[PlannerTask | MonthlyGoal] | None = None,
+        bounded_sessions: list[BoundedSessionRequest] | None = None,
     ) -> DailyPlan:
         """Generate a daily plan without writing to Excel."""
 
         fixed_commitments = fixed_commitments or []
-        context_overrides = context_overrides or {}
+        context_overrides = dict(context_overrides or {})
         unfinished_tasks = unfinished_tasks or []
+        bounded_sessions = bounded_sessions or []
+        if any(request.category.casefold().startswith("gym") for request in bounded_sessions):
+            context_overrides["skip_gym_today"] = True
         conflicts = self._fixed_commitment_conflicts(fixed_commitments)
         conflicts.extend(self._dance_commitment_conflicts(fixed_commitments))
         blocks = self._base_blocks_for_day(target_date, fixed_commitments, conflicts)
+        bounded_blocks, bounded_conflicts = self._place_bounded_session_requests(
+            target_date=target_date,
+            existing_blocks=blocks,
+            requests=bounded_sessions,
+        )
+        blocks.extend(bounded_blocks)
+        conflicts.extend(bounded_conflicts)
         demands = self._daily_demands(target_date, context_overrides)
         demands.extend(self._task_demands(unfinished_tasks, source_prefix="unfinished"))
         demands.extend(self._task_demands(self._planner_items(month_plan), limit=2))
@@ -91,6 +103,7 @@ class SchedulerEngine(
                 "date": target_date.isoformat(),
                 "blocks": len(plan.blocks),
                 "unfinished_tasks": [task.name for task in unfinished_tasks],
+                "bounded_sessions": [request.title for request in bounded_sessions],
                 "moved_or_rescheduled_tasks": [
                     task.name for task in unfinished_tasks
                 ],

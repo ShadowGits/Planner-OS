@@ -100,6 +100,32 @@ class PlannerTask:
     cell_references: dict[str, str]
     raw_priority: str | None = None
     raw_status: str | None = None
+    scheduled_dates: tuple[date, ...] = ()
+
+
+@dataclass(frozen=True)
+class DatedTask:
+    """A weekly-row task assigned to one exact workbook date column."""
+
+    id: str
+    date: date
+    title: str
+    estimated_minutes: int
+    preferred_daypart: str | None
+    start_time: str | None
+    end_time: str | None
+    hard_time: bool
+    category: str | None
+    status: TaskStatus
+    notes: str | None
+    sheet_name: str
+    row_number: int
+    week_name: str
+    cell_references: dict[str, str]
+
+    @property
+    def is_fixed(self) -> bool:
+        return self.start_time is not None and self.end_time is not None
 
 
 @dataclass(frozen=True)
@@ -181,6 +207,22 @@ class WeeklyPlan:
 
 
 @dataclass(frozen=True)
+class BoundedSessionRequest:
+    """A multi-session request constrained to one explicit time window."""
+
+    title: str
+    category: str
+    requested_window_start: datetime
+    requested_window_end: datetime
+    session_count: int = 1
+    session_duration_minutes: int = 60
+    gap_minutes: int = 15
+    allowed_session_types: tuple[str, ...] | None = None
+    hard_window: bool = True
+    source: str = "user_request"
+
+
+@dataclass(frozen=True)
 class SchedulingRequest:
     """Inputs for producing a day or week schedule."""
 
@@ -190,6 +232,7 @@ class SchedulingRequest:
     fixed_commitments: list[FixedCommitment] | None = None
     context_overrides: dict[str, Any] | None = None
     unfinished_tasks: list[PlannerTask | MonthlyGoal] | None = None
+    bounded_sessions: list[BoundedSessionRequest] | None = None
 
 
 @dataclass(frozen=True)

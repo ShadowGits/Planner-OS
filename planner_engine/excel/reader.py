@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
+import re
 from typing import Any
 
 from openpyxl.utils import get_column_letter
@@ -11,6 +13,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from planner_engine.excel.layout import PlannerWorkbookError
 from planner_engine.models import (
     MonthPlan,
+    DatedTask,
     MonthlyGoal,
     PlannerTask,
     Priority,
@@ -59,6 +62,62 @@ class ReaderMixin:
         """Read weekly sections from a month sheet."""
 
         return self.read_month_plan(month).week_sections
+
+    def read_dated_tasks(
+        self,
+        month: str,
+        target_date: date | None = None,
+    ) -> list[DatedTask]:
+        """Read tasks assigned to exact day columns in a month sheet."""
+
+        workbook = self.load_workbook_read_only()
+        try:
+            worksheet = self._get_month_worksheet(workbook, month)
+            tasks: list[DatedTask] = []
+            for section in self._parse_week_sections(worksheet):
+                week_start, week_end = self._week_title_range(section.title, month)
+                for task in section.tasks:
+                    for offset, task_date in enumerate(
+                        week_start + timedelta(days=index)
+                        for index in range((week_end - week_start).days + 1)
+                    ):
+                        if offset >= 7 or (target_date is not None and task_date != target_date):
+                            continue
+                        column = 4 + offset
+                        raw_block = self._string_or_none(
+                            worksheet.cell(task.row_number, column).value
+                        )
+                        if not raw_block:
+                            continue
+                        minutes, daypart, start_time, end_time, hard_time = (
+                            self._parse_dated_block(raw_block)
+                        )
+                        task_id = f"{worksheet.title}!{task.row_number}@{task_date.isoformat()}"
+                        tasks.append(
+                            DatedTask(
+                                id=task_id,
+                                date=task_date,
+                                title=task.name,
+                                estimated_minutes=minutes,
+                                preferred_daypart=daypart,
+                                start_time=start_time,
+                                end_time=end_time,
+                                hard_time=hard_time,
+                                category=task.category,
+                                status=task.status,
+                                notes=task.notes,
+                                sheet_name=worksheet.title,
+                                row_number=task.row_number,
+                                week_name=section.name,
+                                cell_references={
+                                    **task.cell_references,
+                                    "time_block": worksheet.cell(task.row_number, column).coordinate,
+                                },
+                            )
+                        )
+            return tasks
+        finally:
+            workbook.close()
 
     def find_task(self, month: str, task_name: str) -> PlannerTask | MonthlyGoal | None:
         """Find a task or goal by case-insensitive name."""
@@ -177,6 +236,7 @@ class ReaderMixin:
             tasks = self._parse_week_tasks(
                 worksheet=worksheet,
                 week_name=week_name,
+                week_title=title,
                 header_row=header_row,
                 start_row=start_row,
                 end_row=end_row,
@@ -204,6 +264,7 @@ class ReaderMixin:
         self,
         worksheet: Worksheet,
         week_name: str,
+        week_title: str,
         header_row: int,
         start_row: int,
         end_row: int,
@@ -245,10 +306,28 @@ class ReaderMixin:
                         },
                     ),
                     raw_status=raw_status,
+                    scheduled_dates=self._scheduled_dates_for_row(
+                        worksheet,
+                        row_number,
+                        week_title,
+                    ),
                 )
             )
 
         return tasks
+
+    def _scheduled_dates_for_row(
+        self,
+        worksheet: Worksheet,
+        row_number: int,
+        week_title: str,
+    ) -> tuple[date, ...]:
+        week_start, week_end = self._week_title_range(week_title, worksheet.title)
+        dates: list[date] = []
+        for offset in range(min(7, (week_end - week_start).days + 1)):
+            if self._string_or_none(worksheet.cell(row_number, 4 + offset).value):
+                dates.append(week_start + timedelta(days=offset))
+        return tuple(dates)
 
     def _monthly_goal_table(
         self,
@@ -443,3 +522,51 @@ class ReaderMixin:
             return None
         text = str(value).strip()
         return text or None
+
+    def _week_title_range(self, title: str, month: str) -> tuple[date, date]:
+        normalized = " ".join(title.replace("–", "-").replace("—", "-").split())
+        match = re.search(
+            r"(\d{1,2})\s+([A-Za-z]{3})(?:\s+(\d{4}))?\s*-\s*"
+            r"(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})",
+            normalized,
+        )
+        if match is None:
+            raise PlannerWorkbookError(f"Cannot parse week dates: {title}")
+        end_year = int(match.group(6))
+        if match.group(3):
+            start_year = int(match.group(3))
+        else:
+            start_month = datetime.strptime(match.group(2), "%b").month
+            end_month = datetime.strptime(match.group(5), "%b").month
+            start_year = end_year - 1 if start_month > end_month else end_year
+        start = datetime.strptime(
+            f"{match.group(1)} {match.group(2)} {start_year}",
+            "%d %b %Y",
+        ).date()
+        end = datetime.strptime(
+            f"{match.group(4)} {match.group(5)} {match.group(6)}",
+            "%d %b %Y",
+        ).date()
+        return start, end
+
+    def _parse_dated_block(
+        self,
+        value: str,
+    ) -> tuple[int, str | None, str | None, str | None, bool]:
+        fixed = re.fullmatch(
+            r"\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*",
+            value,
+        )
+        if fixed:
+            start = datetime.strptime(fixed.group(1), "%H:%M")
+            end = datetime.strptime(fixed.group(2), "%H:%M")
+            minutes = max(1, int((end - start).total_seconds() // 60))
+            return minutes, None, fixed.group(1), fixed.group(2), True
+        flexible = re.search(
+            r"(\d+)\s*min(?:ute)?s?\s*(?:[·|-]\s*)?(morning|afternoon|evening|night)?",
+            value,
+            re.I,
+        )
+        if flexible:
+            return int(flexible.group(1)), flexible.group(2).casefold() if flexible.group(2) else None, None, None, False
+        return 60, None, None, None, False

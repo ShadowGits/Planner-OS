@@ -19,26 +19,34 @@ class ConstraintsMixin:
     ) -> list[ScheduleDemand]:
         """Build recurring daily demands."""
 
-        demands = [
-            ScheduleDemand(
-                title="German study",
-                category="german",
-                duration_minutes=self.durations["german"],
-                source="rules:german",
-            ),
-            ScheduleDemand(
-                title="Piano practice",
-                category="piano",
-                duration_minutes=self.rules_engine.piano_duration_minutes(),
-                source="rules:piano",
-            ),
-            ScheduleDemand(
-                title="Reading",
-                category="reading",
-                duration_minutes=self.durations["reading"],
-                source="rules:reading",
-            ),
-        ]
+        demands: list[ScheduleDemand] = []
+        if not context_overrides.get("skip_german_today"):
+            demands.append(
+                ScheduleDemand(
+                    title="German study",
+                    category="german",
+                    duration_minutes=self.durations["german"],
+                    source="rules:german",
+                )
+            )
+        if not context_overrides.get("skip_piano_today"):
+            demands.append(
+                ScheduleDemand(
+                    title="Piano practice",
+                    category="piano",
+                    duration_minutes=self.rules_engine.piano_duration_minutes(),
+                    source="rules:piano",
+                )
+            )
+        if not context_overrides.get("skip_reading_today"):
+            demands.append(
+                ScheduleDemand(
+                    title="Reading",
+                    category="reading",
+                    duration_minutes=self.durations["reading"],
+                    source="rules:reading",
+                )
+            )
         if not context_overrides.get("skip_gym_today"):
             gym_category = "gym_strength"
             if self.rules_engine.is_dance_allowed(target_date.strftime("%A")):
@@ -172,10 +180,9 @@ class ConstraintsMixin:
     ) -> list[ScheduledBlock]:
         """Build sleep, work, and fixed blocks for a day."""
 
-        blocks = [
-            self._sleep_block(target_date),
-            self._work_block(target_date),
-        ]
+        blocks = [self._sleep_block(target_date)]
+        if self.rules_engine.is_work_day(target_date.strftime("%A")):
+            blocks.append(self._work_block(target_date))
         blocks = self._resolve_hard_block_overlaps(blocks, conflicts, target_date)
 
         day_start = datetime.combine(target_date, time.min)
@@ -214,7 +221,12 @@ class ConstraintsMixin:
         """Keep hard blocks non-overlapping while reporting impossible overlaps."""
 
         sleep_block = next(block for block in blocks if block.category == "sleep")
-        work_block = next(block for block in blocks if block.category == "work")
+        work_block = next(
+            (block for block in blocks if block.category == "work"),
+            None,
+        )
+        if work_block is None:
+            return blocks
         if not self._blocks_overlap(sleep_block, work_block):
             return blocks
 

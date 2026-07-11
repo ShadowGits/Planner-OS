@@ -1,0 +1,88 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CLIENT="$ROOT/.planner-os/bin/tunnel-client"
+PROFILE_DIR="$ROOT/.planner-os/tunnel/profiles"
+PROFILE="planner-os"
+HEALTH_URL_FILE="$ROOT/.planner-os/tunnel/health.url"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ./planner-tunnel setup <tunnel_id>
+  ./planner-tunnel doctor
+  ./planner-tunnel run
+  ./planner-tunnel health-url
+
+Set CONTROL_PLANE_API_KEY in the terminal before doctor or run.
+EOF
+}
+
+require_client() {
+    if [ ! -x "$CLIENT" ]; then
+        echo "tunnel-client is missing at $CLIENT" >&2
+        echo "Install it from https://github.com/openai/tunnel-client/releases/latest" >&2
+        exit 1
+    fi
+}
+
+require_runtime_key() {
+    if [ -z "${CONTROL_PLANE_API_KEY:-}" ]; then
+        echo "CONTROL_PLANE_API_KEY is not set." >&2
+        exit 1
+    fi
+}
+
+command=${1:-}
+
+case "$command" in
+    setup)
+        require_client
+        tunnel_id=${2:-}
+        if [ -z "$tunnel_id" ]; then
+            usage >&2
+            exit 2
+        fi
+        mkdir -p "$PROFILE_DIR"
+        "$CLIENT" init \
+            --sample sample_mcp_stdio_local \
+            --profile "$PROFILE" \
+            --profile-dir "$PROFILE_DIR" \
+            --tunnel-id "$tunnel_id" \
+            --mcp-command "\"$ROOT/planner-mcp\"" \
+            --health-listen-addr 127.0.0.1:0 \
+            --force
+        ;;
+    doctor)
+        require_client
+        require_runtime_key
+        exec "$CLIENT" doctor \
+            --profile "$PROFILE" \
+            --profile-dir "$PROFILE_DIR" \
+            --explain
+        ;;
+    run)
+        require_client
+        require_runtime_key
+        mkdir -p "$(dirname "$HEALTH_URL_FILE")"
+        exec "$CLIENT" run \
+            --profile "$PROFILE" \
+            --profile-dir "$PROFILE_DIR" \
+            --health.url-file "$HEALTH_URL_FILE"
+        ;;
+    health-url)
+        if [ ! -s "$HEALTH_URL_FILE" ]; then
+            echo "Tunnel is not running or has not written its health URL." >&2
+            exit 1
+        fi
+        cat "$HEALTH_URL_FILE"
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

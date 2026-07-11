@@ -53,7 +53,7 @@ class HeuristicsMixin:
                 items.append(goal)
         for section in month_plan.week_sections:
             for task in section.tasks:
-                if task.status != TaskStatus.DONE:
+                if task.status != TaskStatus.DONE and not task.scheduled_dates:
                     items.append(task)
         return items
 
@@ -97,6 +97,15 @@ class HeuristicsMixin:
     ) -> list[tuple[datetime, datetime]]:
         """Return preferred scheduling windows for a demand."""
 
+        if demand.requested_window_start and demand.requested_window_end:
+            requested_window = [
+                (demand.requested_window_start, demand.requested_window_end)
+            ]
+            if demand.hard_window:
+                return requested_window
+        else:
+            requested_window = []
+
         day_start = datetime.combine(target_date, time.min)
         day_end = day_start + timedelta(days=1)
         category = demand.category.casefold()
@@ -113,7 +122,7 @@ class HeuristicsMixin:
         else:
             windows = [(time(13, 0), time(18, 30)), (time(9, 30), time(23, 0))]
 
-        result = [
+        result = requested_window + [
             (
                 datetime.combine(target_date, start),
                 datetime.combine(target_date, end),

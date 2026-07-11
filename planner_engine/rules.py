@@ -34,6 +34,8 @@ class TimeWindowRules:
 class WorkRules:
     """Work schedule rule windows."""
 
+    active_days: tuple[str, ...]
+    no_work_days: tuple[str, ...]
     july_august: TimeWindowRules
     september_onward: TimeWindowRules
 
@@ -129,6 +131,14 @@ class RulesEngine:
             day.casefold() for day in self.rules.gym.dance_forbidden_days
         }
         return day_name.casefold() not in forbidden_days
+
+    def is_work_day(self, day_name: str) -> bool:
+        """Return whether office work is scheduled on a day name."""
+
+        normalized_day = day_name.casefold()
+        active_days = {day.casefold() for day in self.rules.work.active_days}
+        no_work_days = {day.casefold() for day in self.rules.work.no_work_days}
+        return normalized_day in active_days and normalized_day not in no_work_days
 
     def required_gym_sessions(self) -> int:
         """Return the weekly gym session target."""
@@ -233,6 +243,21 @@ class RulesEngine:
             profile=ProfileRules(**raw_rules["profile"]),
             sleep=TimeWindowRules(**raw_rules["sleep"]),
             work=WorkRules(
+                active_days=tuple(
+                    raw_rules["work"].get(
+                        "active_days",
+                        ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"),
+                    )
+                ),
+                no_work_days=tuple(
+                    raw_rules["work"].get(
+                        "no_work_days",
+                        raw_rules["work"].get(
+                            "off_days",
+                            ("Saturday", "Sunday"),
+                        ),
+                    )
+                ),
                 july_august=TimeWindowRules(**raw_rules["work"]["july_august"]),
                 september_onward=TimeWindowRules(
                     **raw_rules["work"]["september_onward"]
