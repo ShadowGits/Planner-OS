@@ -335,6 +335,15 @@ def test_client_bundle_sources_do_not_reference_server_only_secrets() -> None:
     assert ".planner-os/token.json" not in contents
 
 
+def test_account_creation_uses_validated_email_password_signup() -> None:
+    source = Path("components/auth-panel.tsx").read_text(encoding="utf-8")
+
+    assert 'auth.signUp(credentials)' in source
+    assert 'credentials = { email: email.trim(), password }' in source
+    assert 'type="submit" name="auth-action" value="signup"' in source
+    assert "signInAnonymously" not in source
+
+
 class MappingGateway:
     def __init__(self) -> None:
         self.calls = []

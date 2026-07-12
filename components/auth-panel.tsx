@@ -16,17 +16,17 @@ export function AuthPanel({ message, onMessage }: AuthPanelProps) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const creatingAccount = submitter?.value === "signup";
     setBusy(true);
-    const { error } = await getSupabase().auth.signInWithPassword({ email, password });
+    const credentials = { email: email.trim(), password };
+    const { error } = creatingAccount
+      ? await getSupabase().auth.signUp(credentials)
+      : await getSupabase().auth.signInWithPassword(credentials);
     setBusy(false);
-    onMessage(error ? error.message : "Signed in");
-  }
-
-  async function signUp() {
-    setBusy(true);
-    const { error } = await getSupabase().auth.signUp({ email, password });
-    setBusy(false);
-    onMessage(error ? error.message : "Check your email to finish creating your account");
+    onMessage(error ? error.message : creatingAccount
+      ? "Check your email to finish creating your account"
+      : "Signed in");
   }
 
   return (
@@ -38,13 +38,13 @@ export function AuthPanel({ message, onMessage }: AuthPanelProps) {
         <p className="muted">Your workbook stays the source of truth.</p>
         {message && <p className="auth-message" role="status">{message}</p>}
         <form onSubmit={submit} className="auth-form">
-          <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required /></label>
-          <button className="primary-button" disabled={busy} type="submit">
+          <label>Email<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+          <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required /></label>
+          <button className="primary-button" disabled={busy} type="submit" name="auth-action" value="signin">
             {busy ? "Signing in..." : "Sign in"}<ArrowRight size={17} aria-hidden="true" />
           </button>
+          <button className="text-button" type="submit" name="auth-action" value="signup" disabled={busy}>Create an account</button>
         </form>
-        <button className="text-button" type="button" onClick={signUp} disabled={busy}>Create an account</button>
       </section>
     </main>
   );
