@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from planner_engine.decision_log import DecisionLog, DecisionOutcome
 from planner_engine.models import CellUpdate, DatedTask, MonthlyGoal, PlannerTask, Priority, TaskStatus
@@ -277,6 +278,7 @@ class Writer:
                 hard_time,
                 category,
                 notes,
+                task_id=self._new_dated_task_id(),
             )
             if any(
                 task.title.casefold() == title.casefold()
@@ -330,6 +332,7 @@ class Writer:
                     item.get("category"),
                     item.get("notes"),
                     status=item.get("status", "Not Started"),
+                    task_id=item.get("id") or item.get("task_id") or self._new_dated_task_id(),
                 )
                 month = task_date.strftime("%b %Y")
                 duplicates = [
@@ -418,6 +421,7 @@ class Writer:
                 changes.get("category", task.category),
                 changes.get("notes", task.notes),
                 status=changes.get("status", task.status.value),
+                task_id=task.id,
             )
         except Exception as error:
             return self._failure(operation, task.title, [str(error)])
@@ -910,6 +914,7 @@ class Writer:
         notes: str | None,
         *,
         status: str = "Not Started",
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         if not title.strip():
             raise ValueError("title is required")
@@ -941,16 +946,28 @@ class Writer:
             if daypart:
                 time_value += f" · {daypart}"
         normalized_status = self._normalize_status(status) or "Not Started"
+        stable_task_id = task_id or self._new_dated_task_id()
         return {
             "date": task_date,
+            "id": stable_task_id,
             "title": title.strip(),
             "estimated_minutes": estimated_minutes,
             "preferred_daypart": daypart,
             "time_value": time_value,
             "category": self._optional_text(category) or "Personal",
             "status": normalized_status,
-            "notes": self._optional_text(notes),
+            "notes": self._notes_with_dated_task_id(notes, stable_task_id),
         }
+
+    def _new_dated_task_id(self) -> str:
+        return f"dt_{uuid4().hex}"
+
+    def _notes_with_dated_task_id(self, notes: str | None, task_id: str) -> str:
+        clean_notes = self._optional_text(notes)
+        marker = f"[planner_os_task_id: {task_id}]"
+        if marker.casefold() in clean_notes.casefold():
+            return clean_notes
+        return f"{clean_notes}\n{marker}".strip()
 
     def _parse_time(self, value: str | time | None) -> time | None:
         if value is None or value == "":

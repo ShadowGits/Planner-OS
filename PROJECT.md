@@ -13,7 +13,17 @@ The assistant should:
 - Optimize plans rather than simply executing commands.
 - Track daily, weekly, and monthly progress.
 - Learn user behavior over time without treating learned patterns as permanent facts.
-- Be modular so future integrations (Google Calendar, Structured, Gmail, WhatsApp, Slack, etc.) plug into the same Planner Engine.
+- Be modular so local calendar integrations plug into the same Planner Engine.
+
+## Local MVP2 Architecture
+
+The workbook remains the planning source of truth. Downstream execution is
+handled by exactly one persistent active target: `google_calendar`,
+`apple_calendar`, or `none`. Changing the target affects future publishing only;
+moving existing external items requires an explicit preview and apply.
+
+Apple Calendar uses a small native Swift/EventKit helper with JSON over
+stdin/stdout. It does not automate the Calendar UI.
 
 ## Principles
 

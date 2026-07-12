@@ -69,6 +69,29 @@ def month_plan() -> MonthPlan:
     )
 
 
+def month_plan_with_task(task: PlannerTask) -> MonthPlan:
+    """Build a month plan with one weekly task."""
+
+    return MonthPlan(
+        month="Jul 2026",
+        sheet_name="Jul 2026",
+        monthly_goals=[],
+        week_sections=[
+            WeekSection(
+                name="WEEK 1",
+                title="WEEK 1 · 06 Jul – 12 Jul 2026",
+                sheet_name="Jul 2026",
+                heading_row=20,
+                header_row=21,
+                start_row=22,
+                end_row=33,
+                tasks=[task],
+                cell_references={"heading": "B20"},
+            )
+        ],
+    )
+
+
 def blocks_by_category(plan, category: str):
     """Return blocks matching a category across a weekly plan."""
 
@@ -127,7 +150,7 @@ class SchedulerEngineTests(TestCase):
 
         plan = scheduler.plan_week(month_plan(), date(2026, 7, 6))
 
-        self.assertEqual(len(blocks_by_category(plan, "german")), 7)
+        self.assertEqual(len(blocks_by_category(plan, "german")), 0)
         piano_blocks = blocks_by_category(plan, "piano")
         self.assertEqual(len(piano_blocks), 7)
         self.assertTrue(
@@ -140,6 +163,80 @@ class SchedulerEngineTests(TestCase):
         ignou_count = len(blocks_by_category(plan, "ignou"))
         self.assertGreaterEqual(ignou_count, 2)
         self.assertLessEqual(ignou_count, 3)
+
+    def test_weekly_task_appears_once_in_week(self) -> None:
+        scheduler = self.scheduler()
+
+        plan = scheduler.plan_week(month_plan(), date(2026, 7, 6))
+
+        weekly_blocks = [
+            block for block in all_blocks(plan) if block.title == "Build planner reader"
+        ]
+        self.assertEqual(len(weekly_blocks), 1)
+        metadata = weekly_blocks[0].metadata or {}
+        self.assertEqual(metadata["source_task_id"], "Jul 2026:23")
+        self.assertEqual(metadata["duration"], 60)
+        self.assertIn("placement_reason", metadata)
+        self.assertEqual(metadata["hard_constraint_status"], "not_applicable")
+        self.assertEqual(metadata["resolved_publication_target"], "active_execution_target")
+
+    def test_weekly_task_without_explicit_day_is_deterministic(self) -> None:
+        scheduler = self.scheduler()
+
+        first = scheduler.plan_week(month_plan(), date(2026, 7, 6))
+        second = scheduler.plan_week(month_plan(), date(2026, 7, 6))
+
+        first_block = next(
+            block for block in all_blocks(first) if block.title == "Build planner reader"
+        )
+        second_block = next(
+            block for block in all_blocks(second) if block.title == "Build planner reader"
+        )
+        self.assertEqual(first_block.start, second_block.start)
+
+    def test_explicit_dated_weekly_task_appears_only_on_exact_date(self) -> None:
+        scheduler = self.scheduler()
+        task = PlannerTask(
+            name="Call plumber",
+            category="Personal",
+            priority=Priority.MEDIUM,
+            status=TaskStatus.NOT_STARTED,
+            notes=None,
+            sheet_name="Jul 2026",
+            row_number=25,
+            week_name="WEEK 1",
+            cell_references={"name": "B25"},
+            scheduled_dates=(date(2026, 7, 8),),
+        )
+
+        plan = scheduler.plan_week(month_plan_with_task(task), date(2026, 7, 6))
+
+        plumber_blocks = [block for block in all_blocks(plan) if block.title == "Call plumber"]
+        self.assertEqual(len(plumber_blocks), 1)
+        self.assertEqual(plumber_blocks[0].start.date(), date(2026, 7, 8))
+
+    def test_plan_day_only_emits_weekly_task_on_chosen_date(self) -> None:
+        scheduler = self.scheduler()
+
+        days_with_task = [
+            target
+            for target in (date(2026, 7, 6) + timedelta(days=offset) for offset in range(7))
+            if any(
+                block.title == "Build planner reader"
+                for block in scheduler.plan_day(month_plan(), target).blocks
+            )
+        ]
+
+        self.assertEqual(len(days_with_task), 1)
+
+    def test_frequency_none_produces_zero_german_blocks(self) -> None:
+        scheduler = self.scheduler()
+
+        day = scheduler.plan_day(month_plan(), date(2026, 7, 6))
+        week = scheduler.plan_week(month_plan(), date(2026, 7, 6))
+
+        self.assertFalse(any(block.category == "german" for block in day.blocks))
+        self.assertEqual(len(blocks_by_category(week, "german")), 0)
 
     def test_gym_target_uses_three_double_and_three_single_days_without_forbidden_dance(
         self,
@@ -317,6 +414,15 @@ class SchedulerEngineTests(TestCase):
         self.assertGreaterEqual(
             gym_blocks[1].start - gym_blocks[0].end,
             timedelta(minutes=15),
+        )
+        self.assertTrue(
+            all(
+                (block.metadata or {})["hard_constraint_status"] == "satisfied"
+                for block in gym_blocks
+            )
+        )
+        self.assertTrue(
+            all("requested_window_start" in (block.metadata or {}) for block in gym_blocks)
         )
 
     def test_bounded_gym_conflict_is_atomic_and_never_leaves_window(self) -> None:

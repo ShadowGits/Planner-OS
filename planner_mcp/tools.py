@@ -9,9 +9,16 @@ from typing import Any
 
 from planner_engine.excel import ExcelPlannerStore
 from planner_engine.calendar_sync import CalendarSyncService
+from planner_engine.calendar_operations import GoogleCalendarOperations
 from planner_engine.checkin import DailyCheckInService
 from planner_engine.command_router import PlannerCommand, PlannerCommandRouter, parse_common_intent
 from planner_engine.current_time import CurrentTimePlanner
+from planner_engine.decision_log import DecisionLog
+from planner_engine.doctor import PlannerDoctor
+from planner_engine.execution_factory import create_execution_manager
+from planner_engine.execution_service import ExecutionPublishingService
+from planner_engine.goal_planner import GoalBreakdownService, GoalPlanningRequest
+from planner_engine.target_operations import ExecutionTargetOperations
 from planner_engine.dated_task_scheduler import DatedTaskScheduler
 from planner_engine.models import DailyPlan
 from planner_engine.importer import PlannerImporter
@@ -19,10 +26,15 @@ from planner_engine.models import MonthPlan, MonthlyGoal, PlannerTask, TaskStatu
 from planner_engine.planner import PlannerEngine
 from planner_engine.monthly_planner import MonthlyPlanningRequest
 from planner_engine.planning_commands import DayReplanRequest, PlanningCommandService, WeekPlanningRequest
+from planner_engine.preferences import PreferenceService
+from planner_engine.repair import PlannerRepairService
+from planner_engine.recurrence import RecurrenceRequest, RecurrenceService
 from planner_engine.progress import ProgressEngine
 from planner_engine.rules import RulesEngine
 from planner_engine.rules_manager import RulesManager
+from planner_engine.reviews import ReviewService
 from planner_engine.scheduler import SchedulerEngine
+from planner_engine.undo import UndoService
 from planner_engine.writer import Writer, WriterResult
 from planner_integrations.google_calendar import GoogleCalendarClient
 from planner_mcp.models import PlannerMCPConfig, ToolResult
@@ -36,6 +48,7 @@ class PlannerMCPTools:
         self._planning: PlanningCommandService | None = None
         self._calendar_sync: CalendarSyncService | None = None
         self._router: PlannerCommandRouter | None = None
+        self._execution = None
 
     def validate(self) -> dict[str, Any]:
         """Check workbook readability, rules, and planner structure."""
@@ -121,6 +134,113 @@ class PlannerMCPTools:
             ).to_dict()
         except Exception as error:
             return self._error("Could not set no-work days", error)
+
+    def list_execution_targets(self) -> dict[str, Any]:
+        return self._execution_result("Execution targets listed", lambda: self._execution_manager().list_execution_targets())
+
+    def get_active_execution_target(self) -> dict[str, Any]:
+        return self._execution_result("Active execution target", lambda: {"active_target": self._execution_manager().get_active_execution_target()})
+
+    def set_active_execution_target(self, target: str) -> dict[str, Any]:
+        return self._execution_result("Execution target changed; existing external items untouched", lambda: self._execution_manager().set_active_execution_target(target))
+
+    def preview_execution_target_switch(self, target: str) -> dict[str, Any]:
+        return self._execution_result("Execution target switch preview", lambda: self._execution_manager().preview_execution_target_switch(target).to_dict())
+
+    def apply_execution_target_switch(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Execution target switch applied", lambda: self._execution_manager().apply_execution_target_switch(preview_id))
+
+    def preview_move_external_items(self, source_target: str, destination_target: str, start_date: str, end_date: str) -> dict[str, Any]:
+        return self._execution_result("External-item migration preview", lambda: self._execution_manager().preview_move_external_items(source_target, destination_target, date.fromisoformat(start_date), date.fromisoformat(end_date)).to_dict())
+
+    def apply_move_external_items(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("External-item migration applied", lambda: self._execution_manager().apply_move_external_items(preview_id))
+
+    def publish_date(self, target_date: str) -> dict[str, Any]:
+        return self._execution_result("Date publication complete", lambda: self._execution_publisher().publish_date(date.fromisoformat(target_date)).to_dict())
+
+    def publish_today(self) -> dict[str, Any]:
+        return self._execution_result("Today publication complete", lambda: self._execution_publisher().publish_today().to_dict())
+
+    def publish_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        return self._execution_result("Range publication complete", lambda: self._execution_publisher().publish_range(date.fromisoformat(start_date), date.fromisoformat(end_date)).to_dict())
+
+    def publish_current_week(self) -> dict[str, Any]:
+        return self._execution_result("Current-week publication complete", lambda: self._execution_publisher().publish_current_week().to_dict())
+
+    def apple_calendar_status(self) -> dict[str, Any]:
+        return self._execution_result("Apple Calendar status", lambda: self._execution_manager().targets["apple_calendar"].health())
+
+    def apple_calendar_calendars(self) -> dict[str, Any]:
+        return self._execution_result("Apple calendars listed", lambda: {"calendars": self._execution_manager().targets["apple_calendar"].client.list_calendars()})
+
+    def create_apple_calendar(self, title: str = "Planner OS") -> dict[str, Any]:
+        def action() -> dict[str, Any]:
+            manager = self._execution_manager()
+            created = manager.targets["apple_calendar"].client.create_calendar(title)
+            calendar_id = str(created["id"])
+            manager.settings.set_apple_calendar_id(calendar_id)
+            return {"success": True, "calendar": created, "apple_calendar_id": calendar_id}
+
+        return self._execution_result("Apple Calendar created and selected", action)
+
+    def set_apple_calendar(self, calendar_id: str) -> dict[str, Any]:
+        return self._execution_result("Apple Calendar selected", lambda: {"apple_calendar_id": self._execution_manager().settings.set_apple_calendar_id(calendar_id)})
+
+    def apple_calendar_list_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        target = self._execution_manager().targets["apple_calendar"]
+        return self._execution_result("Planner OS Apple Calendar events listed", lambda: {"items": [asdict(item) for item in target.list_items(date.fromisoformat(start_date), date.fromisoformat(end_date))]})
+
+    def apple_calendar_reconcile_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        target = self._execution_manager().targets["apple_calendar"]
+        start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        return self._execution_result("Apple Calendar reconciliation complete", lambda: target.reconcile(self._execution_publisher().blocks_for_range(start, end), start, end).to_dict())
+
+    def apple_calendar_delete_event(self, external_id: str, delete_scope: str = "single") -> dict[str, Any]:
+        target = self._execution_manager().targets["apple_calendar"]
+        return self._execution_result("Apple Calendar event deletion complete", lambda: target.delete_item(external_id, delete_scope=delete_scope).to_dict())
+
+    def apple_calendar_update_event(self, external_id: str, block: dict[str, Any]) -> dict[str, Any]:
+        target = self._execution_manager().targets["apple_calendar"]
+        return self._execution_result("Apple Calendar event updated", lambda: target.update_block(self._scheduled_block(block), external_id).to_dict())
+
+    def preview_apple_calendar_delete_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        return self._execution_result("Apple Calendar delete-range preview", lambda: self._apple_operations().preview_delete_range(date.fromisoformat(start_date), date.fromisoformat(end_date)))
+
+    def apply_apple_calendar_delete_range(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Apple Calendar delete-range applied", lambda: self._apple_operations().apply_delete_range(preview_id))
+
+    def calendar_list_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        return self._execution_result("Planner OS Google events listed", lambda: {"events": self._calendar_operations().list_range(date.fromisoformat(start_date), date.fromisoformat(end_date))})
+
+    def calendar_lookup_event(self, planner_block_id: str, start_date: str, end_date: str) -> dict[str, Any]:
+        return self._execution_result("Google event lookup complete", lambda: {"events": self._calendar_operations().lookup_event(planner_block_id, date.fromisoformat(start_date), date.fromisoformat(end_date))})
+
+    def calendar_update_event(self, external_id: str, block: dict[str, Any]) -> dict[str, Any]:
+        return self._execution_result("Google event updated", lambda: self._calendar_operations().update_event(external_id, self._scheduled_block(block)))
+
+    def calendar_delete_event(self, external_id: str, scope: str = "single") -> dict[str, Any]:
+        return self._execution_result("Google event deleted", lambda: self._calendar_operations().delete_event(external_id, scope))
+
+    def preview_calendar_delete_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        return self._execution_result("Google delete-range preview", lambda: self._calendar_operations().preview_delete_range(date.fromisoformat(start_date), date.fromisoformat(end_date)).to_dict())
+
+    def apply_calendar_delete_range(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Google delete-range applied", lambda: self._calendar_operations().apply_delete_range(preview_id))
+
+    def calendar_reconcile_range(self, start_date: str, end_date: str) -> dict[str, Any]:
+        start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        return self._execution_result("Google reconciliation complete", lambda: self._calendar_operations().reconcile_range(self._execution_publisher().blocks_for_range(start, end), start, end))
+
+    def preview_calendar_cleanup_orphans(self, start_date: str, end_date: str) -> dict[str, Any]:
+        start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        return self._execution_result("Google orphan-cleanup preview", lambda: self._calendar_operations().preview_cleanup_orphans(self._execution_publisher().blocks_for_range(start, end), start, end).to_dict())
+
+    def apply_calendar_cleanup_orphans(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Google orphan cleanup applied", lambda: self._calendar_operations().apply_delete_range(preview_id, "calendar_cleanup_orphans"))
+
+    def calendar_repair_mapping(self, external_id: str) -> dict[str, Any]:
+        return self._execution_result("Google mapping repaired", lambda: self._calendar_operations().repair_mapping(external_id))
 
     def plan_today(self) -> dict[str, Any]:
         """Generate today's schedule without writing to Excel."""
@@ -504,6 +624,116 @@ class PlannerMCPTools:
         except Exception as error:
             return self._error("Could not generate daily check-in", error)
 
+    def daily_review(self, task_date: str | None = None) -> dict[str, Any]:
+        return self._execution_result("Daily review generated", lambda: ReviewService(self._planner_engine()).daily_review(date.fromisoformat(task_date) if task_date else None).to_dict())
+
+    def weekly_review(self, task_date: str | None = None) -> dict[str, Any]:
+        return self._execution_result("Weekly review generated", lambda: ReviewService(self._planner_engine()).weekly_review(date.fromisoformat(task_date) if task_date else None).to_dict())
+
+    def monthly_review(self, month: str) -> dict[str, Any]:
+        return self._execution_result("Monthly review generated", lambda: ReviewService(self._planner_engine()).monthly_review(month).to_dict())
+
+    def planner_doctor(self) -> dict[str, Any]:
+        return self._execution_result(
+            "Planner doctor complete",
+            lambda: PlannerDoctor(
+                self.config.planner_path,
+                self.config.rules_path,
+                self.config.execution_settings_path,
+                self.config.external_links_path,
+                self.config.execution_preview_dir,
+                self.config.decision_log_path,
+                self.config.backup_dir,
+            ).run().to_dict(),
+        )
+
+    def list_preferences(self) -> dict[str, Any]:
+        return self._execution_result("Preferences listed", lambda: self._preference_service().list_preferences().to_dict())
+
+    def get_preference(self, name: str) -> dict[str, Any]:
+        return self._execution_result("Preference loaded", lambda: self._preference_service().get_preference(name).to_dict())
+
+    def update_preference(self, name: str, value: Any) -> dict[str, Any]:
+        return self._execution_result("Preference updated", lambda: self._preference_service().update_preference(name, value).to_dict())
+
+    def reset_preference(self, name: str) -> dict[str, Any]:
+        return self._execution_result("Preference reset", lambda: self._preference_service().reset_preference(name).to_dict())
+
+    def explain_active_constraints(self) -> dict[str, Any]:
+        return self._execution_result("Active constraints explained", lambda: self._preference_service().explain_active_constraints().to_dict())
+
+    def preview_planner_repair(self) -> dict[str, Any]:
+        return self._execution_result("Planner repair preview", lambda: self._repair_service().preview_repair().to_dict())
+
+    def apply_planner_repair(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Planner repair applied", lambda: self._repair_service().apply_repair(preview_id))
+
+    def preview_undo(self, decision_id: str | None = None) -> dict[str, Any]:
+        return self._execution_result("Undo preview", lambda: self._undo_service().preview_undo(decision_id).to_dict())
+
+    def apply_undo(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Undo applied", lambda: self._undo_service().apply_undo(preview_id))
+
+    def undo_last_change(self) -> dict[str, Any]:
+        return self._execution_result("Last workbook change undone", lambda: self._undo_service().undo_last_change())
+
+    def preview_recurrence(self, request: dict[str, Any]) -> dict[str, Any]:
+        def action() -> dict[str, Any]:
+            preview = self._recurrence_service().preview_recurrence(
+                RecurrenceRequest(
+                    title=str(request["title"]),
+                    frequency=str(request["frequency"]),
+                    start_date=date.fromisoformat(str(request["start_date"])),
+                    until_date=date.fromisoformat(str(request["until_date"])) if request.get("until_date") else None,
+                    count=int(request["count"]) if request.get("count") is not None else None,
+                    selected_weekdays=[str(item) for item in request.get("selected_weekdays", [])],
+                    estimated_minutes=int(request.get("estimated_minutes", 30)),
+                    preferred_daypart=request.get("preferred_daypart"),
+                    category=request.get("category"),
+                )
+            )
+            return preview.to_dict()
+
+        return self._execution_result("Recurrence preview", action)
+
+    def apply_recurrence(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Recurrence applied", lambda: asdict(self._recurrence_service().apply_recurrence(preview_id)))
+
+    def list_recurrences(self) -> dict[str, Any]:
+        return self._execution_result("Recurrences listed", lambda: {"recurrences": self._recurrence_service().list_recurrences()})
+
+    def pause_recurrence(self, recurrence_id: str) -> dict[str, Any]:
+        return self._execution_result("Recurrence paused", lambda: self._recurrence_service().pause_recurrence(recurrence_id))
+
+    def resume_recurrence(self, recurrence_id: str) -> dict[str, Any]:
+        return self._execution_result("Recurrence resumed", lambda: self._recurrence_service().resume_recurrence(recurrence_id))
+
+    def preview_goal_plan(self, request: dict[str, Any]) -> dict[str, Any]:
+        def action() -> dict[str, Any]:
+            preview = self._goal_service().preview_goal_plan(
+                GoalPlanningRequest(
+                    title=str(request["title"]),
+                    target_date=date.fromisoformat(str(request["target_date"])),
+                    start_date=date.fromisoformat(str(request["start_date"])),
+                    category=request.get("category"),
+                    current_level=request.get("current_level"),
+                    target_level=request.get("target_level"),
+                    weekly_capacity_minutes=int(request.get("weekly_capacity_minutes", 300)),
+                    allowed_days=[str(item) for item in request.get("allowed_days", [])],
+                    preferred_dayparts=[str(item) for item in request.get("preferred_dayparts", [])],
+                    fixed_daily_minutes=int(request.get("fixed_daily_minutes", 45)),
+                    supporting_activities=[str(item) for item in request.get("supporting_activities", [])],
+                    hard_constraints=[str(item) for item in request.get("hard_constraints", [])],
+                    notes=request.get("notes"),
+                )
+            )
+            return preview.to_dict()
+
+        return self._execution_result("Goal plan preview", action)
+
+    def apply_goal_plan(self, preview_id: str) -> dict[str, Any]:
+        return self._execution_result("Goal plan applied", lambda: self._goal_service().apply_goal_plan(preview_id))
+
     def parse_common_intent(self, text: str) -> dict[str, Any]:
         command = parse_common_intent(text)
         return ToolResult(True, "Intent parsed", data={"command": command.to_dict()}).to_dict()
@@ -558,8 +788,83 @@ class PlannerMCPTools:
             self._router = PlannerCommandRouter(
                 self._planning_service(), writer, RulesManager(self.config.rules_path),
                 self._calendar_sync_service(), DailyCheckInService(engine),
+                execution_manager=self._execution_manager(),
+                publisher=self._execution_publisher(),
+                preferences=self._preference_service(),
+                repair=self._repair_service(),
+                undo=self._undo_service(),
+                recurrence=self._recurrence_service(),
             )
         return self._router
+
+    def _execution_manager(self):
+        if self._execution is None:
+            self._execution = create_execution_manager(
+                settings_path=self.config.execution_settings_path,
+                links_path=self.config.external_links_path,
+                preview_dir=self.config.execution_preview_dir,
+                apple_helper_path=self.config.apple_calendar_helper_path,
+                apple_calendar_id=self.config.apple_calendar_id,
+                google_client=self._calendar_client(),
+            )
+        return self._execution
+
+    def _execution_publisher(self) -> ExecutionPublishingService:
+        return ExecutionPublishingService(self._planner_engine(), RulesEngine(self.config.rules_path), self._execution_manager())
+
+    def _calendar_operations(self) -> GoogleCalendarOperations:
+        manager = self._execution_manager()
+        return GoogleCalendarOperations(manager.targets["google_calendar"].client, manager.links, self.config.execution_preview_dir / "google-calendar")
+
+    def _preference_service(self) -> PreferenceService:
+        return PreferenceService(RulesManager(self.config.rules_path), self._execution_manager().settings)
+
+    def _repair_service(self) -> PlannerRepairService:
+        return PlannerRepairService(self._execution_manager().links, self.config.execution_preview_dir / "repair")
+
+    def _undo_service(self) -> UndoService:
+        return UndoService(
+            ExcelPlannerStore(self.config.planner_path, self.config.backup_dir),
+            DecisionLog(self.config.decision_log_path),
+            self.config.execution_preview_dir / "undo",
+        )
+
+    def _recurrence_service(self) -> RecurrenceService:
+        engine = self._planner_engine()
+        return RecurrenceService(
+            self.config.planner_path,
+            Writer(engine, ProgressEngine(), decision_log=DecisionLog(self.config.decision_log_path)),
+            self.config.execution_preview_dir / "recurrence",
+        )
+
+    def _goal_service(self) -> GoalBreakdownService:
+        engine = self._planner_engine()
+        return GoalBreakdownService(
+            self.config.planner_path,
+            Writer(engine, ProgressEngine(), decision_log=DecisionLog(self.config.decision_log_path)),
+            self.config.execution_preview_dir / "goal",
+        )
+
+    def _apple_operations(self):
+        return ExecutionTargetOperations(self._execution_manager().targets["apple_calendar"], self.config.execution_preview_dir / "apple-calendar")
+
+    def _scheduled_block(self, payload: dict[str, Any]):
+        from planner_engine.models import ScheduledBlock
+        return ScheduledBlock(
+            title=str(payload["title"]), start=datetime.fromisoformat(str(payload["start"])),
+            end=datetime.fromisoformat(str(payload["end"])), category=str(payload.get("category", "planner")),
+            source=str(payload.get("source", "calendar_update")), is_fixed=bool(payload.get("is_fixed", False)),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+    def _execution_result(self, message: str, action: Any) -> dict[str, Any]:
+        try:
+            data = action()
+            success = bool(data.get("success", True)) if isinstance(data, dict) else True
+            errors = list(data.get("errors", [])) if isinstance(data, dict) else []
+            return ToolResult(success, message, data=data, errors=errors).to_dict()
+        except Exception as error:
+            return self._error(message, error)
 
     def _month_plan(self, target_date: date) -> MonthPlan:
         """Load the configured or inferred month plan."""

@@ -140,6 +140,21 @@ class RulesEngine:
         no_work_days = {day.casefold() for day in self.rules.work.no_work_days}
         return normalized_day in active_days and normalized_day not in no_work_days
 
+    def is_rule_enabled(self, rule_name: str) -> bool:
+        """Return whether a rule section should generate scheduled blocks."""
+
+        section = getattr(self, "_raw_rules", {}).get(rule_name, {})
+        if not isinstance(section, dict):
+            return True
+        if section.get("enabled") is False:
+            return False
+        if str(section.get("status", "")).strip().casefold() == "disabled":
+            return False
+        frequency = section.get("frequency")
+        if frequency is not None and str(frequency).strip().casefold() == "none":
+            return False
+        return True
+
     def required_gym_sessions(self) -> int:
         """Return the weekly gym session target."""
 
@@ -184,6 +199,7 @@ class RulesEngine:
         if not isinstance(raw_rules, dict):
             raise RulesValidationError("Rules config must be a YAML mapping.")
 
+        self._raw_rules = raw_rules
         self._validate_required_fields(raw_rules)
         return self._build_rules(raw_rules)
 

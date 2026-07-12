@@ -253,7 +253,7 @@ class SemanticWriterTests(TestCase):
             schedule = SchedulerEngine(
                 RulesEngine(Path("config/rules.yaml")),
                 decision_log=DecisionLog(tmp_path / "scheduler_log.jsonl"),
-            ).plan_week(month_plan, date(2026, 7, 6))
+            ).plan_week(month_plan, date(2026, 6, 29))
             scheduler_items = {
                 block.title for day in schedule.days for block in day.blocks
             } | {conflict.item for conflict in schedule.conflicts}

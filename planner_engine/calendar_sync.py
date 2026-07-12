@@ -96,16 +96,17 @@ class CalendarSyncService:
             dated_blocks, dated_conflicts = DatedTaskScheduler(
                 self.rules_engine
             ).schedule_date(cursor, dated, day_plan.blocks)
-            dated_categories = {
-                block.category.casefold()
+            dated_source_task_ids = {
+                str((block.metadata or {}).get("source_task_id"))
                 for block in dated_blocks
-                if block.category
+                if (block.metadata or {}).get("source_task_id")
             }
             base_blocks = [
                 block
                 for block in day_plan.blocks
                 if block.is_fixed
-                or block.category.casefold() not in dated_categories
+                or str((block.metadata or {}).get("source_task_id"))
+                not in dated_source_task_ids
             ]
             days.append(
                 DailyPlan(

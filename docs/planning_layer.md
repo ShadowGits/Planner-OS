@@ -91,6 +91,11 @@ Supported phrase families include weekend rules, complete/move task, plan or
 replan from now, current/next-week sync, coming-week preview, daily check-in,
 bounded gym requests, and tomorrow tasks.
 
+MVP2 routing also covers local execution-target switching, active-target
+publishing, preferences, planner repair previews, undo, and recurrence
+preview/apply commands. Low-confidence phrases still require confirmation and
+do not mutate planner state.
+
 `shadow route` now dispatches high-confidence commands through the router.
 Commands marked ambiguous or confirmation-required remain non-mutating. Split
 requests such as "sort room half today and half tomorrow afternoon" produce two

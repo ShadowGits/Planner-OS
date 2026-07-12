@@ -47,6 +47,204 @@ def set_no_work_days(days: list[str]) -> dict:
 
 
 @mcp.tool()
+def list_execution_targets() -> dict:
+    """List supported targets and the one active target."""
+    return planner_tools.list_execution_targets()
+
+
+@mcp.tool()
+def get_active_execution_target() -> dict:
+    """Return the persistent active downstream target."""
+    return planner_tools.get_active_execution_target()
+
+
+@mcp.tool()
+def set_active_execution_target(target: str) -> dict:
+    """Set future publishing target without moving existing items."""
+    return planner_tools.set_active_execution_target(target)
+
+
+@mcp.tool()
+def preview_execution_target_switch(target: str) -> dict:
+    """Preview changing future publishing to one target."""
+    return planner_tools.preview_execution_target_switch(target)
+
+
+@mcp.tool()
+def apply_execution_target_switch(preview_id: str) -> dict:
+    """Apply an approved target-switch preview."""
+    return planner_tools.apply_execution_target_switch(preview_id)
+
+
+@mcp.tool()
+def preview_move_external_items(source_target: str, destination_target: str, start_date: str, end_date: str) -> dict:
+    """Preview explicit cross-target migration of external items."""
+    return planner_tools.preview_move_external_items(source_target, destination_target, start_date, end_date)
+
+
+@mcp.tool()
+def apply_move_external_items(preview_id: str) -> dict:
+    """Apply an approved explicit cross-target migration."""
+    return planner_tools.apply_move_external_items(preview_id)
+
+
+@mcp.tool()
+def publish_today() -> dict:
+    """Publish today using only the active execution target."""
+    return planner_tools.publish_today()
+
+
+@mcp.tool()
+def publish_date(date: str) -> dict:
+    """Publish one date using only the active execution target."""
+    return planner_tools.publish_date(date)
+
+
+@mcp.tool()
+def publish_range(start_date: str, end_date: str) -> dict:
+    """Publish a range using only the active execution target."""
+    return planner_tools.publish_range(start_date, end_date)
+
+
+@mcp.tool()
+def publish_current_week() -> dict:
+    """Publish current week using only the active execution target."""
+    return planner_tools.publish_current_week()
+
+
+@mcp.tool()
+def apple_calendar_status() -> dict:
+    """Report native Apple Calendar permission and capabilities."""
+    return planner_tools.apple_calendar_status()
+
+
+@mcp.tool()
+def apple_calendar_calendars() -> dict:
+    """List writable local Apple calendars."""
+    return planner_tools.apple_calendar_calendars()
+
+
+@mcp.tool()
+def create_apple_calendar(title: str = "Planner OS") -> dict:
+    """Create and select a dedicated local Apple calendar."""
+    return planner_tools.create_apple_calendar(title)
+
+
+@mcp.tool()
+def set_apple_calendar(calendar_id: str) -> dict:
+    """Persist the selected Apple Calendar identifier."""
+    return planner_tools.set_apple_calendar(calendar_id)
+
+
+@mcp.tool()
+def apple_calendar_list_range(start_date: str, end_date: str) -> dict:
+    """List Planner OS-owned Apple events in a range."""
+    return planner_tools.apple_calendar_list_range(start_date, end_date)
+
+
+@mcp.tool()
+def apple_calendar_reconcile_range(start_date: str, end_date: str) -> dict:
+    """Reconcile Apple Calendar events in a range."""
+    return planner_tools.apple_calendar_reconcile_range(start_date, end_date)
+
+
+@mcp.tool()
+def apple_calendar_delete_event(external_id: str, delete_scope: str = "single") -> dict:
+    """Delete one explicitly identified Planner OS Apple event."""
+    return planner_tools.apple_calendar_delete_event(external_id, delete_scope)
+
+
+@mcp.tool()
+def apple_calendar_update_event(external_id: str, block: dict) -> dict:
+    """Update one explicitly identified Planner OS Apple event."""
+    return planner_tools.apple_calendar_update_event(external_id, block)
+
+
+@mcp.tool()
+def preview_apple_calendar_delete_range(start_date: str, end_date: str) -> dict:
+    """Preview exact Planner OS Apple events to delete."""
+    return planner_tools.preview_apple_calendar_delete_range(start_date, end_date)
+
+
+@mcp.tool()
+def apply_apple_calendar_delete_range(preview_id: str) -> dict:
+    """Apply an approved Apple Calendar range deletion."""
+    return planner_tools.apply_apple_calendar_delete_range(preview_id)
+
+
+@mcp.tool()
+def calendar_list_range(start_date: str, end_date: str) -> dict:
+    """List Planner OS-owned Google events in a range."""
+    return planner_tools.calendar_list_range(start_date, end_date)
+
+
+@mcp.tool()
+def calendar_lookup_event(planner_block_id: str, start_date: str, end_date: str) -> dict:
+    """Find Google events by stable planner block ID."""
+    return planner_tools.calendar_lookup_event(planner_block_id, start_date, end_date)
+
+
+@mcp.tool()
+def calendar_update_event(external_id: str, block: dict) -> dict:
+    """Update one explicitly identified Planner OS Google event."""
+    return planner_tools.calendar_update_event(external_id, block)
+
+
+@mcp.tool()
+def calendar_delete_event(external_id: str) -> dict:
+    """Delete one explicitly identified Planner OS Google event."""
+    return planner_tools.calendar_delete_event(external_id)
+
+
+@mcp.tool()
+def calendar_delete_series(external_id: str) -> dict:
+    """Delete a Planner OS Google recurring series."""
+    return planner_tools.calendar_delete_event(external_id, "series")
+
+
+@mcp.tool()
+def calendar_delete_future_series(external_id: str) -> dict:
+    """Delete this and future Planner OS Google recurring events."""
+    return planner_tools.calendar_delete_event(external_id, "future")
+
+
+@mcp.tool()
+def preview_calendar_delete_range(start_date: str, end_date: str) -> dict:
+    """Preview exact Planner OS Google events to delete."""
+    return planner_tools.preview_calendar_delete_range(start_date, end_date)
+
+
+@mcp.tool()
+def apply_calendar_delete_range(preview_id: str) -> dict:
+    """Apply an approved Google event range deletion."""
+    return planner_tools.apply_calendar_delete_range(preview_id)
+
+
+@mcp.tool()
+def calendar_reconcile_range(start_date: str, end_date: str) -> dict:
+    """Reconcile planner blocks with Google Calendar."""
+    return planner_tools.calendar_reconcile_range(start_date, end_date)
+
+
+@mcp.tool()
+def preview_calendar_cleanup_orphans(start_date: str, end_date: str) -> dict:
+    """Preview orphaned Planner OS Google events for cleanup."""
+    return planner_tools.preview_calendar_cleanup_orphans(start_date, end_date)
+
+
+@mcp.tool()
+def apply_calendar_cleanup_orphans(preview_id: str) -> dict:
+    """Apply an approved orphan cleanup."""
+    return planner_tools.apply_calendar_cleanup_orphans(preview_id)
+
+
+@mcp.tool()
+def calendar_repair_mapping(external_id: str) -> dict:
+    """Repair a local mapping from Planner OS Google event metadata."""
+    return planner_tools.calendar_repair_mapping(external_id)
+
+
+@mcp.tool()
 def plan_today() -> dict:
     """Generate today's schedule without writing to Excel."""
 
@@ -311,6 +509,132 @@ def daily_checkin(date: str | None = None) -> dict:
     """Generate a read-only daily progress check-in."""
 
     return planner_tools.daily_checkin(date)
+
+
+@mcp.tool()
+def daily_review(date: str | None = None) -> dict:
+    """Generate a read-only daily review."""
+    return planner_tools.daily_review(date)
+
+
+@mcp.tool()
+def weekly_review(date: str | None = None) -> dict:
+    """Generate a read-only weekly review."""
+    return planner_tools.weekly_review(date)
+
+
+@mcp.tool()
+def monthly_review(month: str) -> dict:
+    """Generate a read-only monthly review."""
+    return planner_tools.monthly_review(month)
+
+
+@mcp.tool()
+def planner_doctor() -> dict:
+    """Run read-only local Planner OS diagnostics."""
+    return planner_tools.planner_doctor()
+
+
+@mcp.tool()
+def list_preferences() -> dict:
+    """List persistent planner preferences and editable aliases."""
+    return planner_tools.list_preferences()
+
+
+@mcp.tool()
+def get_preference(name: str) -> dict:
+    """Read one planner preference."""
+    return planner_tools.get_preference(name)
+
+
+@mcp.tool()
+def update_preference(name: str, value) -> dict:
+    """Update one planner preference through a validated local store."""
+    return planner_tools.update_preference(name, value)
+
+
+@mcp.tool()
+def reset_preference(name: str) -> dict:
+    """Reset one preference when a safe built-in reset exists."""
+    return planner_tools.reset_preference(name)
+
+
+@mcp.tool()
+def explain_active_constraints() -> dict:
+    """Explain the constraints currently affecting planning and publishing."""
+    return planner_tools.explain_active_constraints()
+
+
+@mcp.tool()
+def preview_planner_repair() -> dict:
+    """Preview local Planner OS consistency repairs."""
+    return planner_tools.preview_planner_repair()
+
+
+@mcp.tool()
+def apply_planner_repair(preview_id: str) -> dict:
+    """Apply an approved local repair preview."""
+    return planner_tools.apply_planner_repair(preview_id)
+
+
+@mcp.tool()
+def preview_undo(decision_id: str | None = None) -> dict:
+    """Preview restoring a workbook backup referenced by Decision Log."""
+    return planner_tools.preview_undo(decision_id)
+
+
+@mcp.tool()
+def apply_undo(preview_id: str) -> dict:
+    """Apply an approved workbook undo preview."""
+    return planner_tools.apply_undo(preview_id)
+
+
+@mcp.tool()
+def undo_last_change() -> dict:
+    """Undo the most recent workbook change with a Decision Log backup."""
+    return planner_tools.undo_last_change()
+
+
+@mcp.tool()
+def preview_recurrence(request: dict) -> dict:
+    """Preview generated occurrences for a recurrence definition."""
+    return planner_tools.preview_recurrence(request)
+
+
+@mcp.tool()
+def apply_recurrence(preview_id: str) -> dict:
+    """Apply an approved recurrence preview as dated workbook tasks."""
+    return planner_tools.apply_recurrence(preview_id)
+
+
+@mcp.tool()
+def list_recurrences() -> dict:
+    """List workbook-backed recurrence definitions."""
+    return planner_tools.list_recurrences()
+
+
+@mcp.tool()
+def pause_recurrence(recurrence_id: str) -> dict:
+    """Pause a workbook-backed recurrence definition."""
+    return planner_tools.pause_recurrence(recurrence_id)
+
+
+@mcp.tool()
+def resume_recurrence(recurrence_id: str) -> dict:
+    """Resume a workbook-backed recurrence definition."""
+    return planner_tools.resume_recurrence(recurrence_id)
+
+
+@mcp.tool()
+def preview_goal_plan(request: dict) -> dict:
+    """Preview deterministic breakdown of a structured goal."""
+    return planner_tools.preview_goal_plan(request)
+
+
+@mcp.tool()
+def apply_goal_plan(preview_id: str) -> dict:
+    """Apply an approved goal plan preview to the workbook."""
+    return planner_tools.apply_goal_plan(preview_id)
 
 
 @mcp.tool()

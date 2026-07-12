@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
@@ -12,28 +12,45 @@ from zoneinfo import ZoneInfo
 
 from planner_engine.config import (
     DEFAULT_BACKUP_DIR,
+    DEFAULT_EXECUTION_PREVIEW_DIR,
+    DEFAULT_EXECUTION_SETTINGS_PATH,
+    DEFAULT_EXTERNAL_LINKS_PATH,
+    DEFAULT_DECISION_LOG_PATH,
     DEFAULT_GOOGLE_CALENDAR_ID,
     DEFAULT_GOOGLE_CREDENTIALS_PATH,
     DEFAULT_GOOGLE_TIMEZONE,
     DEFAULT_GOOGLE_TOKEN_PATH,
     DEFAULT_PLANNER_PATH,
     DEFAULT_RULES_PATH,
+    DEFAULT_APPLE_CALENDAR_HELPER_PATH,
 )
 from planner_engine.calendar_sync import CalendarSyncService
+from planner_engine.calendar_operations import GoogleCalendarOperations
 from planner_engine.checkin import DailyCheckInService
 from planner_engine.command_router import PlannerCommandRouter, parse_common_intent
 from planner_engine.current_time import CurrentTimePlanner
 from planner_engine.dated_task_scheduler import DatedTaskScheduler
+from planner_engine.doctor import PlannerDoctor
+from planner_engine.decision_log import DecisionLog
+from planner_engine.execution_factory import create_execution_manager
+from planner_engine.execution_service import ExecutionPublishingService
+from planner_engine.goal_planner import GoalBreakdownService, GoalPlanningRequest
+from planner_engine.target_operations import ExecutionTargetOperations
 from planner_engine.excel import ExcelPlannerStore
 from planner_engine.importer import PlannerImporter
-from planner_engine.models import DailyPlan, MonthPlan, MonthlyGoal, PlannerTask, TaskStatus
+from planner_engine.models import DailyPlan, MonthPlan, MonthlyGoal, PlannerTask, ScheduledBlock, TaskStatus
 from planner_engine.planner import PlannerEngine
 from planner_engine.monthly_planner import MonthlyPlanningRequest
 from planner_engine.planning_commands import PlanningCommandService, WeekPlanningRequest
+from planner_engine.preferences import PreferenceService
+from planner_engine.repair import PlannerRepairService
+from planner_engine.recurrence import RecurrenceRequest, RecurrenceService
 from planner_engine.progress import ProgressEngine
 from planner_engine.rules import RulesEngine
 from planner_engine.rules_manager import RulesManager
+from planner_engine.reviews import ReviewService
 from planner_engine.scheduler import SchedulerEngine
+from planner_engine.undo import UndoService
 from planner_engine.writer import Writer
 from planner_integrations.google_calendar import GoogleCalendarClient
 
@@ -70,6 +87,222 @@ class ShadowCLI:
             for item in result.skipped_items:
                 print(f"  • {item}")
         return 0
+
+    def _run_execution_target(self) -> int:
+        manager = self._execution_manager()
+        action = self.args.execution_action
+        if action == "list":
+            result = manager.list_execution_targets()
+        elif action == "get":
+            result = {"active_target": manager.get_active_execution_target()}
+        elif action == "set":
+            result = manager.set_active_execution_target(self.args.target)
+        elif action == "switch-preview":
+            result = manager.preview_execution_target_switch(self.args.target).to_dict()
+        elif action == "switch-apply":
+            result = manager.apply_execution_target_switch(self.args.preview_id)
+        elif action == "move-preview":
+            result = manager.preview_move_external_items(self.args.source, self.args.destination, date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date)).to_dict()
+        elif action == "move-apply":
+            result = manager.apply_move_external_items(self.args.preview_id)
+        else:
+            raise ValueError(f"Unsupported execution-target action: {action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
+
+    def _run_publish(self) -> int:
+        service = ExecutionPublishingService(self._planner_engine(), RulesEngine(self.args.rules), self._execution_manager())
+        if self.args.period == "today":
+            result = service.publish_today()
+        elif self.args.period == "date":
+            result = service.publish_date(date.fromisoformat(self.args.date))
+        elif self.args.period == "current-week":
+            result = service.publish_current_week()
+        else:
+            result = service.publish_range(date.fromisoformat(self.args.start), date.fromisoformat(self.args.end))
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0 if result.success else 1
+
+    def _run_apple_calendar(self) -> int:
+        manager = self._execution_manager()
+        target = manager.targets["apple_calendar"]
+        action = self.args.apple_action
+        if action == "calendars":
+            result = {"success": True, "calendars": target.client.list_calendars()}
+        elif action == "status":
+            result = target.health()
+        elif action == "create-calendar":
+            created = target.client.create_calendar(self.args.title)
+            calendar_id = str(created["id"])
+            manager.settings.set_apple_calendar_id(calendar_id)
+            result = {"success": True, "calendar": created, "apple_calendar_id": calendar_id}
+        elif action == "select":
+            result = {"success": True, "apple_calendar_id": manager.settings.set_apple_calendar_id(self.args.calendar_id)}
+        elif action in {"publish-today", "publish-date", "publish-range"}:
+            if manager.get_active_execution_target() != "apple_calendar":
+                raise ValueError("Apple Calendar must be the active execution target for publishing")
+            service = ExecutionPublishingService(self._planner_engine(), RulesEngine(self.args.rules), manager)
+            if action == "publish-today":
+                response = service.publish_today()
+            elif action == "publish-date":
+                response = service.publish_date(date.fromisoformat(self.args.date))
+            else:
+                response = service.publish_range(date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date))
+            result = response.to_dict()
+        elif action == "list-range":
+            result = {"success": True, "items": [item.__dict__ for item in target.list_items(date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date))]}
+        elif action == "reconcile-range":
+            start = date.fromisoformat(self.args.start_date)
+            end = date.fromisoformat(self.args.end_date)
+            blocks = ExecutionPublishingService(self._planner_engine(), RulesEngine(self.args.rules), manager).blocks_for_range(start, end)
+            result = {"success": True, **target.reconcile(blocks, start, end).to_dict()}
+        elif action == "delete-event":
+            result = target.delete_item(self.args.external_id, delete_scope=self.args.scope).to_dict()
+        elif action == "update-event":
+            block = ScheduledBlock(
+                title=self.args.title,
+                start=datetime.fromisoformat(self.args.start),
+                end=datetime.fromisoformat(self.args.end),
+                category=self.args.category,
+                source=self.args.source,
+                is_fixed=True,
+                metadata={"planner_block_id": self.args.planner_block_id} if self.args.planner_block_id else {},
+            )
+            result = target.update_block(block, self.args.external_id).to_dict()
+        elif action == "delete-range-preview":
+            result = ExecutionTargetOperations(target, self.args.execution_preview_dir / "apple-calendar").preview_delete_range(date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date))
+        elif action == "delete-range-apply":
+            result = ExecutionTargetOperations(target, self.args.execution_preview_dir / "apple-calendar").apply_delete_range(self.args.preview_id)
+        else:
+            raise ValueError(f"Unsupported Apple Calendar action: {action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
+
+    def _run_review(self) -> int:
+        service = ReviewService(self._planner_engine())
+        if self.args.period == "daily":
+            result = service.daily_review(date.fromisoformat(self.args.date) if self.args.date else None)
+        elif self.args.period == "weekly":
+            result = service.weekly_review(date.fromisoformat(self.args.date) if self.args.date else None)
+        else:
+            result = service.monthly_review(self.args.review_month or self._selected_month(date.today()))
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0
+
+    def _run_doctor(self) -> int:
+        report = PlannerDoctor(
+            self.args.planner,
+            self.args.rules,
+            self.args.execution_settings,
+            self.args.external_links,
+            self.args.execution_preview_dir,
+            self.args.decision_log,
+            self.args.backup_dir,
+        ).run()
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.success else 1
+
+    def _run_preferences(self) -> int:
+        service = self._preference_service()
+        action = self.args.preferences_action
+        if action == "list":
+            result = service.list_preferences()
+        elif action == "get":
+            result = service.get_preference(self.args.name)
+        elif action == "update":
+            result = service.update_preference(self.args.name, self._json_value(self.args.value))
+        elif action == "reset":
+            result = service.reset_preference(self.args.name)
+        elif action == "explain-active-constraints":
+            result = service.explain_active_constraints()
+        else:
+            raise ValueError(f"Unsupported preferences action: {action}")
+        print(json.dumps(result.to_dict(), indent=2, default=str))
+        return 0 if result.success else 1
+
+    def _run_repair(self) -> int:
+        service = PlannerRepairService(self._execution_manager().links, self.args.execution_preview_dir / "repair")
+        if self.args.repair_action == "preview":
+            result = service.preview_repair().to_dict()
+        elif self.args.repair_action == "apply":
+            result = service.apply_repair(self.args.preview_id)
+        else:
+            raise ValueError(f"Unsupported repair action: {self.args.repair_action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
+
+    def _run_undo(self) -> int:
+        service = UndoService(
+            ExcelPlannerStore(self.args.planner, self.args.backup_dir),
+            DecisionLog(self.args.decision_log),
+            self.args.execution_preview_dir / "undo",
+        )
+        if self.args.undo_action == "preview":
+            result = service.preview_undo(self.args.decision_id).to_dict()
+        elif self.args.undo_action == "apply":
+            result = service.apply_undo(self.args.preview_id)
+        elif self.args.undo_action == "last":
+            result = service.undo_last_change()
+        else:
+            raise ValueError(f"Unsupported undo action: {self.args.undo_action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
+
+    def _run_recurrence(self) -> int:
+        service = self._recurrence_service()
+        action = self.args.recurrence_action
+        if action == "preview":
+            preview = service.preview_recurrence(
+                RecurrenceRequest(
+                    title=self.args.title,
+                    frequency=self.args.frequency,
+                    start_date=date.fromisoformat(self.args.start_date),
+                    until_date=date.fromisoformat(self.args.until) if self.args.until else None,
+                    count=self.args.count,
+                    selected_weekdays=self.args.weekday or [],
+                    estimated_minutes=self.args.minutes,
+                    preferred_daypart=self.args.daypart,
+                    category=self.args.category,
+                )
+            )
+            result = preview.to_dict()
+        elif action == "apply":
+            writer_result = service.apply_recurrence(self.args.preview_id)
+            result = asdict(writer_result)
+        elif action == "list":
+            result = {"success": True, "recurrences": service.list_recurrences()}
+        elif action == "pause":
+            result = service.pause_recurrence(self.args.recurrence_id)
+        elif action == "resume":
+            result = service.resume_recurrence(self.args.recurrence_id)
+        else:
+            raise ValueError(f"Unsupported recurrence action: {action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
+
+    def _run_goal(self) -> int:
+        service = self._goal_service()
+        if self.args.goal_action == "preview":
+            preview = service.preview_goal_plan(
+                GoalPlanningRequest(
+                    title=self.args.title,
+                    target_date=date.fromisoformat(self.args.target_date),
+                    start_date=date.fromisoformat(self.args.start_date),
+                    category=self.args.category,
+                    weekly_capacity_minutes=self.args.weekly_capacity,
+                    allowed_days=self.args.allowed_day or [],
+                    preferred_dayparts=[self.args.daypart] if self.args.daypart else [],
+                    fixed_daily_minutes=self.args.minutes,
+                    notes=self.args.notes,
+                )
+            )
+            result = preview.to_dict()
+        elif self.args.goal_action == "apply":
+            result = service.apply_goal_plan(self.args.preview_id)
+        else:
+            raise ValueError(f"Unsupported goal action: {self.args.goal_action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
 
     def _run_plan(self) -> int:
         today = date.today()
@@ -307,6 +540,48 @@ class ShadowCLI:
             return 1
         return 0
 
+    def _run_calendar(self) -> int:
+        action = self.args.calendar_action
+        operations = self._calendar_operations()
+        if action == "list-range":
+            result = {"success": True, "events": operations.list_range(date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date))}
+        elif action == "lookup-event":
+            result = {"success": True, "events": operations.lookup_event(self.args.planner_block_id, date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date))}
+        elif action in {"delete-event", "delete-series", "delete-future-series"}:
+            scope = {"delete-event": "single", "delete-series": "series", "delete-future-series": "future"}[action]
+            result = operations.delete_event(self.args.external_id, scope)
+        elif action == "update-event":
+            block = ScheduledBlock(
+                title=self.args.title,
+                start=datetime.fromisoformat(self.args.start),
+                end=datetime.fromisoformat(self.args.end),
+                category=self.args.category,
+                source=self.args.source,
+                is_fixed=True,
+                metadata={"planner_block_id": self.args.planner_block_id} if self.args.planner_block_id else {},
+            )
+            result = operations.update_event(self.args.external_id, block)
+        elif action == "delete-range-preview":
+            result = operations.preview_delete_range(date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date)).to_dict()
+        elif action == "delete-range-apply":
+            result = operations.apply_delete_range(self.args.preview_id)
+        elif action == "reconcile-range":
+            start, end = date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date)
+            blocks = ExecutionPublishingService(self._planner_engine(), RulesEngine(self.args.rules), self._execution_manager()).blocks_for_range(start, end)
+            result = operations.reconcile_range(blocks, start, end)
+        elif action == "cleanup-orphans-preview":
+            start, end = date.fromisoformat(self.args.start_date), date.fromisoformat(self.args.end_date)
+            blocks = ExecutionPublishingService(self._planner_engine(), RulesEngine(self.args.rules), self._execution_manager()).blocks_for_range(start, end)
+            result = operations.preview_cleanup_orphans(blocks, start, end).to_dict()
+        elif action == "cleanup-orphans-apply":
+            result = operations.apply_delete_range(self.args.preview_id, "calendar_cleanup_orphans")
+        elif action == "repair-mapping":
+            result = operations.repair_mapping(self.args.external_id)
+        else:
+            raise ValueError(f"Unsupported calendar action: {action}")
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("success", True) else 1
+
     def _run_checkin(self) -> int:
         target = date.fromisoformat(self.args.date) if self.args.date else date.today()
         report = DailyCheckInService(self._planner_engine()).generate_daily_checkin(target)
@@ -386,6 +661,16 @@ class ShadowCLI:
             timezone=self.args.google_timezone,
         )
 
+    def _execution_manager(self):
+        return create_execution_manager(
+            settings_path=self.args.execution_settings,
+            links_path=self.args.external_links,
+            preview_dir=self.args.execution_preview_dir,
+            apple_helper_path=self.args.apple_calendar_helper,
+            apple_calendar_id=self.args.apple_calendar_id,
+            google_client=self._calendar_client(),
+        )
+
     def _planning_service(self) -> PlanningCommandService:
         engine = self._planner_engine()
         rules = RulesEngine(self.args.rules)
@@ -394,6 +679,14 @@ class ShadowCLI:
     def _calendar_sync_service(self) -> CalendarSyncService:
         return CalendarSyncService(
             self._planner_engine(), RulesEngine(self.args.rules), self._calendar_client()
+        )
+
+    def _calendar_operations(self) -> GoogleCalendarOperations:
+        manager = self._execution_manager()
+        return GoogleCalendarOperations(
+            manager.targets["google_calendar"].client,
+            manager.links,
+            self.args.execution_preview_dir / "google-calendar",
         )
 
     def _command_router_service(self) -> PlannerCommandRouter:
@@ -406,7 +699,42 @@ class ShadowCLI:
             RulesManager(self.args.rules),
             CalendarSyncService(engine, rules, self._calendar_client()),
             DailyCheckInService(engine),
+            execution_manager=self._execution_manager(),
+            publisher=ExecutionPublishingService(engine, rules, self._execution_manager()),
+            preferences=self._preference_service(),
+            repair=PlannerRepairService(self._execution_manager().links, self.args.execution_preview_dir / "repair"),
+            undo=UndoService(
+                ExcelPlannerStore(self.args.planner, self.args.backup_dir),
+                DecisionLog(self.args.decision_log),
+                self.args.execution_preview_dir / "undo",
+            ),
+            recurrence=self._recurrence_service(),
         )
+
+    def _preference_service(self) -> PreferenceService:
+        return PreferenceService(RulesManager(self.args.rules), self._execution_manager().settings)
+
+    def _recurrence_service(self) -> RecurrenceService:
+        engine = self._planner_engine()
+        return RecurrenceService(
+            self.args.planner,
+            Writer(engine, ProgressEngine(), decision_log=DecisionLog(self.args.decision_log)),
+            self.args.execution_preview_dir / "recurrence",
+        )
+
+    def _goal_service(self) -> GoalBreakdownService:
+        engine = self._planner_engine()
+        return GoalBreakdownService(
+            self.args.planner,
+            Writer(engine, ProgressEngine(), decision_log=DecisionLog(self.args.decision_log)),
+            self.args.execution_preview_dir / "goal",
+        )
+
+    def _json_value(self, value: str) -> Any:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
 
     def _month_plan(self, target_date: date) -> MonthPlan:
         """Load the selected month plan."""
@@ -539,6 +867,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--google-token", type=Path, default=DEFAULT_GOOGLE_TOKEN_PATH)
     parser.add_argument("--google-calendar-id", default=DEFAULT_GOOGLE_CALENDAR_ID)
     parser.add_argument("--google-timezone", default=DEFAULT_GOOGLE_TIMEZONE)
+    parser.add_argument("--execution-settings", type=Path, default=DEFAULT_EXECUTION_SETTINGS_PATH)
+    parser.add_argument("--external-links", type=Path, default=DEFAULT_EXTERNAL_LINKS_PATH)
+    parser.add_argument("--execution-preview-dir", type=Path, default=DEFAULT_EXECUTION_PREVIEW_DIR)
+    parser.add_argument("--apple-calendar-helper", type=Path, default=DEFAULT_APPLE_CALENDAR_HELPER_PATH)
+    parser.add_argument("--apple-calendar-id")
+    parser.add_argument("--decision-log", type=Path, default=DEFAULT_DECISION_LOG_PATH)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -572,6 +906,31 @@ def build_parser() -> argparse.ArgumentParser:
     calendar_sync_parser.add_argument("--end")
     calendar_sync_parser.add_argument("--date")
 
+    calendar_parser = subparsers.add_parser("calendar")
+    calendar_subparsers = calendar_parser.add_subparsers(dest="calendar_action", required=True)
+    for action in ("list-range", "reconcile-range", "delete-range-preview", "cleanup-orphans-preview"):
+        item = calendar_subparsers.add_parser(action)
+        item.add_argument("start_date")
+        item.add_argument("end_date")
+    lookup = calendar_subparsers.add_parser("lookup-event")
+    lookup.add_argument("planner_block_id")
+    lookup.add_argument("start_date")
+    lookup.add_argument("end_date")
+    for action in ("delete-event", "delete-series", "delete-future-series", "repair-mapping"):
+        item = calendar_subparsers.add_parser(action)
+        item.add_argument("external_id")
+    google_update = calendar_subparsers.add_parser("update-event")
+    google_update.add_argument("external_id")
+    google_update.add_argument("--title", required=True)
+    google_update.add_argument("--start", required=True)
+    google_update.add_argument("--end", required=True)
+    google_update.add_argument("--category", default="planner")
+    google_update.add_argument("--source", default="google_calendar_update")
+    google_update.add_argument("--planner-block-id")
+    for action in ("delete-range-apply", "cleanup-orphans-apply"):
+        item = calendar_subparsers.add_parser(action)
+        item.add_argument("preview_id")
+
     checkin_parser = subparsers.add_parser("checkin")
     checkin_parser.add_argument("--date")
 
@@ -604,6 +963,129 @@ def build_parser() -> argparse.ArgumentParser:
     set_work_days_parser = rules_subparsers.add_parser("set-work-days")
     set_work_days_parser.add_argument("days", nargs="+")
 
+    execution_parser = subparsers.add_parser("execution-target")
+    execution_subparsers = execution_parser.add_subparsers(dest="execution_action", required=True)
+    execution_subparsers.add_parser("list")
+    execution_subparsers.add_parser("get")
+    execution_set = execution_subparsers.add_parser("set")
+    execution_set.add_argument("target", choices=("google_calendar", "apple_calendar", "none"))
+    switch_preview = execution_subparsers.add_parser("switch-preview")
+    switch_preview.add_argument("target", choices=("google_calendar", "apple_calendar", "none"))
+    switch_apply = execution_subparsers.add_parser("switch-apply")
+    switch_apply.add_argument("preview_id")
+    move_preview = execution_subparsers.add_parser("move-preview")
+    move_preview.add_argument("source", choices=("google_calendar", "apple_calendar"))
+    move_preview.add_argument("destination", choices=("google_calendar", "apple_calendar"))
+    move_preview.add_argument("start_date")
+    move_preview.add_argument("end_date")
+    move_apply = execution_subparsers.add_parser("move-apply")
+    move_apply.add_argument("preview_id")
+
+    publish_parser = subparsers.add_parser("publish")
+    publish_parser.add_argument("period", choices=("today", "date", "range", "current-week"))
+    publish_parser.add_argument("--date")
+    publish_parser.add_argument("--start")
+    publish_parser.add_argument("--end")
+
+    apple_parser = subparsers.add_parser("apple-calendar")
+    apple_subparsers = apple_parser.add_subparsers(dest="apple_action", required=True)
+    apple_subparsers.add_parser("calendars")
+    apple_subparsers.add_parser("status")
+    apple_create = apple_subparsers.add_parser("create-calendar")
+    apple_create.add_argument("--title", default="Planner OS")
+    apple_select = apple_subparsers.add_parser("select")
+    apple_select.add_argument("calendar_id")
+    apple_subparsers.add_parser("publish-today")
+    apple_publish_date = apple_subparsers.add_parser("publish-date")
+    apple_publish_date.add_argument("date")
+    for action in ("publish-range", "list-range", "reconcile-range"):
+        item = apple_subparsers.add_parser(action)
+        item.add_argument("start_date")
+        item.add_argument("end_date")
+    apple_delete = apple_subparsers.add_parser("delete-event")
+    apple_delete.add_argument("external_id")
+    apple_delete.add_argument("--scope", choices=("single", "future", "series"), default="single")
+    apple_update = apple_subparsers.add_parser("update-event")
+    apple_update.add_argument("external_id")
+    apple_update.add_argument("--title", required=True)
+    apple_update.add_argument("--start", required=True)
+    apple_update.add_argument("--end", required=True)
+    apple_update.add_argument("--category", default="planner")
+    apple_update.add_argument("--source", default="apple_calendar_update")
+    apple_update.add_argument("--planner-block-id")
+    apple_delete_preview = apple_subparsers.add_parser("delete-range-preview")
+    apple_delete_preview.add_argument("start_date")
+    apple_delete_preview.add_argument("end_date")
+    apple_delete_apply = apple_subparsers.add_parser("delete-range-apply")
+    apple_delete_apply.add_argument("preview_id")
+
+    review_parser = subparsers.add_parser("review")
+    review_parser.add_argument("period", choices=("daily", "weekly", "monthly"))
+    review_parser.add_argument("--date")
+    review_parser.add_argument("--month", dest="review_month")
+
+    preferences_parser = subparsers.add_parser("preferences")
+    preferences_subparsers = preferences_parser.add_subparsers(dest="preferences_action", required=True)
+    preferences_subparsers.add_parser("list")
+    preferences_explain = preferences_subparsers.add_parser("explain-active-constraints")
+    preferences_get = preferences_subparsers.add_parser("get")
+    preferences_get.add_argument("name")
+    preferences_update = preferences_subparsers.add_parser("update")
+    preferences_update.add_argument("name")
+    preferences_update.add_argument("value")
+    preferences_reset = preferences_subparsers.add_parser("reset")
+    preferences_reset.add_argument("name")
+
+    repair_parser = subparsers.add_parser("repair")
+    repair_subparsers = repair_parser.add_subparsers(dest="repair_action", required=True)
+    repair_subparsers.add_parser("preview")
+    repair_apply = repair_subparsers.add_parser("apply")
+    repair_apply.add_argument("preview_id")
+
+    undo_parser = subparsers.add_parser("undo")
+    undo_subparsers = undo_parser.add_subparsers(dest="undo_action", required=True)
+    undo_preview = undo_subparsers.add_parser("preview")
+    undo_preview.add_argument("--decision-id")
+    undo_apply = undo_subparsers.add_parser("apply")
+    undo_apply.add_argument("preview_id")
+    undo_subparsers.add_parser("last")
+
+    recurrence_parser = subparsers.add_parser("recurrence")
+    recurrence_subparsers = recurrence_parser.add_subparsers(dest="recurrence_action", required=True)
+    recurrence_preview = recurrence_subparsers.add_parser("preview")
+    recurrence_preview.add_argument("--title", required=True)
+    recurrence_preview.add_argument("--frequency", required=True, choices=("daily", "weekdays", "weekends", "selected_weekdays", "weekly", "monthly"))
+    recurrence_preview.add_argument("--start-date", required=True)
+    recurrence_preview.add_argument("--until")
+    recurrence_preview.add_argument("--count", type=int)
+    recurrence_preview.add_argument("--weekday", action="append")
+    recurrence_preview.add_argument("--minutes", type=int, default=30)
+    recurrence_preview.add_argument("--daypart")
+    recurrence_preview.add_argument("--category")
+    recurrence_apply = recurrence_subparsers.add_parser("apply")
+    recurrence_apply.add_argument("preview_id")
+    recurrence_subparsers.add_parser("list")
+    recurrence_pause = recurrence_subparsers.add_parser("pause")
+    recurrence_pause.add_argument("recurrence_id")
+    recurrence_resume = recurrence_subparsers.add_parser("resume")
+    recurrence_resume.add_argument("recurrence_id")
+
+    goal_parser = subparsers.add_parser("goal")
+    goal_subparsers = goal_parser.add_subparsers(dest="goal_action", required=True)
+    goal_preview = goal_subparsers.add_parser("preview")
+    goal_preview.add_argument("--title", required=True)
+    goal_preview.add_argument("--start-date", required=True)
+    goal_preview.add_argument("--target-date", required=True)
+    goal_preview.add_argument("--category")
+    goal_preview.add_argument("--weekly-capacity", type=int, default=300)
+    goal_preview.add_argument("--allowed-day", action="append")
+    goal_preview.add_argument("--daypart")
+    goal_preview.add_argument("--minutes", type=int, default=45)
+    goal_preview.add_argument("--notes")
+    goal_apply = goal_subparsers.add_parser("apply")
+    goal_apply.add_argument("preview_id")
+
+    subparsers.add_parser("doctor")
     subparsers.add_parser("status")
     subparsers.add_parser("validate")
     return parser

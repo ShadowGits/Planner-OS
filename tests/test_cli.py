@@ -160,6 +160,19 @@ class ShadowCLITests(TestCase):
             self.assertIn("- Monday", persisted)
             self.assertIn("- Sunday", persisted)
 
+    def test_execution_target_switch_persists_without_external_calls(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            settings = tmp_path / "execution.json"
+            create_writer_workbook(planner_path)
+            common = ("--execution-settings", str(settings), "--external-links", str(tmp_path / "links.json"), "--execution-preview-dir", str(tmp_path / "previews"), "--apple-calendar-helper", str(tmp_path / "apple-helper"))
+            changed = self._run_shadow(tmp_path, planner_path, *common, "execution-target", "set", "apple_calendar")
+            queried = self._run_shadow(tmp_path, planner_path, *common, "execution-target", "get")
+            self.assertEqual(changed.returncode, 0, changed.stderr)
+            self.assertEqual(queried.returncode, 0, queried.stderr)
+            self.assertIn('"active_target": "apple_calendar"', queried.stdout)
+
     def _run_shadow(
         self,
         tmp_path: Path,

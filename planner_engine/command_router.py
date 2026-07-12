@@ -45,6 +45,33 @@ COMMAND_TYPES = {
     "delete_dated_task",
     "list_dated_tasks",
     "calendar_sync_date",
+    "switch_active_execution_target",
+    "publish_active_target",
+    "preview_planner_repair",
+    "apply_planner_repair",
+    "preview_undo",
+    "apply_undo",
+    "undo_last_change",
+    "update_preference",
+    "list_preferences",
+    "get_preference",
+    "reset_preference",
+    "explain_active_constraints",
+    "create_goal_plan",
+    "preview_goal_plan",
+    "apply_goal_plan",
+    "daily_review",
+    "weekly_review",
+    "monthly_review",
+    "planner_doctor",
+    "migrate_external_items",
+    "preview_migrate_external_items",
+    "apply_migrate_external_items",
+    "delete_external_items",
+    "preview_recurrence",
+    "apply_recurrence",
+    "pause_recurrence",
+    "resume_recurrence",
 }
 
 
@@ -92,12 +119,30 @@ class PlannerCommandRouter:
         rules_manager: RulesManager,
         calendar: CalendarSyncService,
         checkin: DailyCheckInService,
+        execution_manager: Any | None = None,
+        publisher: Any | None = None,
+        preferences: Any | None = None,
+        repair: Any | None = None,
+        undo: Any | None = None,
+        recurrence: Any | None = None,
+        reviews: Any | None = None,
+        doctor: Any | None = None,
+        goal_planner: Any | None = None,
     ) -> None:
         self.planning = planning
         self.writer = writer
         self.rules_manager = rules_manager
         self.calendar = calendar
         self.checkin = checkin
+        self.execution_manager = execution_manager
+        self.publisher = publisher
+        self.preferences = preferences
+        self.repair = repair
+        self.undo = undo
+        self.recurrence = recurrence
+        self.reviews = reviews
+        self.doctor = doctor
+        self.goal_planner = goal_planner
 
     def route_command(self, command: PlannerCommand) -> PlannerCommandResult:
         """Route a validated command; ambiguous or unconfirmed writes are refused."""
@@ -211,7 +256,116 @@ class PlannerCommandRouter:
         if kind == "daily_checkin":
             report = self.checkin.generate_daily_checkin(_date(payload["date"]) if payload.get("date") else None)
             return PlannerCommandResult(True, "Daily check-in generated", kind, preview=report.to_dict())
+        if kind == "switch_active_execution_target":
+            service = self._required("execution_manager", self.execution_manager)
+            result = service.set_active_execution_target(str(payload["target"]))
+            return PlannerCommandResult(True, "Active execution target switched", kind, applied_changes=result)
+        if kind == "publish_active_target":
+            service = self._required("publisher", self.publisher)
+            if payload.get("date"):
+                result = service.publish_date(_date(payload["date"]))
+            elif payload.get("start_date") and payload.get("end_date"):
+                result = service.publish_range(_date(payload["start_date"]), _date(payload["end_date"]))
+            elif payload.get("period") == "current_week":
+                result = service.publish_current_week()
+            else:
+                result = service.publish_today()
+            return PlannerCommandResult(result.success, result.message, kind, applied_changes=result.to_dict(), warnings=result.warnings, errors=result.errors)
+        if kind == "update_preference":
+            service = self._required("preferences", self.preferences)
+            result = service.update_preference(str(payload["name"]), payload.get("value"))
+            return PlannerCommandResult(result.success, result.message, kind, applied_changes=result.to_dict(), warnings=result.warnings, errors=result.errors)
+        if kind == "list_preferences":
+            service = self._required("preferences", self.preferences)
+            result = service.list_preferences()
+            return PlannerCommandResult(result.success, result.message, kind, preview=result.to_dict(), warnings=result.warnings, errors=result.errors)
+        if kind == "get_preference":
+            service = self._required("preferences", self.preferences)
+            result = service.get_preference(str(payload["name"]))
+            return PlannerCommandResult(result.success, result.message, kind, preview=result.to_dict(), warnings=result.warnings, errors=result.errors)
+        if kind == "reset_preference":
+            service = self._required("preferences", self.preferences)
+            result = service.reset_preference(str(payload["name"]))
+            return PlannerCommandResult(result.success, result.message, kind, applied_changes=result.to_dict(), warnings=result.warnings, errors=result.errors)
+        if kind == "explain_active_constraints":
+            service = self._required("preferences", self.preferences)
+            return PlannerCommandResult(True, "Active constraints explained", kind, preview=service.explain_active_constraints().to_dict())
+        if kind in {"create_goal_plan", "preview_goal_plan"}:
+            service = self._required("goal_planner", self.goal_planner)
+            preview = service.preview_goal_plan(payload["request"])
+            return PlannerCommandResult(True, "Goal plan preview generated", kind, preview=preview.to_dict(), warnings=preview.assumptions)
+        if kind == "apply_goal_plan":
+            service = self._required("goal_planner", self.goal_planner)
+            result = service.apply_goal_plan(str(payload["preview_id"]))
+            return PlannerCommandResult(bool(result.get("success", True)), "Goal plan applied", kind, applied_changes=result, errors=list(result.get("errors", [])))
+        if kind == "daily_review":
+            service = self._required("reviews", self.reviews)
+            result = service.daily_review(_date(payload["date"]) if payload.get("date") else None)
+            return PlannerCommandResult(True, "Daily review generated", kind, preview=result.to_dict())
+        if kind == "weekly_review":
+            service = self._required("reviews", self.reviews)
+            result = service.weekly_review(_date(payload["date"]) if payload.get("date") else None)
+            return PlannerCommandResult(True, "Weekly review generated", kind, preview=result.to_dict())
+        if kind == "monthly_review":
+            service = self._required("reviews", self.reviews)
+            result = service.monthly_review(str(payload["month"]))
+            return PlannerCommandResult(True, "Monthly review generated", kind, preview=result.to_dict())
+        if kind == "planner_doctor":
+            service = self._required("doctor", self.doctor)
+            result = service.run()
+            return PlannerCommandResult(result.success, "Planner doctor completed", kind, preview=result.to_dict(), warnings=result.warnings, errors=result.errors)
+        if kind == "preview_migrate_external_items":
+            service = self._required("execution_manager", self.execution_manager)
+            preview = service.preview_move_external_items(str(payload["source"]), str(payload["destination"]), _date(payload["start_date"]), _date(payload["end_date"]))
+            return PlannerCommandResult(True, "External item migration preview generated", kind, preview=preview.to_dict(), warnings=preview.warnings)
+        if kind in {"apply_migrate_external_items", "migrate_external_items"}:
+            service = self._required("execution_manager", self.execution_manager)
+            result = service.apply_move_external_items(str(payload["preview_id"]), payload.get("blocks_by_id"))
+            return PlannerCommandResult(bool(result.get("success", True)), "External item migration applied", kind, applied_changes=result, warnings=list(result.get("warnings", [])), errors=list(result.get("errors", [])))
+        if kind == "delete_external_items":
+            return PlannerCommandResult(False, "External deletion requires a target-specific preview/apply command", kind, requires_confirmation=True, warnings=["No calendar changes made"])
+        if kind == "preview_planner_repair":
+            service = self._required("repair", self.repair)
+            preview = service.preview_repair()
+            return PlannerCommandResult(True, "Planner repair preview generated", kind, preview=preview.to_dict(), warnings=preview.warnings)
+        if kind == "apply_planner_repair":
+            service = self._required("repair", self.repair)
+            result = service.apply_repair(str(payload["preview_id"]))
+            return PlannerCommandResult(bool(result.get("success", True)), "Planner repair applied", kind, applied_changes=result, errors=list(result.get("errors", [])))
+        if kind == "preview_undo":
+            service = self._required("undo", self.undo)
+            preview = service.preview_undo(payload.get("decision_id"))
+            return PlannerCommandResult(True, "Undo preview generated", kind, preview=preview.to_dict(), warnings=preview.warnings)
+        if kind == "apply_undo":
+            service = self._required("undo", self.undo)
+            result = service.apply_undo(str(payload["preview_id"]))
+            return PlannerCommandResult(bool(result.get("success", True)), "Undo applied", kind, applied_changes=result, errors=list(result.get("errors", [])))
+        if kind == "undo_last_change":
+            service = self._required("undo", self.undo)
+            result = service.undo_last_change()
+            return PlannerCommandResult(bool(result.get("success", True)), "Last change undone", kind, applied_changes=result, errors=list(result.get("errors", [])))
+        if kind == "preview_recurrence":
+            service = self._required("recurrence", self.recurrence)
+            preview = service.preview_recurrence(payload["request"])
+            return PlannerCommandResult(True, "Recurrence preview generated", kind, preview=preview.to_dict(), warnings=preview.warnings)
+        if kind == "apply_recurrence":
+            service = self._required("recurrence", self.recurrence)
+            result = service.apply_recurrence(str(payload["preview_id"]))
+            return self._writer_result(command, result)
+        if kind == "pause_recurrence":
+            service = self._required("recurrence", self.recurrence)
+            result = service.pause_recurrence(str(payload["recurrence_id"]))
+            return PlannerCommandResult(bool(result.get("success", True)), "Recurrence paused", kind, applied_changes=result, errors=list(result.get("errors", [])))
+        if kind == "resume_recurrence":
+            service = self._required("recurrence", self.recurrence)
+            result = service.resume_recurrence(str(payload["recurrence_id"]))
+            return PlannerCommandResult(bool(result.get("success", True)), "Recurrence resumed", kind, applied_changes=result, errors=list(result.get("errors", [])))
         raise ValueError(f"Unsupported command_type: {kind}")
+
+    def _required(self, name: str, service: Any | None) -> Any:
+        if service is None:
+            raise ValueError(f"Router service not configured: {name}")
+        return service
 
     def _normalize_relative_week(self, payload: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(payload)
@@ -258,6 +412,37 @@ def parse_common_intent(text: str, today: date | None = None) -> PlannerCommand:
 
     if normalized in {"sync week", "sync the week"}:
         return PlannerCommand("calendar_sync_current_week", {}, source_text=source, confidence="low", requires_confirmation=True)
+    if normalized in {"undo the last planner change", "undo last planner change", "undo last change"}:
+        return PlannerCommand("undo_last_change", {}, source_text=source, confidence="medium", requires_confirmation=True)
+    if normalized in {"diagnose planner", "run planner doctor"}:
+        return PlannerCommand("planner_doctor", {}, source_text=source)
+    if normalized in {"preview repair", "preview planner repair"}:
+        return PlannerCommand("preview_planner_repair", {}, source_text=source)
+    if normalized in {"daily review", "generate daily review"}:
+        return PlannerCommand("daily_review", {"date": today}, source_text=source)
+    if normalized in {"weekly review", "generate weekly review"}:
+        return PlannerCommand("weekly_review", {"date": today}, source_text=source)
+    if normalized in {"monthly review", "generate monthly review"}:
+        return PlannerCommand("monthly_review", {"month": month}, source_text=source)
+    if normalized in {"publish today using my active target", "publish today using active target"}:
+        return PlannerCommand("publish_active_target", {"date": today}, source_text=source, confidence="medium", requires_confirmation=True)
+    if normalized in {"publish current week using my active target", "publish current week using active target"}:
+        return PlannerCommand("publish_active_target", {"period": "current_week"}, source_text=source, confidence="medium", requires_confirmation=True)
+    if "switch future publishing to apple calendar" in normalized:
+        return PlannerCommand("switch_active_execution_target", {"target": "apple_calendar"}, source_text=source, confidence="medium", requires_confirmation=True)
+    if "switch future publishing to google calendar" in normalized:
+        return PlannerCommand("switch_active_execution_target", {"target": "google_calendar"}, source_text=source, confidence="medium", requires_confirmation=True)
+    if normalized in {"stop publishing externally", "turn off external publishing"}:
+        return PlannerCommand("switch_active_execution_target", {"target": "none"}, source_text=source, confidence="medium", requires_confirmation=True)
+    delete_apple = re.match(r"delete\s+tomorrow'?s\s+planner os events\s+from\s+apple calendar$", normalized)
+    if delete_apple:
+        return PlannerCommand(
+            "delete_external_items",
+            {"target": "apple_calendar", "date": today + timedelta(days=1)},
+            source_text=source,
+            confidence="medium",
+            requires_confirmation=True,
+        )
     if re.search(r"\bsync (?:the )?(?:next|coming) week\b", normalized):
         return PlannerCommand("calendar_sync_next_week", {"today": today}, source_text=source)
     if re.search(r"\bsync (?:the )?current week\b", normalized):
@@ -309,6 +494,18 @@ def parse_common_intent(text: str, today: date | None = None) -> PlannerCommand:
         )
     if normalized in {"no work on weekends", "no office on saturday sunday"}:
         return PlannerCommand("set_rule", {"path": "work.no_work_days", "value": ["Saturday", "Sunday"]}, source_text=source)
+    move_preference = re.match(r"move\s+(.+?)\s+to\s+(morning|afternoon|evening|night)$", normalized)
+    if move_preference:
+        return PlannerCommand(
+            "update_preference",
+            {
+                "name": f"preferred_dayparts.{move_preference.group(1).replace(' ', '_')}",
+                "value": move_preference.group(2),
+            },
+            source_text=source,
+            confidence="medium",
+            requires_confirmation=True,
+        )
     complete = re.match(r"(?:complete|mark)\s+(.+?)(?:\s+done)?$", normalized)
     if complete:
         return PlannerCommand("complete_task", {"month": month, "task_name": complete.group(1)}, source_text=source)

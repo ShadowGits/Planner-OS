@@ -25,6 +25,11 @@ from planner_engine.models import (
 class ReaderMixin:
     """Parse planner concepts from workbook sheets."""
 
+    _DATED_TASK_ID_PATTERN = re.compile(
+        r"(?:^|\n)\s*\[planner_os_task_id:\s*([A-Za-z0-9_.:-]+)\]\s*(?=\n|$)",
+        re.I,
+    )
+
     def list_months(self) -> list[str]:
         """List monthly planner sheet names."""
 
@@ -92,7 +97,12 @@ class ReaderMixin:
                         minutes, daypart, start_time, end_time, hard_time = (
                             self._parse_dated_block(raw_block)
                         )
-                        task_id = f"{worksheet.title}!{task.row_number}@{task_date.isoformat()}"
+                        task_id, clean_notes = self._dated_task_identity(
+                            task.notes,
+                            worksheet.title,
+                            task.row_number,
+                            task_date,
+                        )
                         tasks.append(
                             DatedTask(
                                 id=task_id,
@@ -105,7 +115,7 @@ class ReaderMixin:
                                 hard_time=hard_time,
                                 category=task.category,
                                 status=task.status,
-                                notes=task.notes,
+                                notes=clean_notes,
                                 sheet_name=worksheet.title,
                                 row_number=task.row_number,
                                 week_name=section.name,
@@ -118,6 +128,23 @@ class ReaderMixin:
             return tasks
         finally:
             workbook.close()
+
+    def _dated_task_identity(
+        self,
+        notes: str | None,
+        sheet_name: str,
+        row_number: int,
+        task_date: date,
+    ) -> tuple[str, str | None]:
+        """Return the permanent dated-task id and notes without the hidden marker."""
+
+        raw_notes = notes or ""
+        match = self._DATED_TASK_ID_PATTERN.search(raw_notes)
+        if match:
+            clean = self._DATED_TASK_ID_PATTERN.sub("\n", raw_notes)
+            clean = "\n".join(line.rstrip() for line in clean.splitlines()).strip()
+            return match.group(1), clean or None
+        return f"{sheet_name}!{row_number}@{task_date.isoformat()}", notes
 
     def find_task(self, month: str, task_name: str) -> PlannerTask | MonthlyGoal | None:
         """Find a task or goal by case-insensitive name."""

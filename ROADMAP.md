@@ -1,144 +1,43 @@
 # Planner OS Roadmap
 
-> Last updated: 11 Jul 2026
+## Completed
 
----
+- Core workbook reader/writer, rules, scheduler, progress, backups, and decision log
+- Local CLI and STDIO MCP
+- Google Calendar synchronization
+- Monthly/weekly/day planning previews and dated tasks
+- Deterministic command router v1 and daily check-in
 
-# Vision
+## MVP2 - Complete Local Planner
 
-Build an autonomous personal operating system that understands my life, maintains my planner, adapts to change, and executes through natural conversation.
+- [x] Workbook-first planning remains authoritative
+- [x] Single-active execution-target model
+- [x] Google Calendar execution-target adapter
+- [x] Native Apple Calendar execution-target adapter
+- [x] Persistent target selection and `none` target
+- [x] Previewed target switching without automatic migration
+- [x] Explicit cross-target migration with partial-failure repair information
+- [x] Cross-target duplicate-link prevention
+- [ ] Complete Calendar CRUD preview/apply and orphan cleanup commands
+- [ ] Workbook capability detection and schema diagnostics
+- [ ] Goal Breakdown Engine v2
+- [ ] Command Router v2 phrase coverage
+- [ ] Scheduler v2 metadata and dependency constraints
+- [ ] Standard stale-preview/source-revision enforcement
+- [ ] Undo across workbook, rules, progress, and execution targets
+- [ ] Recurring Engine
+- [ ] Detailed planner progress metrics and forecasts
+- [ ] Daily, weekly, and monthly review suite
+- [ ] Planner doctor and previewed repair
+- [ ] Complete preference management
 
-Excel remains the source of truth until a future storage migration is justified.
+## MVP3 - Hosted Platform
 
----
+- Hosting and remote MCP
+- Vercel and cloud storage
+- PlannerContext
+- Multi-user and shared-planner support
+- Web OAuth
+- Public plugin/app publishing
 
-# Design Principles
-
-- Conversation is the primary interface.
-- Planner Engine is the single source of planning logic.
-- Excel is the source of truth.
-- Every modification is semantic, never cell-based.
-- Every write is reversible.
-- Architecture over shortcuts.
-- Ship small, stable iterations.
-
----
-
-# Version History
-
-## ✅ v1.0 — Core Planner Engine
-
-### Planner Core
-
-- [x] Excel Store
-- [x] Planner Engine
-- [x] Rules Engine
-- [x] Reader
-- [x] Scheduler
-- [x] Progress Engine
-- [x] Semantic Writer
-- [x] Planner Importer
-
-### Interfaces
-
-- [x] Shadow CLI
-- [x] Planner MCP Server
-
-### Quality
-
-- [x] Automated tests
-- [x] Backup & rollback
-- [x] Typed models
-- [x] Configuration layer
-
-Status:
-**COMPLETE**
-
----
-
-# v1.1 — Personal Assistant
-
-## Decision Log
-
-- [ ] Record every planner-changing action
-- [ ] Store timestamp, action, reason, affected tasks, and outcome
-- [ ] Make decisions auditable and reversible
-- [ ] Expose recent decisions through ChatGPT
-
-## Calendar
-
-- [ ] Google Calendar integration
-- [ ] Apple Calendar integration (optional)
-
-> At least one direct calendar integration is required before closing v1.1.
-
-## Cloud Execution
-
-- [ ] GitHub Actions backend
-- [ ] Cloud Run backend (optional replacement)
-
-## Conversation
-
-- [ ] One-thread planner management
-- [ ] Add custom items
-- [ ] Daily completion updates
-- [ ] Planner edits through ChatGPT
-
-Status:
-Planned
-
----
-
-# v1.2 — Intelligence
-
-- [ ] Automatic replanning
-- [ ] Constraint optimization
-- [ ] Better duration estimation
-- [ ] Smarter prioritization
-- [ ] Habit prediction
-- [ ] Adaptive scheduling
-
-Status:
-Future
-
----
-
-# v2.0 — Planner OS Platform
-
-- [ ] Replace Excel if justified
-- [ ] Mobile companion
-- [ ] Multi-device sync
-- [ ] User accounts
-- [ ] Public API
-- [ ] Multi-user support
-
-Status:
-Long-term
-
----
-
-# Out of Scope
-
-These will not be added unless explicitly reprioritized.
-
-- Web frontend
-- Desktop GUI
-- Database migration
-- AI-generated scheduling heuristics beyond Planner Engine
-- Multiple planner formats
-- Plugin ecosystem
-
----
-
-# Current Focus
-
-Current version:
-**v1.1**
-
-Milestones:
-1. Decision Log
-2. Direct Google Calendar integration
-3. Cloud execution route
-4. One-thread planner management
-
-No additional features should be added until these milestones are complete.
+MVP3 is intentionally not part of local MVP2.

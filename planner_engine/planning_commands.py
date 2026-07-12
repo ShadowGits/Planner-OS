@@ -96,6 +96,7 @@ class PlanningCommandService:
         self.writer = writer or Writer(engine)
         self.monthly_planner = MonthlyPlanner(engine, rules_engine)
         self._previews: dict[str, MonthlyPlanPreview | DayReplanPreview] = {}
+        self._preview_revisions: dict[str, str] = {}
         self.preview_dir = Path(preview_dir)
 
     def preview_month_plan(self, request: MonthlyPlanningRequest) -> MonthlyPlanPreview:
@@ -295,6 +296,9 @@ class PlanningCommandService:
         resolved = preview
         if isinstance(preview, str):
             resolved = self._previews.get(preview)
+            cached_revision = self._preview_revisions.get(preview)
+            if cached_revision and cached_revision != self._workbook_revision():
+                raise ValueError("Planning preview is stale because workbook changed")
             if resolved is None:
                 resolved = self._load_preview(preview)
         if isinstance(resolved, dict):
@@ -305,8 +309,19 @@ class PlanningCommandService:
 
     def _remember(self, preview: MonthlyPlanPreview | DayReplanPreview) -> None:
         self._previews[preview.preview_id] = preview
+        revision = self._workbook_revision()
+        self._preview_revisions[preview.preview_id] = revision
         self.preview_dir.mkdir(parents=True, exist_ok=True)
         destination = self.preview_dir / f"{preview.preview_id}.json"
+        payload = preview.to_dict()
+        payload.setdefault("_preview_meta", {})
+        payload["_preview_meta"].update(
+            {
+                "source_revision": revision,
+                "operation_type": type(preview).__name__,
+                "stored_at": datetime.now().isoformat(),
+            }
+        )
         temporary: Path | None = None
         try:
             with NamedTemporaryFile(
@@ -317,7 +332,7 @@ class PlanningCommandService:
                 suffix=".tmp",
                 delete=False,
             ) as handle:
-                json.dump(preview.to_dict(), handle, indent=2, sort_keys=True)
+                json.dump(payload, handle, indent=2, sort_keys=True)
                 handle.write("\n")
                 temporary = Path(handle.name)
             temporary.replace(destination)
@@ -330,6 +345,9 @@ class PlanningCommandService:
         if not path.exists():
             return None
         raw = json.loads(path.read_text(encoding="utf-8"))
+        meta = raw.get("_preview_meta", {}) if isinstance(raw, dict) else {}
+        if meta.get("source_revision") and meta["source_revision"] != self._workbook_revision():
+            raise ValueError("Planning preview is stale because workbook changed")
         return raw if isinstance(raw, dict) else None
 
     def _preview_from_dict(self, data: dict[str, Any], expected: type[Any]) -> Any:
@@ -414,6 +432,11 @@ class PlanningCommandService:
 
     def _date(self, value: Any) -> date:
         return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+    def _workbook_revision(self) -> str:
+        path = self.engine.store.planner_path
+        stat = path.stat()
+        return f"{stat.st_mtime_ns}:{stat.st_size}"
 
     def _block_dict(self, block: Any) -> dict[str, Any]:
         return {

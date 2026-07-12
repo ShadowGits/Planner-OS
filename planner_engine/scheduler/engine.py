@@ -80,7 +80,7 @@ class SchedulerEngine(
         conflicts.extend(bounded_conflicts)
         demands = self._daily_demands(target_date, context_overrides)
         demands.extend(self._task_demands(unfinished_tasks, source_prefix="unfinished"))
-        demands.extend(self._task_demands(self._planner_items(month_plan), limit=2))
+        demands.extend(self._task_demands(self._planner_items(month_plan, target_date)))
 
         scheduled_blocks, placement_conflicts = self._place_demands_for_day(
             target_date=target_date,
@@ -88,6 +88,7 @@ class SchedulerEngine(
             demands=demands,
         )
         blocks.extend(scheduled_blocks)
+        blocks = self._dedupe_generated_blocks(blocks)
         conflicts.extend(placement_conflicts)
         plan = DailyPlan(
             date=target_date,
@@ -148,6 +149,7 @@ class SchedulerEngine(
                 demands=per_day_demands[day],
             )
             blocks.extend(scheduled_blocks)
+            blocks = self._dedupe_generated_blocks(blocks)
             day_conflicts.extend(placement_conflicts)
             days.append(
                 DailyPlan(
@@ -185,6 +187,31 @@ class SchedulerEngine(
             },
         )
         return plan
+
+    def _dedupe_generated_blocks(
+        self,
+        blocks: list[ScheduledBlock],
+    ) -> list[ScheduledBlock]:
+        """Keep one emitted block per non-recurring planner source."""
+
+        seen: set[str] = set()
+        result: list[ScheduledBlock] = []
+        for block in blocks:
+            key = self._dedupe_key(block)
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            result.append(block)
+        return result
+
+    def _dedupe_key(self, block: ScheduledBlock) -> str | None:
+        metadata = block.metadata or {}
+        if metadata.get("planner_block_id"):
+            return str(metadata["planner_block_id"])
+        if block.source.startswith(("planner:", "unfinished:", "workbook_dated_task")):
+            return block.source
+        return None
 
     def _record_plan_decision(
         self,

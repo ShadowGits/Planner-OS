@@ -36,24 +36,47 @@ class FakeEvents:
 
     def list(self, **kwargs):
         self.service.calls.append(("list", kwargs))
-        return FakeExecute({"items": list(self.service.events_data)})
+        time_min = datetime.fromisoformat(kwargs["timeMin"])
+        time_max = datetime.fromisoformat(kwargs["timeMax"])
+        items = [
+            event
+            for event in self.service.events_data
+            if self.service.event_start(event) < time_max
+            and self.service.event_end(event) > time_min
+        ]
+        return FakeExecute({"items": items})
 
     def insert(self, **kwargs):
         self.service.calls.append(("insert", kwargs))
         if self.service.insert_errors:
             return FakeExecute(error=self.service.insert_errors.pop(0))
-        return FakeExecute({"id": f"created-{len(self.service.calls)}", **kwargs["body"]})
+        event = {"id": f"created-{len(self.service.calls)}", **kwargs["body"]}
+        self.service.events_data.append(event)
+        return FakeExecute(event)
+
+    def get(self, **kwargs):
+        self.service.calls.append(("get", kwargs))
+        event = next((item for item in self.service.events_data if item.get("id") == kwargs["eventId"]), None)
+        return FakeExecute(event or {}, None if event else RuntimeError("not found"))
 
     def update(self, **kwargs):
         self.service.calls.append(("update", kwargs))
         if self.service.update_errors:
             return FakeExecute(error=self.service.update_errors.pop(0))
-        return FakeExecute({"id": kwargs["eventId"], **kwargs["body"]})
+        event = {"id": kwargs["eventId"], **kwargs["body"]}
+        self.service.events_data = [
+            event if item.get("id") == kwargs["eventId"] else item
+            for item in self.service.events_data
+        ]
+        return FakeExecute(event)
 
     def delete(self, **kwargs):
         self.service.calls.append(("delete", kwargs))
         if self.service.delete_errors:
             return FakeExecute(error=self.service.delete_errors.pop(0))
+        self.service.events_data = [
+            item for item in self.service.events_data if item.get("id") != kwargs["eventId"]
+        ]
         return FakeExecute({})
 
 
@@ -67,6 +90,12 @@ class FakeService:
 
     def events(self):
         return FakeEvents(self)
+
+    def event_start(self, event):
+        return datetime.fromisoformat(event.get("start", {}).get("dateTime", "1900-01-01T00:00:00+00:00"))
+
+    def event_end(self, event):
+        return datetime.fromisoformat(event.get("end", {}).get("dateTime", "1900-01-01T00:00:00+00:00"))
 
 
 def block(
@@ -250,6 +279,31 @@ class GoogleCalendarClientTests(TestCase):
             self.assertFalse(result.success)
             self.assertEqual(result.created, 0)
             self.assertIn("Create: insert failed", result.errors)
+
+    def test_owned_event_delete_and_unrelated_event_preserved(self) -> None:
+        client = GoogleCalendarClient(service=FakeService())
+        owned = self._event_for(client, block("German"), event_id="owned")
+        manual = {"id": "manual", "summary": "Manual"}
+        client.service.events_data = [owned, manual]
+        client.delete_planner_event("owned")
+        self.assertEqual([call[0] for call in client.service.calls], ["get", "delete"])
+        with self.assertRaisesRegex(GoogleCalendarError, "not owned"):
+            client.delete_planner_event("manual")
+
+    def test_recurring_series_and_future_deletion(self) -> None:
+        client = GoogleCalendarClient(service=FakeService())
+        master = self._event_for(client, block("German"), event_id="series")
+        master["recurrence"] = ["RRULE:FREQ=DAILY"]
+        instance = self._event_for(client, block("German"), event_id="instance")
+        instance["recurringEventId"] = "series"
+        instance["originalStartTime"] = {"dateTime": "2026-07-11T19:00:00+05:30"}
+        client.service.events_data = [master, instance]
+        client.delete_event_scope("instance", "future")
+        update = [call for call in client.service.calls if call[0] == "update"][-1]
+        self.assertIn("UNTIL=", update[1]["body"]["recurrence"][0])
+        client.service.calls.clear()
+        client.delete_event_scope("series", "series")
+        self.assertIn("delete", [call[0] for call in client.service.calls])
 
     def test_cli_calendar_auth_and_sync(self) -> None:
         from planner_engine.cli import ShadowCLI, build_parser

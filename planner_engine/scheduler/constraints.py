@@ -20,7 +20,7 @@ class ConstraintsMixin:
         """Build recurring daily demands."""
 
         demands: list[ScheduleDemand] = []
-        if not context_overrides.get("skip_german_today"):
+        if self.rules_engine.is_rule_enabled("german") and not context_overrides.get("skip_german_today"):
             demands.append(
                 ScheduleDemand(
                     title="German study",
@@ -29,7 +29,7 @@ class ConstraintsMixin:
                     source="rules:german",
                 )
             )
-        if not context_overrides.get("skip_piano_today"):
+        if self.rules_engine.is_rule_enabled("piano") and not context_overrides.get("skip_piano_today"):
             demands.append(
                 ScheduleDemand(
                     title="Piano practice",
@@ -38,7 +38,7 @@ class ConstraintsMixin:
                     source="rules:piano",
                 )
             )
-        if not context_overrides.get("skip_reading_today"):
+        if self.rules_engine.is_rule_enabled("reading") and not context_overrides.get("skip_reading_today"):
             demands.append(
                 ScheduleDemand(
                     title="Reading",
@@ -47,7 +47,7 @@ class ConstraintsMixin:
                     source="rules:reading",
                 )
             )
-        if not context_overrides.get("skip_gym_today"):
+        if self.rules_engine.is_rule_enabled("gym") and not context_overrides.get("skip_gym_today"):
             gym_category = "gym_strength"
             if self.rules_engine.is_dance_allowed(target_date.strftime("%A")):
                 gym_category = "gym_dance"
@@ -72,51 +72,58 @@ class ConstraintsMixin:
 
         days = list(per_day_demands)
         for day in days:
-            per_day_demands[day].append(
-                ScheduleDemand(
-                    title="German study",
-                    category="german",
-                    duration_minutes=self.durations["german"],
-                    source="rules:german",
+            if self.rules_engine.is_rule_enabled("german"):
+                per_day_demands[day].append(
+                    ScheduleDemand(
+                        title="German study",
+                        category="german",
+                        duration_minutes=self.durations["german"],
+                        source="rules:german",
+                    )
                 )
-            )
-            per_day_demands[day].append(
-                ScheduleDemand(
-                    title="Piano practice",
-                    category="piano",
-                    duration_minutes=self.rules_engine.piano_duration_minutes(),
-                    source="rules:piano",
+            if self.rules_engine.is_rule_enabled("piano"):
+                per_day_demands[day].append(
+                    ScheduleDemand(
+                        title="Piano practice",
+                        category="piano",
+                        duration_minutes=self.rules_engine.piano_duration_minutes(),
+                        source="rules:piano",
+                    )
                 )
-            )
-            per_day_demands[day].append(
-                ScheduleDemand(
-                    title="Reading",
-                    category="reading",
-                    duration_minutes=self.durations["reading"],
-                    source="rules:reading",
+            if self.rules_engine.is_rule_enabled("reading"):
+                per_day_demands[day].append(
+                    ScheduleDemand(
+                        title="Reading",
+                        category="reading",
+                        duration_minutes=self.durations["reading"],
+                        source="rules:reading",
+                    )
                 )
-            )
 
-        for index in (0, 3):
-            per_day_demands[days[index]].append(
-                ScheduleDemand(
-                    title="IELTS study",
-                    category="ielts",
-                    duration_minutes=self.durations["ielts"],
-                    source="rules:ielts",
+        if self.rules_engine.is_rule_enabled("ielts"):
+            for index in (0, 3):
+                per_day_demands[days[index]].append(
+                    ScheduleDemand(
+                        title="IELTS study",
+                        category="ielts",
+                        duration_minutes=self.durations["ielts"],
+                        source="rules:ielts",
+                    )
                 )
-            )
 
-        for index in (1, 4):
-            per_day_demands[days[index]].append(
-                ScheduleDemand(
-                    title="IGNOU study",
-                    category="ignou",
-                    duration_minutes=self.durations["ignou"],
-                    source="rules:ignou",
+        if self.rules_engine.is_rule_enabled("ignou"):
+            for index in (1, 4):
+                per_day_demands[days[index]].append(
+                    ScheduleDemand(
+                        title="IGNOU study",
+                        category="ignou",
+                        duration_minutes=self.durations["ignou"],
+                        source="rules:ignou",
+                    )
                 )
-            )
 
+        if not self.rules_engine.is_rule_enabled("gym"):
+            return
         if context_overrides.get("skip_gym_this_week"):
             conflicts.append(
                 SchedulingConflict(

@@ -218,6 +218,32 @@ class AllocatorMixin:
     ) -> ScheduledBlock:
         """Create a scheduled block from demand."""
 
+        metadata = dict(demand.metadata or {})
+        source_block_id = f"{demand.source}:{start.date().isoformat()}:{demand.title.casefold()}"
+        if "session_index" in metadata:
+            source_block_id = f"{source_block_id}:session-{metadata['session_index']}"
+        metadata.setdefault("planner_block_id", source_block_id)
+        metadata.setdefault("source_task_id", demand.source)
+        metadata.setdefault("date", start.date().isoformat())
+        metadata.setdefault("start", start.isoformat())
+        metadata.setdefault("end", end.isoformat())
+        metadata.setdefault("duration", int((end - start).total_seconds() // 60))
+        metadata.setdefault("placement_reason", self._placement_reason(demand))
+        metadata.setdefault("violated_soft_preferences", [])
+        metadata.setdefault(
+            "hard_constraint_status",
+            "satisfied" if demand.hard_window else "not_applicable",
+        )
+        metadata.setdefault("resolved_publication_target", "active_execution_target")
+        if demand.requested_window_start and demand.requested_window_end:
+            metadata.setdefault(
+                "requested_window_start",
+                demand.requested_window_start.isoformat(),
+            )
+            metadata.setdefault(
+                "requested_window_end",
+                demand.requested_window_end.isoformat(),
+            )
         return ScheduledBlock(
             title=demand.title,
             start=start,
@@ -225,8 +251,17 @@ class AllocatorMixin:
             category=demand.category,
             source=demand.source,
             priority=demand.priority,
-            metadata=demand.metadata,
+            metadata=metadata,
         )
+
+    def _placement_reason(self, demand: ScheduleDemand) -> str:
+        if demand.hard_window:
+            return "Placed inside required hard window"
+        if demand.requested_window_start and demand.requested_window_end:
+            return "Placed inside requested soft window"
+        if demand.priority == Priority.HIGH:
+            return "Placed early because task priority is high"
+        return "Placed in first available preferred window"
 
     def _occupied_intervals(
         self,

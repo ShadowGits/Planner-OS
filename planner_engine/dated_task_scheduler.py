@@ -79,6 +79,7 @@ class DatedTaskScheduler:
             is_fixed=fixed,
             metadata={
                 "dated_task_id": task.id,
+                "source_task_id": f"{task.sheet_name}:{task.row_number}",
                 "hard_time": task.hard_time,
                 "planner_block_id": f"dated-{task.id}",
             },
@@ -95,4 +96,3 @@ class DatedTaskScheduler:
     def _round_up(self, value: datetime, minutes: int) -> datetime:
         remainder = value.minute % minutes
         return (value + timedelta(minutes=(minutes - remainder) % minutes)).replace(second=0, microsecond=0)
-

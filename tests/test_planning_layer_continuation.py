@@ -15,7 +15,8 @@ from planner_engine.command_router import PlannerCommand, PlannerCommandRouter, 
 from planner_engine.models import DailyPlan, MonthPlan, ScheduledBlock
 from planner_engine.monthly_planner import MonthlyPlanPreview
 from planner_engine.planning_commands import PlanningCommandService
-from planner_integrations.google_calendar import CalendarSyncResult
+from planner_integrations.google_calendar import CalendarSyncResult, GoogleCalendarClient
+from test_google_calendar import FakeService
 from test_writer import create_writer_workbook, writer_for
 
 
@@ -27,7 +28,18 @@ def dated_workbook(path: Path) -> None:
     workbook = load_workbook(path)
     try:
         sheet = workbook["Jul 2026"]
-        for header_row, start in ((21, date(2026, 6, 29)), (36, date(2026, 7, 6))):
+        sheet["B50"] = "WEEK 3  ·  13 Jul – 19 Jul 2026"
+        sheet["A51"] = "#"
+        sheet["B51"] = "TASK / GOAL"
+        sheet["C51"] = "CATEGORY"
+        sheet["K51"] = "STATUS"
+        sheet["L51"] = "NOTES"
+        sheet["B52"] = "  ↳ From monthly goals (fill in tasks planned for this week)"
+        for header_row, start in (
+            (21, date(2026, 6, 29)),
+            (36, date(2026, 7, 6)),
+            (51, date(2026, 7, 13)),
+        ):
             for offset in range(7):
                 sheet.cell(header_row, 4 + offset).value = (start + timedelta(days=offset)).strftime("%d %b")
         workbook.save(path)
@@ -127,6 +139,46 @@ class CalendarDateSyncTests(TestCase):
             self.assertEqual([day.date for day in plan.days], [TARGET])
             self.assertIn("File ITR", [block.title for block in plan.days[0].blocks])
 
+    def test_moving_dated_task_preserves_id_and_updates_calendar_without_duplicate(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            _, engine, writer, _, rules = services(tmp)
+            old_date = date(2026, 7, 12)
+            new_date = date(2026, 7, 13)
+            add = writer.add_dated_task(old_date, "Call plumber", 30, preferred_daypart="morning")
+            self.assertTrue(add.success, add.errors)
+            original = writer.list_dated_tasks(old_date)[0]
+
+            client = GoogleCalendarClient(
+                service=FakeService(),
+                decision_log=writer.decision_log,
+                external_links_path=tmp / "external-links.json",
+            )
+            service = CalendarSyncService(engine, rules, client, EmptyScheduler())
+            first_sync = service.calendar_sync_date(old_date)
+            self.assertTrue(first_sync.success, first_sync.errors)
+            self.assertEqual(first_sync.created, 1)
+            original_event_id = client.service.events_data[0]["id"]
+
+            moved = writer.update_dated_task(original.id, date=new_date)
+            self.assertTrue(moved.success, moved.errors)
+            after_move = writer.list_dated_tasks(new_date)[0]
+            self.assertEqual(after_move.id, original.id)
+            self.assertEqual(writer.list_dated_tasks(old_date), [])
+
+            second_sync = service.calendar_sync_date(new_date)
+            self.assertTrue(second_sync.success, second_sync.errors)
+            self.assertEqual(second_sync.created, 0)
+            self.assertEqual(second_sync.updated, 1)
+            self.assertEqual(len(client.service.events_data), 1)
+            self.assertEqual(client.service.events_data[0]["id"], original_event_id)
+            self.assertIn("2026-07-13", client.service.events_data[0]["start"]["dateTime"])
+
+            repeat_sync = service.calendar_sync_date(new_date)
+            self.assertTrue(repeat_sync.success, repeat_sync.errors)
+            self.assertEqual(repeat_sync.created, 0)
+            self.assertEqual(len(client.service.events_data), 1)
+
 
 class PreviewApplyTests(TestCase):
     def _preview(self, overwrite: bool = False) -> MonthlyPlanPreview:
@@ -165,6 +217,24 @@ class PreviewApplyTests(TestCase):
             result = service.apply_month_plan(self._preview())
             self.assertTrue(result.success, result.errors)
             self.assertTrue(Path(result.backup_path).exists())
+
+    def test_stored_planning_preview_rejects_changed_workbook(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            planner_path, engine, writer, _, rules = services(tmp)
+            preview_dir = tmp / "previews"
+            preview = self._preview()
+            service = PlanningCommandService(engine, rules, writer, preview_dir)
+            service._remember(preview)
+            book = load_workbook(planner_path)
+            try:
+                book["Jul 2026"]["L10"] = "Changed after preview"
+                book.save(planner_path)
+            finally:
+                book.close()
+
+            with self.assertRaisesRegex(ValueError, "preview is stale"):
+                service.apply_month_plan(preview.preview_id)
 
 
 class RouterTests(TestCase):
@@ -232,4 +302,3 @@ class CurrentTimeAndCheckinTests(TestCase):
             self.assertIn("German practice", report.planned_tasks)
             self.assertTrue(report.recurring_status["german_done"])
             self.assertGreaterEqual(report.recurring_status["gym_sessions_completed"], 1)
-

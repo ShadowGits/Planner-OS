@@ -247,3 +247,33 @@ class ProgressEngineTests(TestCase):
         self.assertTrue(
             any(alert.reason == "IELTS cannot reach weekly target" for alert in alerts)
         )
+
+    def test_progress_summary_tracks_habits_forecast_and_risk(self) -> None:
+        engine = ProgressEngine()
+        through = date(2026, 7, 12)
+        for offset in range(3):
+            engine.record_completion(
+                "German study",
+                through - timedelta(days=offset),
+                recurring_key="german",
+            )
+        engine.record_completion("Goal A", through, recurring_key="goal")
+
+        summary = engine.summarize_progress(
+            planned_minutes=300,
+            carry_forward_count=2,
+            overdue_tasks=[task("Overdue IELTS", "Learning", Priority.HIGH)],
+            through_date=through,
+            target_dates={
+                "Goal A": date(2026, 7, 31),
+                "Goal B": date(2026, 7, 13),
+            },
+        )
+
+        self.assertGreater(summary.completed_minutes, 0)
+        self.assertEqual(summary.overdue_count, 1)
+        self.assertEqual(summary.carry_forward_count, 2)
+        self.assertEqual(summary.streaks["german"], 3)
+        self.assertEqual(summary.target_date_forecast["Goal A"], "complete")
+        self.assertEqual(summary.target_date_forecast["Goal B"], "at_risk")
+        self.assertEqual(summary.slippage_risk, "high")

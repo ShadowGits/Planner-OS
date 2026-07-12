@@ -108,6 +108,21 @@ class SlippageReport:
     alerts: list[ProgressAlert] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ProgressSummary:
+    """Deterministic progress rollup across planner object types."""
+
+    planned_minutes: int
+    completed_minutes: int
+    completion_percentage: float
+    streaks: dict[str, int]
+    adherence_percentage: dict[str, float]
+    overdue_count: int
+    carry_forward_count: int
+    slippage_risk: str
+    target_date_forecast: dict[str, str]
+
+
 class ProgressEngine:
     """Track execution and calculate progress metrics without side effects."""
 
@@ -459,6 +474,58 @@ class ProgressEngine:
             overdue_tasks=overdue_tasks,
         ).alerts
 
+    def summarize_progress(
+        self,
+        *,
+        planned_minutes: int = 0,
+        carry_forward_count: int = 0,
+        overdue_tasks: list[PlannerTask | MonthlyGoal] | None = None,
+        through_date: date | None = None,
+        target_dates: dict[str, date] | None = None,
+    ) -> ProgressSummary:
+        """Return a deterministic MVP2 progress model for tasks, habits, and goals."""
+
+        overdue_tasks = overdue_tasks or []
+        through_date = through_date or max(
+            (execution.execution_date for execution in self.executions),
+            default=date.today(),
+        )
+        completed_minutes = sum(
+            int((execution.completion_ratio or 0.0) * 60)
+            * max(1, execution.sessions_completed)
+            for execution in self.executions
+            if execution.status in {ExecutionStatus.COMPLETED, ExecutionStatus.PARTIAL}
+        )
+        denominator = planned_minutes or completed_minutes
+        completion = round((completed_minutes / denominator) * 100, 2) if denominator else 0.0
+        adherence = {
+            "german": round(self._adherence_ratio("german", through_date - timedelta(days=6), through_date, 7) * 100, 2),
+            "piano": round(self._adherence_ratio("piano", through_date - timedelta(days=6), through_date, 7) * 100, 2),
+            "gym": round((self._session_count("gym", through_date - timedelta(days=6), through_date) / max(1, self.gym_sessions_required)) * 100, 2),
+            "ielts": round((self._session_count("ielts", through_date - timedelta(days=6), through_date) / max(1, self.ielts_sessions_target)) * 100, 2),
+        }
+        target_date_forecast = {
+            name: self._forecast_status(name, target, through_date)
+            for name, target in (target_dates or {}).items()
+        }
+        risk = "high" if overdue_tasks or any(value < 50 for value in adherence.values()) else "low"
+        if risk == "low" and (carry_forward_count or any(value < 80 for value in adherence.values())):
+            risk = "medium"
+        return ProgressSummary(
+            planned_minutes=planned_minutes,
+            completed_minutes=completed_minutes,
+            completion_percentage=completion,
+            streaks={
+                "german": self.calculate_streak("german", through_date).current_count,
+                "piano": self.calculate_streak("piano", through_date).current_count,
+            },
+            adherence_percentage=adherence,
+            overdue_count=len(overdue_tasks),
+            carry_forward_count=carry_forward_count,
+            slippage_risk=risk,
+            target_date_forecast=target_date_forecast,
+        )
+
     def _executions_between(self, start_date: date, end_date: date) -> list[TaskExecution]:
         """Return execution records inside an inclusive date range."""
 
@@ -576,3 +643,13 @@ class ProgressEngine:
         """Normalize recurring keys and category names."""
 
         return " ".join((value or "").casefold().split())
+
+    def _forecast_status(self, name: str, target: date, through_date: date) -> str:
+        if self._task_completed(name):
+            return "complete"
+        days_remaining = (target - through_date).days
+        if days_remaining < 0:
+            return "overdue"
+        if days_remaining <= 2:
+            return "at_risk"
+        return "on_track"
