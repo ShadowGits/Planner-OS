@@ -43,8 +43,16 @@ from planner_mcp.models import PlannerMCPConfig, ToolResult
 class PlannerMCPTools:
     """Structured MCP tools for Planner OS."""
 
-    def __init__(self, config: PlannerMCPConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: PlannerMCPConfig | None = None,
+        *,
+        google_calendar_client: Any | None = None,
+        external_links_store: Any | None = None,
+    ) -> None:
         self.config = config or PlannerMCPConfig()
+        self._injected_google_calendar_client = google_calendar_client
+        self._injected_external_links_store = external_links_store
         self._planning: PlanningCommandService | None = None
         self._calendar_sync: CalendarSyncService | None = None
         self._router: PlannerCommandRouter | None = None
@@ -763,7 +771,9 @@ class PlannerMCPTools:
     def _calendar_client(self) -> GoogleCalendarClient:
         """Create the Google Calendar client."""
 
-        return GoogleCalendarClient()
+        if callable(self._injected_google_calendar_client):
+            return self._injected_google_calendar_client()
+        return self._injected_google_calendar_client or GoogleCalendarClient()
 
     def _planning_service(self) -> PlanningCommandService:
         if self._planning is None:
@@ -806,6 +816,7 @@ class PlannerMCPTools:
                 apple_helper_path=self.config.apple_calendar_helper_path,
                 apple_calendar_id=self.config.apple_calendar_id,
                 google_client=self._calendar_client(),
+                links_store=self._injected_external_links_store,
             )
         return self._execution
 

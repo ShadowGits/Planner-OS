@@ -1,7 +1,10 @@
 # Planner OS
 
-Planner OS is a single-user, local, workbook-first planner. Excel is the source
-of truth; the CLI and STDIO MCP are thin interfaces over Planner Engine.
+Planner OS MVP3 adds an authenticated local/cloud interface while preserving the workbook-first planner, local CLI, and STDIO MCP. See [MVP3 deployment](docs/mvp3_deployment.md) for Supabase migrations, Vercel configuration, Google OAuth, and the two-user release check.
+
+Planner OS is a workbook-first planner with local and authenticated cloud modes.
+Excel is the source of truth; the CLI, STDIO MCP, web app, and API are interfaces
+over Planner Engine.
 
 ## Active execution target
 

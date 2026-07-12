@@ -68,6 +68,7 @@ class GoogleCalendarClient:
         service: Any | None = None,
         decision_log: DecisionLog | None = None,
         external_links_path: str | Path | None = None,
+        external_links_store: Any | None = None,
     ) -> None:
         self.credentials_path = Path(credentials_path).expanduser()
         self.token_path = Path(token_path).expanduser()
@@ -75,7 +76,7 @@ class GoogleCalendarClient:
         self.timezone = timezone
         self.service = service
         self.decision_log = decision_log or DecisionLog()
-        self.external_links = (
+        self.external_links = external_links_store or (
             ExternalLinkStore(external_links_path)
             if external_links_path is not None
             else (ExternalLinkStore(DEFAULT_EXTERNAL_LINKS_PATH) if service is None else None)

@@ -1,0 +1,2353 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "mcp_server": "planner_mcp/server.py",
+    "technical_reference": "docs/technical_reference.md"
+  },
+  "tool_count": 90,
+  "tools": [
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Add a task to one exact workbook date column.",
+      "documented_behavior": "Creates an exact-date workbook task with permanent ID and backup.",
+      "documented_parameters": "`date`, `title`, `estimated_minutes`, optional scheduling fields",
+      "effect": "workbook_write",
+      "name": "add_dated_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "title",
+          "required": true
+        },
+        {
+          "annotation": "int",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "estimated_minutes",
+          "required": true
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preferred_daypart",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "start_time",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "end_time",
+          "required": false
+        },
+        {
+          "annotation": "bool | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "hard_time",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "category",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "notes",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 404
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Add a weekly task.",
+      "documented_behavior": "Adds a weekly workbook task with backup.",
+      "documented_parameters": "`task`, `week`, `month?`, `category?`, `status`, `notes?`",
+      "effect": "workbook_write",
+      "name": "add_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task",
+          "required": true
+        },
+        {
+          "annotation": "int",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "week",
+          "required": true
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "category",
+          "required": false
+        },
+        {
+          "annotation": "str",
+          "default": "'Not Started'",
+          "kind": "positional_or_keyword",
+          "name": "status",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "notes",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 334
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "List writable local Apple calendars.",
+      "documented_behavior": "Lists Apple calendars and writability.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "apple_calendar_calendars",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 122
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Delete one explicitly identified Planner OS Apple event.",
+      "documented_behavior": "Deletes one identified event; scope is `single`, `future`, or `series`.",
+      "documented_parameters": "`external_id`, `delete_scope = \"single\"`",
+      "effect": "external_write",
+      "name": "apple_calendar_delete_event",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": "'single'",
+          "kind": "positional_or_keyword",
+          "name": "delete_scope",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 152
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "List Planner OS-owned Apple events in a range.",
+      "documented_behavior": "Lists Planner OS-owned Apple events in an inclusive range.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "read",
+      "name": "apple_calendar_list_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 140
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Reconcile Apple Calendar events in a range.",
+      "documented_behavior": "Reports missing, orphaned, duplicate, and stale Apple mappings.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "read",
+      "name": "apple_calendar_reconcile_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 146
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Report native Apple Calendar permission and capabilities.",
+      "documented_behavior": "Reports EventKit permission, selected calendar, and capabilities.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "apple_calendar_status",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 116
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Update one explicitly identified Planner OS Apple event.",
+      "documented_behavior": "Updates one explicitly identified Planner OS Apple event.",
+      "documented_parameters": "`external_id`, `block`",
+      "effect": "external_write",
+      "name": "apple_calendar_update_event",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        },
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "block",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 158
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Apply an approved Apple Calendar range deletion.",
+      "documented_behavior": "Applies an approved Apple range-deletion preview.",
+      "documented_parameters": "`preview_id`",
+      "effect": "external_write",
+      "name": "apply_apple_calendar_delete_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 170
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved orphan cleanup.",
+      "documented_behavior": "Applies an approved orphan-cleanup preview.",
+      "documented_parameters": "`preview_id`",
+      "effect": "external_write",
+      "name": "apply_calendar_cleanup_orphans",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 236
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved Google event range deletion.",
+      "documented_behavior": "Applies an approved Google range-deletion preview.",
+      "documented_parameters": "`preview_id`",
+      "effect": "external_write",
+      "name": "apply_calendar_delete_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 218
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an explicitly approved day replan.",
+      "documented_behavior": "Writes approved dated changes if present and creates a backup.",
+      "documented_parameters": "`preview_id?: str`, `preview?: object`",
+      "effect": "workbook_write",
+      "name": "apply_day_replan",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": false
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preview",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 310
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved target-switch preview.",
+      "documented_behavior": "Applies an approved switch preview. Settings mutation only.",
+      "documented_parameters": "`preview_id: str`",
+      "effect": "local_state_write",
+      "name": "apply_execution_target_switch",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 74
+    },
+    {
+      "category": "Goal Planning",
+      "category_key": "goal_planning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved goal plan preview to the workbook.",
+      "documented_behavior": "Rejects stale/expired/applied previews, then writes goal and dated tasks with backups. Calendar remains untouched.",
+      "documented_parameters": "`preview_id`",
+      "effect": "workbook_write",
+      "name": "apply_goal_plan",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 635
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an explicitly approved monthly planning preview.",
+      "documented_behavior": "Writes approved monthly proposals, creates backup, does not sync calendar.",
+      "documented_parameters": "`preview_id?: str`, `preview?: object`",
+      "effect": "workbook_write",
+      "name": "apply_month_plan",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": false
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preview",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 276
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved explicit cross-target migration.",
+      "documented_behavior": "Creates destination items and removes approved source items; reports partial failures.",
+      "documented_parameters": "`preview_id: str`",
+      "effect": "external_write",
+      "name": "apply_move_external_items",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 86
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved local repair preview.",
+      "documented_behavior": "Applies only the approved local repairs.",
+      "documented_parameters": "`preview_id`",
+      "effect": "local_state_write",
+      "name": "apply_planner_repair",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 575
+    },
+    {
+      "category": "Recurrence",
+      "category_key": "recurrence",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved recurrence preview as dated workbook tasks.",
+      "documented_behavior": "Writes occurrences as dated tasks and stores the recurrence definition.",
+      "documented_parameters": "`preview_id`",
+      "effect": "workbook_write",
+      "name": "apply_recurrence",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 605
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an approved workbook undo preview.",
+      "documented_behavior": "Applies an approved undo and creates a safety backup first.",
+      "documented_parameters": "`preview_id`",
+      "effect": "workbook_write",
+      "name": "apply_undo",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 587
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Apply an explicitly approved weekly planning preview.",
+      "documented_behavior": "Writes approved week proposals and creates a backup.",
+      "documented_parameters": "`preview_id?: str`, `preview?: object`",
+      "effect": "workbook_write",
+      "name": "apply_week_plan",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preview_id",
+          "required": false
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "preview",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 293
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Delete one explicitly identified Planner OS Google event.",
+      "documented_behavior": "Deletes one identified Planner OS event.",
+      "documented_parameters": "`external_id`",
+      "effect": "external_write",
+      "name": "calendar_delete_event",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 194
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Delete this and future Planner OS Google recurring events.",
+      "documented_behavior": "Deletes the identified occurrence and future series events.",
+      "documented_parameters": "`external_id`",
+      "effect": "external_write",
+      "name": "calendar_delete_future_series",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 206
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Delete a Planner OS Google recurring series.",
+      "documented_behavior": "Deletes an identified Planner OS recurring series.",
+      "documented_parameters": "`external_id`",
+      "effect": "external_write",
+      "name": "calendar_delete_series",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 200
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "List Planner OS-owned Google events in a range.",
+      "documented_behavior": "Lists Planner OS-owned Google events in an inclusive range.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "read",
+      "name": "calendar_list_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 176
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Find Google events by stable planner block ID.",
+      "documented_behavior": "Finds events by stable Planner OS block identity.",
+      "documented_parameters": "`planner_block_id`, `start_date`, `end_date`",
+      "effect": "read",
+      "name": "calendar_lookup_event",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "planner_block_id",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 182
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Reconcile planner blocks with Google Calendar.",
+      "documented_behavior": "Reports drift between planned blocks, Google events, and mappings.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "read",
+      "name": "calendar_reconcile_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 224
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Repair a local mapping from Planner OS Google event metadata.",
+      "documented_behavior": "Rebuilds a local external link from Planner OS event metadata.",
+      "documented_parameters": "`external_id`",
+      "effect": "local_state_write",
+      "name": "calendar_repair_mapping",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 242
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Sync the Monday-Sunday range containing today.",
+      "documented_behavior": "Syncs the Monday-Sunday week containing today to Google Calendar.",
+      "documented_parameters": "none",
+      "effect": "external_write",
+      "name": "calendar_sync_current_week",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 466
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Sync exactly one date, including workbook-backed dated tasks.",
+      "documented_behavior": "Syncs exactly one date, including dated tasks, to Google Calendar.",
+      "documented_parameters": "`date`",
+      "effect": "external_write",
+      "name": "calendar_sync_date",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 501
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Sync all scheduled blocks in one explicit planner month.",
+      "documented_behavior": "Syncs scheduled blocks for one workbook month to Google Calendar.",
+      "documented_parameters": "`month`",
+      "effect": "external_write",
+      "name": "calendar_sync_month",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 494
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Sync the Monday-Sunday range after the current week.",
+      "documented_behavior": "Syncs the following Monday-Sunday week to Google Calendar.",
+      "documented_parameters": "none",
+      "effect": "external_write",
+      "name": "calendar_sync_next_week",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 473
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Sync one explicit inclusive date range.",
+      "documented_behavior": "Syncs one explicit inclusive range to Google Calendar.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "external_write",
+      "name": "calendar_sync_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 487
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Generate today's plan and sync it to Google Calendar.",
+      "documented_behavior": "Generates today and syncs Google Calendar.",
+      "documented_parameters": "none",
+      "effect": "external_write",
+      "name": "calendar_sync_today",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 452
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Backward-compatible alias that explicitly syncs current week.",
+      "documented_behavior": "Legacy alias that explicitly means current week.",
+      "documented_parameters": "none",
+      "effect": "external_write",
+      "name": "calendar_sync_week",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 459
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Sync one explicit planner workbook week section.",
+      "documented_behavior": "Syncs one explicit workbook week to Google Calendar.",
+      "documented_parameters": "`month`, `week_number`",
+      "effect": "external_write",
+      "name": "calendar_sync_week_number",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": true
+        },
+        {
+          "annotation": "int",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "week_number",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 480
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Update one explicitly identified Planner OS Google event.",
+      "documented_behavior": "Updates one explicitly identified Planner OS Google event.",
+      "documented_parameters": "`external_id`, `block`",
+      "effect": "external_write",
+      "name": "calendar_update_event",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "external_id",
+          "required": true
+        },
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "block",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 188
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Mark a task complete.",
+      "documented_behavior": "Marks a matching task complete, updates progress, creates backup/log.",
+      "documented_parameters": "`task_name`, `month?`",
+      "effect": "workbook_write",
+      "name": "complete_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task_name",
+          "required": true
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 327
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Create and select a dedicated local Apple calendar.",
+      "documented_behavior": "Creates an Apple calendar and persists its identifier.",
+      "documented_parameters": "`title: str = \"Planner OS\"`",
+      "effect": "external_write",
+      "name": "create_apple_calendar",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": "'Planner OS'",
+          "kind": "positional_or_keyword",
+          "name": "title",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 128
+    },
+    {
+      "category": "Check-In And Reviews",
+      "category_key": "check_in_and_reviews",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Generate a read-only daily progress check-in.",
+      "documented_behavior": "Read-only planned/completed/missed/partial report with carryover actions.",
+      "documented_parameters": "`date?: str`",
+      "effect": "read",
+      "name": "daily_checkin",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 508
+    },
+    {
+      "category": "Check-In And Reviews",
+      "category_key": "check_in_and_reviews",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Generate a read-only daily review.",
+      "documented_behavior": "Read-only daily execution review.",
+      "documented_parameters": "`date?: str`",
+      "effect": "read",
+      "name": "daily_review",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 515
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Delete a workbook-backed exact-date task.",
+      "documented_behavior": "Deletes one exact-date task by permanent ID with backup.",
+      "documented_parameters": "`task_id`",
+      "effect": "workbook_write",
+      "name": "delete_dated_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 431
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Delete a task.",
+      "documented_behavior": "Deletes a matching workbook task with backup.",
+      "documented_parameters": "`task_name`, `month?`",
+      "effect": "workbook_write",
+      "name": "delete_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task_name",
+          "required": true
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 397
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Explain the constraints currently affecting planning and publishing.",
+      "documented_behavior": "Explains effective planning and publishing constraints.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "explain_active_constraints",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 563
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Return the persistent active downstream target.",
+      "documented_behavior": "Returns the persistent active target.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "get_active_execution_target",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 56
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Read one planner preference.",
+      "documented_behavior": "Reads one preference.",
+      "documented_parameters": "`name`",
+      "effect": "read",
+      "name": "get_preference",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 545
+    },
+    {
+      "category": "Import And Google Calendar Sync",
+      "category_key": "import_and_google_calendar_sync",
+      "cloud": {
+        "reason": "Replace the local input_path with a validated upload_id or request body.",
+        "status": "adaptation_required"
+      },
+      "description": "Import a structured JSON planner file.",
+      "documented_behavior": "Imports validated structured JSON through Writer; workbook backup required.",
+      "documented_parameters": "`input_path`",
+      "effect": "workbook_write",
+      "name": "import_plan",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "input_path",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 445
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "List workbook tasks assigned to one exact date.",
+      "documented_behavior": "Lists tasks stored for exactly one date. Read-only.",
+      "documented_parameters": "`date`",
+      "effect": "read",
+      "name": "list_dated_tasks",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 438
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "List supported targets and the one active target.",
+      "documented_behavior": "Lists supported targets, capabilities, and active target.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "list_execution_targets",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 50
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "List persistent planner preferences and editable aliases.",
+      "documented_behavior": "Lists persistent planner preferences and editable aliases.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "list_preferences",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 539
+    },
+    {
+      "category": "Recurrence",
+      "category_key": "recurrence",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "List workbook-backed recurrence definitions.",
+      "documented_behavior": "Reads definitions from `_RECURRENCES`.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "list_recurrences",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 611
+    },
+    {
+      "category": "Validation And Rules",
+      "category_key": "validation_and_rules",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "List permanent planner rules.",
+      "documented_behavior": "Returns permanent YAML rules. No mutation.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "list_rules",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 22
+    },
+    {
+      "category": "Check-In And Reviews",
+      "category_key": "check_in_and_reviews",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Generate a read-only monthly review.",
+      "documented_behavior": "Read-only workbook month review.",
+      "documented_parameters": "`month: str`",
+      "effect": "read",
+      "name": "monthly_review",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 527
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Move a weekly task to another week.",
+      "documented_behavior": "Moves a weekly task to another workbook week with backup.",
+      "documented_parameters": "`task_name`, `destination_week`, `month?`, `status?`",
+      "effect": "workbook_write",
+      "name": "move_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task_name",
+          "required": true
+        },
+        {
+          "annotation": "int",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "destination_week",
+          "required": true
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "status",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 380
+    },
+    {
+      "category": "Command Router",
+      "category_key": "command_router",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Parse a small supported set of common planner phrases.",
+      "documented_behavior": "Deterministically parses supported phrases into a `PlannerCommand`; never mutates.",
+      "documented_parameters": "`text`",
+      "effect": "read",
+      "name": "parse_common_intent",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "text",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 641
+    },
+    {
+      "category": "Recurrence",
+      "category_key": "recurrence",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Pause a workbook-backed recurrence definition.",
+      "documented_behavior": "Sets a recurrence definition to paused.",
+      "documented_parameters": "`recurrence_id`",
+      "effect": "workbook_write",
+      "name": "pause_recurrence",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "recurrence_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 617
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Generate today's schedule without writing to Excel.",
+      "documented_behavior": "Generates today's schedule. No workbook/calendar mutation.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "plan_today",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 248
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Plan today using only remaining time for flexible blocks.",
+      "documented_behavior": "Plans flexible blocks only after the supplied/current time. Read-only.",
+      "documented_parameters": "`current_datetime?: str`",
+      "effect": "read",
+      "name": "plan_today_from_now",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "current_datetime",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 255
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Run read-only local Planner OS diagnostics.",
+      "documented_behavior": "Runs read-only workbook, settings, preview, mapping, log, and backup checks.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "planner_doctor",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 533
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Preview exact Planner OS Apple events to delete.",
+      "documented_behavior": "Returns the exact Planner OS events proposed for deletion. No deletion.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "preview",
+      "name": "preview_apple_calendar_delete_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 164
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview orphaned Planner OS Google events for cleanup.",
+      "documented_behavior": "Previews cleanup of Planner OS-owned orphan events.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "preview",
+      "name": "preview_calendar_cleanup_orphans",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 230
+    },
+    {
+      "category": "Google Calendar CRUD",
+      "category_key": "google_calendar_crud",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview exact Planner OS Google events to delete.",
+      "documented_behavior": "Lists exact Planner OS events proposed for range deletion.",
+      "documented_parameters": "`start_date`, `end_date`",
+      "effect": "preview",
+      "name": "preview_calendar_delete_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 212
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview today's remaining-time replan without writing.",
+      "documented_behavior": "Previews today's remaining-time changes.",
+      "documented_parameters": "`request: DayReplanRequest`",
+      "effect": "preview",
+      "name": "preview_day_replan",
+      "parameters": [
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 303
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview changing future publishing to one target.",
+      "documented_behavior": "Previews a future-publishing switch. No mutation.",
+      "documented_parameters": "`target: str`",
+      "effect": "preview",
+      "name": "preview_execution_target_switch",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "target",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 68
+    },
+    {
+      "category": "Goal Planning",
+      "category_key": "goal_planning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview deterministic breakdown of a structured goal.",
+      "documented_behavior": "Deterministically generates milestones, outcomes, dated tasks, feasibility, and preview metadata.",
+      "documented_parameters": "`request: GoalPlanningRequest`",
+      "effect": "preview",
+      "name": "preview_goal_plan",
+      "parameters": [
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 629
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview monthly milestones and dated daily proposals without writing.",
+      "documented_behavior": "Produces milestones, dated tasks, feasibility, warnings, and a preview ID.",
+      "documented_parameters": "`request: MonthlyPlanningRequest`",
+      "effect": "preview",
+      "name": "preview_month_plan",
+      "parameters": [
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 269
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview explicit cross-target migration of external items.",
+      "documented_behavior": "Previews explicit cross-target event migration.",
+      "documented_parameters": "`source_target`, `destination_target`, `start_date`, `end_date`",
+      "effect": "preview",
+      "name": "preview_move_external_items",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "source_target",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "destination_target",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 80
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview local Planner OS consistency repairs.",
+      "documented_behavior": "Produces a local consistency-repair preview. No mutation.",
+      "documented_parameters": "none",
+      "effect": "preview",
+      "name": "preview_planner_repair",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 569
+    },
+    {
+      "category": "Recurrence",
+      "category_key": "recurrence",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview generated occurrences for a recurrence definition.",
+      "documented_behavior": "Generates bounded dated occurrences and a preview ID.",
+      "documented_parameters": "`request: RecurrenceRequest`",
+      "effect": "preview",
+      "name": "preview_recurrence",
+      "parameters": [
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 599
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview restoring a workbook backup referenced by Decision Log.",
+      "documented_behavior": "Previews restoring a Decision Log-referenced workbook backup.",
+      "documented_parameters": "`decision_id?: str`",
+      "effect": "preview",
+      "name": "preview_undo",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "decision_id",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 581
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Preview an explicit workbook week or date range without writing.",
+      "documented_behavior": "Previews one explicit workbook week or date range.",
+      "documented_parameters": "`request: WeekPlanningRequest`",
+      "effect": "preview",
+      "name": "preview_week_plan",
+      "parameters": [
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 286
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Publish current week using only the active execution target.",
+      "documented_behavior": "Publishes the Monday-Sunday current week through only the active target.",
+      "documented_parameters": "none",
+      "effect": "external_write",
+      "name": "publish_current_week",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 110
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Publish one date using only the active execution target.",
+      "documented_behavior": "Publishes one exact date through only the active target.",
+      "documented_parameters": "`date: str`",
+      "effect": "external_write",
+      "name": "publish_date",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 98
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Publish a range using only the active execution target.",
+      "documented_behavior": "Publishes an inclusive range through only the active target.",
+      "documented_parameters": "`start_date: str`, `end_date: str`",
+      "effect": "external_write",
+      "name": "publish_range",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "start_date",
+          "required": true
+        },
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "end_date",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 104
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Publish today using only the active execution target.",
+      "documented_behavior": "Publishes today's blocks through only the active target.",
+      "documented_parameters": "none",
+      "effect": "external_write",
+      "name": "publish_today",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 92
+    },
+    {
+      "category": "Planning And Replanning",
+      "category_key": "planning_and_replanning",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Replan today from the current time without writing.",
+      "documented_behavior": "Replans remaining time while preserving fixed/history blocks. Read-only.",
+      "documented_parameters": "`current_datetime?: str`",
+      "effect": "read",
+      "name": "replan_today_from_now",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "current_datetime",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 262
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Reset one preference when a safe built-in reset exists.",
+      "documented_behavior": "Restores a supported preference to its built-in default.",
+      "documented_parameters": "`name`",
+      "effect": "local_state_write",
+      "name": "reset_preference",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 557
+    },
+    {
+      "category": "Recurrence",
+      "category_key": "recurrence",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Resume a workbook-backed recurrence definition.",
+      "documented_behavior": "Sets a recurrence definition to active.",
+      "documented_parameters": "`recurrence_id`",
+      "effect": "workbook_write",
+      "name": "resume_recurrence",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "recurrence_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 623
+    },
+    {
+      "category": "Command Router",
+      "category_key": "command_router",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Route one validated structured planner command safely.",
+      "documented_behavior": "Validates and dispatches one structured command; refuses ambiguity/unconfirmed writes.",
+      "documented_parameters": "`command: PlannerCommand`",
+      "effect": "mixed",
+      "name": "route_planner_command",
+      "parameters": [
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "command",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 648
+    },
+    {
+      "category": "Execution Targets And Generic Publishing",
+      "category_key": "execution_targets_and_generic_publishing",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Set future publishing target without moving existing items.",
+      "documented_behavior": "Immediately changes future publishing target; does not migrate old events.",
+      "documented_parameters": "`target: str`",
+      "effect": "local_state_write",
+      "name": "set_active_execution_target",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "target",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 62
+    },
+    {
+      "category": "Apple Calendar",
+      "category_key": "apple_calendar",
+      "cloud": {
+        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
+        "status": "disabled"
+      },
+      "description": "Persist the selected Apple Calendar identifier.",
+      "documented_behavior": "Persists the selected Apple calendar identifier.",
+      "documented_parameters": "`calendar_id: str`",
+      "effect": "local_state_write",
+      "name": "set_apple_calendar",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "calendar_id",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 134
+    },
+    {
+      "category": "Validation And Rules",
+      "category_key": "validation_and_rules",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Set no-work days.",
+      "documented_behavior": "Updates configured no-work days. Persistent rule mutation.",
+      "documented_parameters": "`days: list[str]`",
+      "effect": "local_state_write",
+      "name": "set_no_work_days",
+      "parameters": [
+        {
+          "annotation": "list[str]",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "days",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 43
+    },
+    {
+      "category": "Validation And Rules",
+      "category_key": "validation_and_rules",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Set active work days.",
+      "documented_behavior": "Updates configured work days. Persistent rule mutation.",
+      "documented_parameters": "`days: list[str]`",
+      "effect": "local_state_write",
+      "name": "set_work_days",
+      "parameters": [
+        {
+          "annotation": "list[str]",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "days",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 36
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Return progress status and active slippage alerts.",
+      "documented_behavior": "Read-only daily/weekly/monthly progress and slippage summary.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "status",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 320
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Undo the most recent workbook change with a Decision Log backup.",
+      "documented_behavior": "Immediately undoes the latest eligible workbook decision.",
+      "documented_parameters": "none",
+      "effect": "workbook_write",
+      "name": "undo_last_change",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 593
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Update a workbook-backed exact-date task.",
+      "documented_behavior": "Updates an exact-date task by permanent ID; date moves retain identity.",
+      "documented_parameters": "`task_id`, `changes: object`",
+      "effect": "workbook_write",
+      "name": "update_dated_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task_id",
+          "required": true
+        },
+        {
+          "annotation": "dict",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "changes",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 424
+    },
+    {
+      "category": "Diagnostics, Preferences, Repair, And Undo",
+      "category_key": "diagnostics_preferences_repair_and_undo",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Update one planner preference through a validated local store.",
+      "documented_behavior": "Validates and persists one preference/rule/target setting.",
+      "documented_parameters": "`name`, `value`",
+      "effect": "local_state_write",
+      "name": "update_preference",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "name",
+          "required": true
+        },
+        {
+          "annotation": null,
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 551
+    },
+    {
+      "category": "Validation And Rules",
+      "category_key": "validation_and_rules",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Update an existing permanent rule path.",
+      "documented_behavior": "Updates one existing rule path in YAML. Persistent mutation.",
+      "documented_parameters": "`path: str`, `value: any`",
+      "effect": "local_state_write",
+      "name": "update_rule",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "path",
+          "required": true
+        },
+        {
+          "annotation": "object",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 29
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Update an existing task.",
+      "documented_behavior": "Updates name/category/priority/week/status/notes with backup.",
+      "documented_parameters": "`task_name`, `month?`, plus optional fields",
+      "effect": "workbook_write",
+      "name": "update_task",
+      "parameters": [
+        {
+          "annotation": "str",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "task_name",
+          "required": true
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "month",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "new_name",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "category",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "priority",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "target_week",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "status",
+          "required": false
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "notes",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 355
+    },
+    {
+      "category": "Validation And Rules",
+      "category_key": "validation_and_rules",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Check workbook readability, rules, and planner structure.",
+      "documented_behavior": "Reads workbook/rules and reports structural errors. No mutation.",
+      "documented_parameters": "none",
+      "effect": "read",
+      "name": "validate",
+      "parameters": [],
+      "return_annotation": "dict",
+      "source_line": 15
+    },
+    {
+      "category": "Check-In And Reviews",
+      "category_key": "check_in_and_reviews",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Generate a read-only weekly review.",
+      "documented_behavior": "Read-only review for the week containing the date.",
+      "documented_parameters": "`date?: str`",
+      "effect": "read",
+      "name": "weekly_review",
+      "parameters": [
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "positional_or_keyword",
+          "name": "date",
+          "required": false
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 521
+    }
+  ]
+}

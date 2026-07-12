@@ -1,0 +1,10 @@
+.venv
+.planner-os
+.pytest_cache
+.next
+node_modules
+backups
+logs
+tests
+*.xlsx
+*.docx

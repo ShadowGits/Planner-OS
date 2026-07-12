@@ -17,9 +17,10 @@ def create_execution_manager(
     *, settings_path: str | Path, links_path: str | Path, preview_dir: str | Path,
     apple_helper_path: str | Path, google_client: GoogleCalendarClient,
     apple_calendar_id: str | None = None,
+    links_store=None,
 ) -> ExecutionManager:
     settings = ExecutionSettings(settings_path)
-    links = ExternalLinkStore(links_path)
+    links = links_store or ExternalLinkStore(links_path)
     settings.get_active()
     links.retire_target("structured")
     selected_apple_calendar = apple_calendar_id or settings.get_apple_calendar_id()
