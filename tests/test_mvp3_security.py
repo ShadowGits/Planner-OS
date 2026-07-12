@@ -335,6 +335,12 @@ def test_client_bundle_sources_do_not_reference_server_only_secrets() -> None:
     assert ".planner-os/token.json" not in contents
 
 
+def test_cloud_models_defer_annotations_for_python_312() -> None:
+    source = Path("planner_engine/models.py").read_text(encoding="utf-8")
+
+    assert source.startswith('"""Typed models used by the Planner Engine."""\n\nfrom __future__ import annotations')
+
+
 def test_account_creation_uses_validated_email_password_signup() -> None:
     source = Path("components/auth-panel.tsx").read_text(encoding="utf-8")
 
