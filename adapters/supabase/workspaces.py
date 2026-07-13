@@ -78,29 +78,47 @@ class SupabaseWorkspaceRepository:
         return workspace_from_row(row)
 
     def acquire_lock(self, context: PlannerContext, ttl_seconds: int = 60) -> WorkspaceRecord:
-        result = self.client.rpc(
-            "acquire_workspace_lock",
-            {
-                "p_workspace_id": str(context.workspace_id),
-                "p_lock_owner": str(context.operation_id),
-                "p_ttl_seconds": ttl_seconds,
-            },
-        )
-        if not result:
+        from datetime import datetime, timezone, timedelta
+        
+        ws_res = self.client.select("workspaces", "*", id=str(context.workspace_id))
+        if not ws_res:
+            raise ValueError("Workspace not found")
+        w = ws_res[0]
+        
+        now = datetime.now(timezone.utc)
+        locked_until_str = w.get("locked_until")
+        locked_until = datetime.fromisoformat(locked_until_str) if locked_until_str else None
+        
+        if w.get("lock_owner") and locked_until and locked_until > now and w.get("lock_owner") != str(context.operation_id):
             raise WorkspaceBusyError("Workspace is already locked")
-        row = result[0] if isinstance(result, list) else result
-        return workspace_from_row(row)
+            
+        update_res = self.client.update(
+            "workspaces", 
+            {
+                "lock_owner": str(context.operation_id),
+                "locked_until": (now + timedelta(seconds=ttl_seconds)).isoformat()
+            },
+            filters={"id": str(context.workspace_id)}
+        )
+        
+        if not update_res:
+            raise WorkspaceBusyError("Workspace is already locked")
+            
+        return workspace_from_row(update_res[0])
 
     def release_lock(self, context: PlannerContext) -> bool:
-        return bool(
-            self.client.rpc(
-                "release_workspace_lock",
-                {
-                    "p_workspace_id": str(context.workspace_id),
-                    "p_lock_owner": str(context.operation_id),
-                },
-            )
+        update_res = self.client.update(
+            "workspaces",
+            {
+                "lock_owner": None,
+                "locked_until": None
+            },
+            filters={
+                "id": str(context.workspace_id),
+                "lock_owner": str(context.operation_id)
+            }
         )
+        return bool(update_res)
 
     def advance_revision(self, context: PlannerContext, checksum: str) -> WorkspaceRecord:
         rows = self.client.update(
