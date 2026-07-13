@@ -19,6 +19,7 @@ class PlannerContext:
     workspace_id: UUID
     operation_id: UUID
     workbook_path: Path
+    rules_path: Path | None = None
     timezone: str
     execution_target: str
     source_revision: int

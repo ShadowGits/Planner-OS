@@ -46,7 +46,7 @@ class CloudPlannerToolsFactory:
         config = replace(
             self.base_config,
             planner_path=context.workbook_path,
-            rules_path=root / "rules.yaml",
+            rules_path=context.rules_path or (root / "rules.yaml"),
             backup_dir=root / "backups",
             execution_settings_path=settings,
             external_links_path=root / "external-links.json",

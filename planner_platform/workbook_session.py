@@ -135,7 +135,7 @@ class WorkbookSession:
                         )
                         rules_path.write_text(fallback)
                     
-                context = PlannerContext(**{**initial_context.__dict__, "workbook_path": workbook_path})
+                context = PlannerContext(**{**initial_context.__dict__, "workbook_path": workbook_path, "rules_path": rules_path})
                 original_checksum = self._checksum(workbook_path)
                 original_rules_checksum = self._checksum(rules_path)
                 self.operations.record(context, tool_name=tool_name, status="running")
