@@ -216,18 +216,6 @@ class RulesEngine:
             ("work", "july_august", "end"),
             ("work", "september_onward", "start"),
             ("work", "september_onward", "end"),
-            ("gym", "sessions_per_week"),
-            ("gym", "double_class_days_per_week"),
-            ("gym", "single_class_days_per_week"),
-            ("gym", "one_class_equals_one_session"),
-            ("gym", "dance_forbidden_days"),
-            ("german", "frequency"),
-            ("german", "allow_breaks"),
-            ("ielts", "sessions_per_week"),
-            ("ignou", "sessions_per_week_min"),
-            ("ignou", "sessions_per_week_max"),
-            ("piano", "duration_minutes"),
-            ("reading", "preferred_time"),
             ("planning", "excel_is_source_of_truth"),
             ("planning", "edit_immediately"),
             ("planning", "backup_before_write"),
@@ -255,6 +243,13 @@ class RulesEngine:
     def _build_rules(self, raw_rules: dict[str, Any]) -> PlannerRules:
         """Build typed rules from validated raw YAML data."""
 
+        gym_raw = raw_rules.get("gym", {})
+        german_raw = raw_rules.get("german", {})
+        ielts_raw = raw_rules.get("ielts", {})
+        ignou_raw = raw_rules.get("ignou", {})
+        piano_raw = raw_rules.get("piano", {})
+        reading_raw = raw_rules.get("reading", {})
+
         return PlannerRules(
             profile=ProfileRules(**raw_rules["profile"]),
             sleep=TimeWindowRules(**raw_rules["sleep"]),
@@ -280,22 +275,28 @@ class RulesEngine:
                 ),
             ),
             gym=GymRules(
-                sessions_per_week=raw_rules["gym"]["sessions_per_week"],
-                double_class_days_per_week=raw_rules["gym"][
-                    "double_class_days_per_week"
-                ],
-                single_class_days_per_week=raw_rules["gym"][
-                    "single_class_days_per_week"
-                ],
-                one_class_equals_one_session=raw_rules["gym"][
-                    "one_class_equals_one_session"
-                ],
-                dance_forbidden_days=tuple(raw_rules["gym"]["dance_forbidden_days"]),
+                sessions_per_week=gym_raw.get("sessions_per_week", 0),
+                double_class_days_per_week=gym_raw.get("double_class_days_per_week", 0),
+                single_class_days_per_week=gym_raw.get("single_class_days_per_week", 0),
+                one_class_equals_one_session=gym_raw.get("one_class_equals_one_session", True),
+                dance_forbidden_days=tuple(gym_raw.get("dance_forbidden_days", [])),
             ),
-            german=GermanRules(**raw_rules["german"]),
-            ielts=WeeklySessionRules(**raw_rules["ielts"]),
-            ignou=IgnouRules(**raw_rules["ignou"]),
-            piano=PianoRules(**raw_rules["piano"]),
-            reading=ReadingRules(**raw_rules["reading"]),
+            german=GermanRules(
+                frequency=german_raw.get("frequency", "none"),
+                allow_breaks=german_raw.get("allow_breaks", True)
+            ),
+            ielts=WeeklySessionRules(
+                sessions_per_week=ielts_raw.get("sessions_per_week", 0)
+            ),
+            ignou=IgnouRules(
+                sessions_per_week_min=ignou_raw.get("sessions_per_week_min", 0),
+                sessions_per_week_max=ignou_raw.get("sessions_per_week_max", 0)
+            ),
+            piano=PianoRules(
+                duration_minutes=piano_raw.get("duration_minutes", 0)
+            ),
+            reading=ReadingRules(
+                preferred_time=reading_raw.get("preferred_time", "evening")
+            ),
             planning=PlanningRules(**raw_rules["planning"]),
         )
