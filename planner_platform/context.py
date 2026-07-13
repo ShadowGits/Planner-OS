@@ -19,10 +19,10 @@ class PlannerContext:
     workspace_id: UUID
     operation_id: UUID
     workbook_path: Path
-    rules_path: Path | None = None
     timezone: str
     execution_target: str
     source_revision: int
+    rules_path: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workbook_path", Path(self.workbook_path))
