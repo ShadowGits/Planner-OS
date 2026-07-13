@@ -28,6 +28,7 @@ class OAuthState:
     user_id: UUID
     workspace_id: UUID
     redirect_uri: str
+    code_verifier: str
     expires_at: datetime
 
 
@@ -114,7 +115,13 @@ class SupabaseOAuthStateRepository:
         self.user_client = user_client
         self.service_client = service_client
 
-    def create(self, context: PlannerContext, redirect_uri: str, ttl_minutes: int = 10) -> str:
+    def create(
+        self,
+        context: PlannerContext,
+        redirect_uri: str,
+        code_verifier: str,
+        ttl_minutes: int = 10,
+    ) -> str:
         state = secrets.token_urlsafe(48)
         self.user_client.insert(
             "oauth_states",
@@ -124,6 +131,7 @@ class SupabaseOAuthStateRepository:
                 "provider": "google_calendar",
                 "state_hash": self._hash(state),
                 "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)).isoformat(),
             },
         )
@@ -141,6 +149,7 @@ class SupabaseOAuthStateRepository:
             user_id=UUID(str(row["user_id"])),
             workspace_id=UUID(str(row["workspace_id"])),
             redirect_uri=str(row["redirect_uri"]),
+            code_verifier=str(row["code_verifier"]),
             expires_at=datetime.fromisoformat(str(row["expires_at"])),
         )
 

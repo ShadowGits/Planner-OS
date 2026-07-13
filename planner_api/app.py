@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -17,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from adapters.supabase import SupabaseCalendarConnectionRepository, SupabaseWorkbookObjectStore
 from planner_api.config import load_local_environment
+from planner_api.mcp import create_cloud_mcp
 from planner_api.runtime import CloudRuntime
 from planner_platform.auth import (
     AuthenticatedUser,
@@ -28,6 +31,9 @@ from planner_platform.context import PlannerContext
 from planner_platform.function_manifest import build_manifest
 from planner_platform.policies import CloudStatus, policy_for
 from planner_platform.tool_registry import ToolRegistryError
+
+
+logger = logging.getLogger(__name__)
 
 
 class ToolCall(BaseModel):
@@ -69,7 +75,27 @@ def envelope(
 
 def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVerifier | None = None) -> FastAPI:
     load_local_environment()
-    api = FastAPI(title="Planner OS API", version="3.0-stage9", docs_url="/api/docs")
+    cloud = runtime or CloudRuntime()
+    # The REST API (/api/*) still uses Supabase JWT verification.
+    token_verifier = verifier or SupabaseJWTVerifier()
+    # MCP auth uses a simple API key — activate when key + public URL are set.
+    cloud_mcp = None
+    cloud_mcp_app = None
+    if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_WEB_APP_URL"):
+        cloud_mcp, cloud_mcp_app = create_cloud_mcp(cloud)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        del app
+        # NOTE: Do NOT manage cloud_mcp.session_manager here.
+        # streamable_http_app() returns a Starlette app with its own
+        # lifespan that calls session_manager.run() internally. Starting
+        # it again from FastAPI's lifespan causes a double-start crash
+        # (HTTP 500 before auth is ever reached). Let the mounted Starlette
+        # app own the session lifecycle entirely.
+        yield
+
+    api = FastAPI(title="Planner OS API", version="3.0-stage9", docs_url="/api/docs", lifespan=lifespan)
     origins = [item.strip() for item in os.environ.get("PLANNER_WEB_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
     api.add_middleware(
         CORSMiddleware,
@@ -78,8 +104,6 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
-    cloud = runtime or CloudRuntime()
-    token_verifier = verifier or SupabaseJWTVerifier()
 
     @api.exception_handler(HTTPException)
     async def http_error_handler(request: Request, error: HTTPException):
@@ -259,6 +283,11 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
                 )
             return envelope(True, "Google Calendar connected", data={"workspace_id": str(context.workspace_id)}, operation="google_calendar_callback", target="google_calendar")
         except Exception as error:
+            logger.error(
+                "Google Calendar callback failed (%s): %s",
+                type(error).__name__,
+                error,
+            )
             raise _api_error(400, "GOOGLE_CALLBACK_FAILED", "Google Calendar authorization could not be completed") from error
 
     @api.get("/api/workspaces/{workspace_id}/google-calendar/status")
@@ -284,6 +313,9 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         context = cloud.context(user, workspace_id)
         SupabaseCalendarConnectionRepository(cloud.user_client(user)).set_status(context, "revoked")
         return envelope(True, "Google Calendar disconnected", target="google_calendar")
+
+    if cloud_mcp_app is not None:
+        api.mount("/", cloud_mcp_app)
 
     return api
 

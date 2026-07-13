@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -73,7 +74,7 @@ class GoogleOAuthService:
         connections: SupabaseCalendarConnectionRepository,
         cipher: CredentialCipher,
         *,
-        flow_factory: Callable[[str, str | None], Any] | None = None,
+        flow_factory: Callable[[str, str | None, str], Any] | None = None,
     ) -> None:
         self.states = states
         self.connections = connections
@@ -89,8 +90,9 @@ class GoogleOAuthService:
             raise ValueError("Google web OAuth client configuration is required")
 
     def start(self, context: PlannerContext) -> GoogleOAuthStart:
-        state = self.states.create(context, self.redirect_uri)
-        flow = self.flow_factory(self.redirect_uri, state)
+        code_verifier = secrets.token_urlsafe(64)
+        state = self.states.create(context, self.redirect_uri, code_verifier)
+        flow = self.flow_factory(self.redirect_uri, state, code_verifier)
         url, returned_state = flow.authorization_url(
             access_type="offline",
             prompt="consent",
@@ -111,13 +113,13 @@ class GoogleOAuthService:
             execution_target="google_calendar",
             source_revision=0,
         )
-        flow = self.flow_factory(stored.redirect_uri, state)
+        flow = self.flow_factory(stored.redirect_uri, state, stored.code_verifier)
         flow.fetch_token(code=code)
         encrypted = self.cipher.encrypt(flow.credentials.to_json().encode("utf-8"), context=context)
         self.connections.save(context, encrypted)
         return context
 
-    def _google_flow(self, redirect_uri: str, state: str | None):
+    def _google_flow(self, redirect_uri: str, state: str | None, code_verifier: str):
         from google_auth_oauthlib.flow import Flow
 
         flow = Flow.from_client_config(
@@ -132,6 +134,8 @@ class GoogleOAuthService:
             },
             scopes=SCOPES,
             state=state,
+            code_verifier=code_verifier,
+            autogenerate_code_verifier=False,
         )
         flow.redirect_uri = redirect_uri
         return flow
