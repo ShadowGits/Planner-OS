@@ -151,12 +151,12 @@ def _tool_handler(runtime, record):
                 "Create and activate a workspace in the Planner OS web app first."
             )
 
-        # Build a synthetic AuthenticatedUser using the service-role token so
-        # CloudRuntime.execute() can construct a user-scoped Supabase client.
+        # Build a synthetic AuthenticatedUser with access_token=None so
+        # CloudRuntime.execute() uses the service role key for both the
+        # apikey and Authorization headers to bypass Supabase RLS.
         from planner_platform.auth import AuthenticatedUser
 
-        service_token = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-        user = AuthenticatedUser(user_id=user_id, access_token=service_token)
+        user = AuthenticatedUser(user_id=user_id, access_token=None)  # type: ignore
         return runtime.execute(user, workspace.id, record["name"], arguments)
 
     invoke.__name__ = str(record["name"])
