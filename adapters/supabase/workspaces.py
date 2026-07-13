@@ -80,7 +80,7 @@ class SupabaseWorkspaceRepository:
     def acquire_lock(self, context: PlannerContext, ttl_seconds: int = 60) -> WorkspaceRecord:
         from datetime import datetime, timezone, timedelta
         
-        ws_res = self.client.select("workspaces", "*", id=str(context.workspace_id))
+        ws_res = self.client.select("workspaces", filters={"id": str(context.workspace_id)})
         if not ws_res:
             raise ValueError("Workspace not found")
         w = ws_res[0]
