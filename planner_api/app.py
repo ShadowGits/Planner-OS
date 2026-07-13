@@ -127,8 +127,11 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
 
     @api.get("/api/health")
-    def health():
-        return envelope(True, "Planner OS API is ready", data={"version": "3.0-stage9"})
+    def health_check() -> dict[str, Any]:
+        """Simple health check endpoint."""
+        import os
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        return envelope(True, "Planner OS API is ready", data={"version": api.version, "key_prefix": key[:15]})
 
     @api.get("/api/tools")
     @api.get("/api/v1/tools")
