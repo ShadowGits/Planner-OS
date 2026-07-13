@@ -45,17 +45,29 @@ class SupabasePreviewRepository:
         return self._from_row(rows[0]) if rows else None
 
     def consume(self, context: PlannerContext, preview_id: str) -> StoredPreview:
-        result = self.client.rpc(
-            "consume_planner_preview",
-            {
-                "p_preview_id": preview_id,
-                "p_workspace_id": str(context.workspace_id),
-            },
+        from dataclasses import replace
+        from datetime import datetime, timezone
+        
+        preview = self.get(context, preview_id)
+        if not preview:
+            raise ValueError("Preview is missing")
+            
+        now = datetime.now(timezone.utc)
+        if preview.consumed_at is not None:
+            raise ValueError("Preview is already consumed")
+        if preview.expires_at < now:
+            raise ValueError("Preview is expired")
+            
+        self.client.update(
+            "planner_previews",
+            {"consumed_at": now.isoformat()},
+            filters={
+                "id": preview_id,
+                "workspace_id": str(context.workspace_id),
+                "user_id": str(context.user_id),
+            }
         )
-        if not result:
-            raise ValueError("Preview is missing, expired, or already consumed")
-        row = result[0] if isinstance(result, list) else result
-        return self._from_row(row)
+        return replace(preview, consumed_at=now)
 
     @staticmethod
     def _from_row(row: dict[str, Any]) -> StoredPreview:
