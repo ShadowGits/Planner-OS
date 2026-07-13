@@ -114,7 +114,6 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any]:
             handler,
             name=record["name"],
             description=record["description"],
-            structured_output=True,
             meta={
                 "effect": policy.effect.value,
                 "confirmation": policy.confirmation.value,
