@@ -143,7 +143,11 @@ class RulesEngine:
     def is_rule_enabled(self, rule_name: str) -> bool:
         """Return whether a rule section should generate scheduled blocks."""
 
-        section = getattr(self, "_raw_rules", {}).get(rule_name, {})
+        raw = getattr(self, "_raw_rules", {})
+        if rule_name not in raw:
+            return False
+            
+        section = raw.get(rule_name, {})
         if not isinstance(section, dict):
             return True
         if section.get("enabled") is False:
