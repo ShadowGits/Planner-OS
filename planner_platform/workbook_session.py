@@ -74,10 +74,66 @@ class WorkbookSession:
                 workbook_path = self.storage.download_current(initial_context, root)
                 rules_path = self.storage.download_rules(initial_context, root)
                 if rules_path is None:
-                    import shutil
-                    from planner_engine.config import DEFAULT_RULES_PATH
                     rules_path = root / "rules.yaml"
-                    shutil.copy(DEFAULT_RULES_PATH, rules_path)
+                    try:
+                        import shutil
+                        from planner_engine.config import DEFAULT_RULES_PATH
+                        shutil.copy(DEFAULT_RULES_PATH, rules_path)
+                    except FileNotFoundError:
+                        fallback = (
+                            "profile:\n"
+                            "  name: Shadow\n"
+                            "  timezone: Asia/Kolkata\n"
+                            "  location: Gurgaon, India\n"
+                            "sleep:\n"
+                            "  start: 03:00\n"
+                            "  end: 09:30\n"
+                            "work:\n"
+                            "  active_days:\n"
+                            "  - Monday\n"
+                            "  - Tuesday\n"
+                            "  - Wednesday\n"
+                            "  - Thursday\n"
+                            "  - Friday\n"
+                            "  no_work_days:\n"
+                            "  - Saturday\n"
+                            "  - Sunday\n"
+                            "  july_august:\n"
+                            "    start: '11:00'\n"
+                            "    end: '19:00'\n"
+                            "  september_onward:\n"
+                            "    start: '20:30'\n"
+                            "    end: 03:30\n"
+                            "gym:\n"
+                            "  sessions_per_week: 9\n"
+                            "  double_class_days_per_week: 3\n"
+                            "  single_class_days_per_week: 3\n"
+                            "  one_class_equals_one_session: true\n"
+                            "  dance_forbidden_days:\n"
+                            "  - Tuesday\n"
+                            "  - Wednesday\n"
+                            "german:\n"
+                            "  frequency: none\n"
+                            "  allow_breaks: false\n"
+                            "ielts:\n"
+                            "  sessions_per_week: 2\n"
+                            "ignou:\n"
+                            "  sessions_per_week_min: 2\n"
+                            "  sessions_per_week_max: 3\n"
+                            "piano:\n"
+                            "  duration_minutes: 60\n"
+                            "reading:\n"
+                            "  preferred_time: evening\n"
+                            "planning:\n"
+                            "  excel_is_source_of_truth: true\n"
+                            "  edit_immediately: true\n"
+                            "  backup_before_write: true\n"
+                            "  move_unfinished_tasks_instead_of_deleting: true\n"
+                            "  daily_follow_up: true\n"
+                            "  alert_on_weekly_slippage: true\n"
+                            "  alert_on_monthly_slippage: true\n"
+                        )
+                        rules_path.write_text(fallback)
                     
                 context = PlannerContext(**{**initial_context.__dict__, "workbook_path": workbook_path})
                 original_checksum = self._checksum(workbook_path)
