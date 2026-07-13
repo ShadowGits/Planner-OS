@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 
 from planner_platform.auth import AuthenticationError
@@ -88,9 +89,16 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any]:
             "Preview destructive changes before applying them."
         ),
         website_url=public_url,
-        # No auth= / AuthSettings: Claude connects directly with the API key.
-        # The ApiKeyTokenVerifier validates the key; no OAuth discovery needed.
         token_verifier=ApiKeyTokenVerifier(api_key),
+        # auth= is required by the SDK whenever token_verifier is set.
+        # We use our own URL as issuer — this is just metadata for WWW-Authenticate
+        # headers. No OAuth routes are added (no auth_server_provider).
+        # mcp-remote --transport http-only skips OAuth discovery entirely.
+        auth=AuthSettings(
+            issuer_url=public_url,
+            resource_server_url=f"{public_url}/mcp",
+            required_scopes=[],
+        ),
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=True,
