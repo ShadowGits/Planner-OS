@@ -87,13 +87,11 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     @asynccontextmanager
     async def lifespan(app):
         del app
-        # NOTE: Do NOT manage cloud_mcp.session_manager here.
-        # streamable_http_app() returns a Starlette app with its own
-        # lifespan that calls session_manager.run() internally. Starting
-        # it again from FastAPI's lifespan causes a double-start crash
-        # (HTTP 500 before auth is ever reached). Let the mounted Starlette
-        # app own the session lifecycle entirely.
-        yield
+        if cloud_mcp is None:
+            yield
+            return
+        async with cloud_mcp.session_manager.run():
+            yield
 
     api = FastAPI(title="Planner OS API", version="3.0-stage9", docs_url="/api/docs", lifespan=lifespan)
     origins = [item.strip() for item in os.environ.get("PLANNER_WEB_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
