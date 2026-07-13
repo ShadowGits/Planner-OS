@@ -335,11 +335,16 @@ def _api_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
+_startup_error: str | None = None
 try:
     app = create_app()
-except ValueError:
+except ValueError as _e:
+    _startup_error = str(_e)
+    import sys
+    print(f"[planner-os] create_app() failed: {_startup_error}", file=sys.stderr)
     app = FastAPI(title="Planner OS API (configuration required)")
 
     @app.get("/api/health")
     def configuration_health():
-        return envelope(False, "Planner OS API configuration is incomplete", errors=["Required environment variables are missing"])
+        return envelope(False, "Planner OS API configuration is incomplete", errors=[_startup_error or "Required environment variables are missing"])
+
