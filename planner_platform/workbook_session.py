@@ -67,7 +67,7 @@ class WorkbookSession:
                 execution_target=workspace.active_execution_target,
                 source_revision=workspace.revision,
             )
-            locked = policy.effect in {EffectType.WORKBOOK_WRITE, EffectType.MIXED}
+            locked = policy.effect in {EffectType.WORKBOOK_WRITE, EffectType.MIXED, EffectType.LOCAL_STATE_WRITE}
             if locked:
                 self.workspaces.acquire_lock(initial_context, policy.timeout_seconds)
             try:
