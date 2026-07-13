@@ -12,7 +12,7 @@ DEFAULT_PLANNER_PATH = Path(
     "Life tracking/Master_Planner_Jul26_Jun27.xlsx"
 )
 DEFAULT_BACKUP_DIR = Path("backups")
-DEFAULT_RULES_PATH = Path("config/rules.yaml")
+DEFAULT_RULES_PATH = DEFAULT_PROJECT_ROOT / "config/rules.yaml"
 DEFAULT_GOOGLE_CONFIG_DIR = DEFAULT_PROJECT_ROOT / ".planner-os"
 DEFAULT_GOOGLE_CREDENTIALS_PATH = DEFAULT_GOOGLE_CONFIG_DIR / "credentials.json"
 DEFAULT_GOOGLE_TOKEN_PATH = DEFAULT_GOOGLE_CONFIG_DIR / "token.json"
