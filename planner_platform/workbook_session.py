@@ -72,8 +72,16 @@ class WorkbookSession:
                 self.workspaces.acquire_lock(initial_context, policy.timeout_seconds)
             try:
                 workbook_path = self.storage.download_current(initial_context, root)
+                rules_path = self.storage.download_rules(initial_context, root)
+                if rules_path is None:
+                    import shutil
+                    from planner_engine.config import DEFAULT_RULES_PATH
+                    rules_path = root / "rules.yaml"
+                    shutil.copy(DEFAULT_RULES_PATH, rules_path)
+                    
                 context = PlannerContext(**{**initial_context.__dict__, "workbook_path": workbook_path})
                 original_checksum = self._checksum(workbook_path)
+                original_rules_checksum = self._checksum(rules_path)
                 self.operations.record(context, tool_name=tool_name, status="running")
                 settings_revision = getattr(workspace, "settings_revision", 0)
                 self._prepare_apply_preview(
@@ -101,17 +109,26 @@ class WorkbookSession:
                     settings_revision=settings_revision,
                 )
                 final_checksum = self._checksum(workbook_path)
-                if final_checksum != original_checksum:
+                final_rules_checksum = self._checksum(rules_path)
+                
+                if final_checksum != original_checksum or final_rules_checksum != original_rules_checksum:
                     if not locked:
-                        raise RuntimeError("Read-only tool unexpectedly changed the workbook")
-                    backup_key = self.storage.backup_current(context, original_checksum)
-                    self.storage.upload_current(context, workbook_path)
-                    self.workspaces.advance_revision(context, final_checksum)
-                    result = {
-                        **self._sanitized_result(result),
-                        "source_revision": context.source_revision + 1,
-                        "cloud_backup_key": backup_key,
-                    }
+                        raise RuntimeError("Read-only tool unexpectedly changed the workbook or rules")
+                        
+                    if final_checksum != original_checksum:
+                        backup_key = self.storage.backup_current(context, original_checksum)
+                        self.storage.upload_current(context, workbook_path)
+                        self.workspaces.advance_revision(context, final_checksum)
+                        result = {
+                            **self._sanitized_result(result),
+                            "source_revision": context.source_revision + 1,
+                            "cloud_backup_key": backup_key,
+                        }
+                    else:
+                        result = self._sanitized_result(result)
+                        
+                    if final_rules_checksum != original_rules_checksum:
+                        self.storage.upload_rules(context, rules_path)
                 else:
                     result = self._sanitized_result(result)
                 self.operations.record(context, tool_name=tool_name, status="succeeded", result=result)
