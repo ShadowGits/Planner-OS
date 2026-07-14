@@ -95,7 +95,11 @@ class SupabaseRestClient:
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         query: dict[str, str] = {"select": columns}
-        query.update({key: f"eq.{value}" for key, value in filters.items()})
+        for key, value in filters.items():
+            if isinstance(value, bool):
+                query[key] = f"eq.{'true' if value else 'false'}"
+            else:
+                query[key] = f"eq.{value}"
         if limit is not None:
             query["limit"] = str(limit)
         return self._json_request("GET", f"/rest/v1/{self._identifier(table)}?{urlencode(query)}")
@@ -115,7 +119,13 @@ class SupabaseRestClient:
         *,
         filters: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
-        query = urlencode({key: f"eq.{value}" for key, value in filters.items()})
+        query_parts = {}
+        for key, value in filters.items():
+            if isinstance(value, bool):
+                query_parts[key] = f"eq.{'true' if value else 'false'}"
+            else:
+                query_parts[key] = f"eq.{value}"
+        query = urlencode(query_parts)
         return self._json_request(
             "PATCH",
             f"/rest/v1/{self._identifier(table)}?{query}",

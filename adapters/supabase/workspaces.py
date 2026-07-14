@@ -59,7 +59,7 @@ class SupabaseWorkspaceRepository:
     def get_active(self, user_id: UUID) -> WorkspaceRecord | None:
         rows = self.client.select(
             "workspaces",
-            filters={"user_id": str(user_id), "is_active": True},
+            filters={"user_id": str(user_id), "is_active": "true"},
             limit=1,
         )
         return workspace_from_row(rows[0]) if rows else None
