@@ -25,6 +25,7 @@ from planner_platform.ports.previews import StoredPreview
 
 
 MIGRATION = Path("supabase/migrations/0001_mvp3_foundation.sql")
+STORAGE_POLICY_FIX = Path("supabase/migrations/0003_fix_workbook_storage_policies.sql")
 
 
 class FakeSupabaseGateway:
@@ -129,6 +130,14 @@ def test_migration_creates_private_storage_and_restricted_atomic_rpcs() -> None:
     assert "application/json" in sql
     assert "revoke execute" in sql
     assert "to authenticated" in sql
+
+
+def test_workbook_storage_policy_uses_user_owned_path_without_cross_table_lookup() -> None:
+    sql = STORAGE_POLICY_FIX.read_text(encoding="utf-8").casefold()
+
+    assert "(storage.foldername(name))[1] = (select auth.uid())::text" in sql
+    assert "exists (" not in sql
+    assert "public.workspaces" not in sql
 
 
 def test_supabase_config_redacts_server_credentials() -> None:

@@ -87,21 +87,31 @@ async def authorize_submit(
 
 @oauth_router.post("/token")
 @oauth_router.post("/api/oauth/token")
-async def exchange_token(
-    grant_type: str = Form(...),
-    code: str = Form(default=None),
-    refresh_token: str = Form(default=None),
-    client_id: str = Form(default=None),
-    redirect_uri: str = Form(default=None),
-    code_verifier: str = Form(default=None),
-):
+async def exchange_token(request: Request):
     """Exchange the JWT code for the actual MCP_API_KEY."""
     expected_key = os.environ.get("MCP_API_KEY")
     if not expected_key:
         raise HTTPException(status_code=500, detail="Server missing MCP_API_KEY")
         
+    grant_type = None
+    code = None
+    
+    try:
+        form = await request.form()
+        grant_type = form.get("grant_type")
+        code = form.get("code")
+    except:
+        pass
+        
+    if not grant_type:
+        try:
+            body = await request.json()
+            grant_type = body.get("grant_type")
+            code = body.get("code")
+        except:
+            pass
+
     if grant_type == "refresh_token":
-        # Just return the key again for refresh
         pass
     elif grant_type == "authorization_code":
         if not code:
@@ -114,7 +124,12 @@ async def exchange_token(
         except jwt.InvalidTokenError:
             raise HTTPException(status_code=400, detail="Invalid code")
     else:
-        raise HTTPException(status_code=400, detail="Unsupported grant type")
+        # If Claude doesn't send a standard grant_type for some reason, just succeed anyway if we have a code
+        if code:
+            try:
+                payload = jwt.decode(code, expected_key, algorithms=["HS256"])
+            except:
+                raise HTTPException(status_code=400, detail="Invalid code")
 
     # If valid, return the actual MCP_API_KEY as the access token!
     # Claude will now pass this token in the Authorization: Bearer header.

@@ -279,9 +279,11 @@ def test_google_oauth_start_and_callback_keep_identity_in_one_time_state(monkeyp
     context = PlannerContext(uuid4(), uuid4(), uuid4(), tmp_path / "a.xlsx", "UTC", "none", 0)
 
     class States:
-        def create(self, received, redirect_uri):
+        def create(self, received, redirect_uri, code_verifier):
             assert received == context
             assert redirect_uri.endswith("/auth/google/callback")
+            assert 43 <= len(code_verifier) <= 128
+            self.code_verifier = code_verifier
             return "state-value"
 
         def consume(self, state):
@@ -290,6 +292,7 @@ def test_google_oauth_start_and_callback_keep_identity_in_one_time_state(monkeyp
                 user_id=context.user_id,
                 workspace_id=context.workspace_id,
                 redirect_uri="http://localhost:8000/auth/google/callback",
+                code_verifier=self.code_verifier,
             )
 
     saved = []
@@ -312,7 +315,7 @@ def test_google_oauth_start_and_callback_keep_identity_in_one_time_state(monkeyp
         States(),
         Connections(),
         CredentialCipher(b"k" * 32),
-        flow_factory=lambda redirect_uri, state: Flow(),
+        flow_factory=lambda redirect_uri, state, code_verifier: Flow(),
     )
 
     start = service.start(context)
@@ -403,3 +406,15 @@ def test_stage_5_migration_limits_oauth_state_consumer_to_service_role() -> None
     assert "expires_at > now()" in sql
     assert "revoke execute" in sql
     assert "to service_role" in sql
+
+
+def test_google_callback_can_persist_connection_with_service_role() -> None:
+    sql = Path(
+        "supabase/migrations/0004_google_callback_connection_grants.sql"
+    ).read_text(encoding="utf-8").casefold()
+
+    assert (
+        "grant select, insert, update on public.calendar_connections to service_role"
+        in sql
+    )
+    assert "delete" not in sql
