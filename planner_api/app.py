@@ -316,10 +316,10 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         SupabaseCalendarConnectionRepository(cloud.user_client(user)).set_status(context, "revoked")
         return envelope(True, "Google Calendar disconnected", target="google_calendar")
 
+    api.include_router(oauth_router)
+
     if cloud_mcp_app is not None:
         api.mount("/", cloud_mcp_app)
-
-    api.include_router(oauth_router)
 
     return api
 
