@@ -61,8 +61,8 @@ async def authorize_submit(
     state: str = Form(default=""),
 ):
     """Validate the key and redirect back to Claude with a JWT code."""
-    expected_key = os.environ.get("MCP_API_KEY")
-    if not expected_key or api_key != expected_key:
+    expected_key = os.environ.get("MCP_API_KEY", "").strip()
+    if not expected_key or api_key.strip() != expected_key:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
     # Generate a short-lived JWT as the authorization code
@@ -89,7 +89,7 @@ async def authorize_submit(
 @oauth_router.post("/api/oauth/token")
 async def exchange_token(request: Request):
     """Exchange the JWT code for the actual MCP_API_KEY."""
-    expected_key = os.environ.get("MCP_API_KEY")
+    expected_key = os.environ.get("MCP_API_KEY", "").strip()
     if not expected_key:
         raise HTTPException(status_code=500, detail="Server missing MCP_API_KEY")
         
