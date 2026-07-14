@@ -31,6 +31,7 @@ from planner_platform.context import PlannerContext
 from planner_platform.function_manifest import build_manifest
 from planner_platform.policies import CloudStatus, policy_for
 from planner_platform.tool_registry import ToolRegistryError
+from planner_api.oauth import oauth_router
 
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,8 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
 
     if cloud_mcp_app is not None:
         api.mount("/", cloud_mcp_app)
+
+    api.include_router(oauth_router)
 
     return api
 
