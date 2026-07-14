@@ -316,7 +316,15 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         return envelope(True, "Google Calendar disconnected", target="google_calendar")
 
     if cloud_mcp_app is not None:
-        api.mount("/", cloud_mcp_app)
+        async def mcp_wrapper(scope, receive, send):
+            if scope["type"] == "http" and scope.get("path") == "/messages":
+                # FastMCP expects exactly "/messages/" for its POST route.
+                # Vercel forces trailing slash removal, which makes FastMCP return 404.
+                # This normalizes the scope path so FastMCP's internal Mount matches it.
+                scope["path"] = "/messages/"
+            await cloud_mcp_app(scope, receive, send)
+
+        api.mount("/", mcp_wrapper)
 
     return api
 
