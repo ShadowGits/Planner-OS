@@ -353,4 +353,15 @@ except Exception as _e:
     def configuration_health():
         return envelope(False, "Planner OS API configuration is incomplete", errors=[_startup_error or "Unknown startup error"])
 
+import asyncio
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/test-sse")
+async def test_sse():
+    async def event_generator():
+        for i in range(3):
+            yield f"data: message {i}\n\n"
+            await asyncio.sleep(1)
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
