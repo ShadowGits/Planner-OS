@@ -12,6 +12,8 @@
     { "source": "/api/:path*", "destination": "/api/index.py" },
     { "source": "/auth/google/callback", "destination": "/api/index.py" },
     { "source": "/mcp", "destination": "/api/index.py" },
+    { "source": "/authorize", "destination": "/api/index.py" },
+    { "source": "/token", "destination": "/api/index.py" },
     { "source": "/.well-known/oauth-protected-resource/mcp", "destination": "/api/index.py" }
   ]
 }

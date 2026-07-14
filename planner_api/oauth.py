@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 oauth_router = APIRouter(tags=["OAuth Proxy"])
 
+@oauth_router.get("/authorize", response_class=HTMLResponse)
 @oauth_router.get("/api/oauth/authorize", response_class=HTMLResponse)
 async def authorize_form(
     request: Request,
@@ -36,7 +37,7 @@ async def authorize_form(
         <div class="container">
             <h2>Planner OS Auth</h2>
             <p>Please enter your <strong>MCP_API_KEY</strong> to authorize Claude.</p>
-            <form action="/api/oauth/authorize" method="POST">
+            <form action="/authorize" method="POST">
                 <input type="hidden" name="client_id" value="{client_id}">
                 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
                 <input type="hidden" name="state" value="{state}">
@@ -51,6 +52,7 @@ async def authorize_form(
     return HTMLResponse(content=html_content)
 
 
+@oauth_router.post("/authorize", response_class=RedirectResponse)
 @oauth_router.post("/api/oauth/authorize", response_class=RedirectResponse)
 async def authorize_submit(
     api_key: str = Form(...),
@@ -83,6 +85,7 @@ async def authorize_submit(
     return RedirectResponse(url=url, status_code=303)
 
 
+@oauth_router.post("/token")
 @oauth_router.post("/api/oauth/token")
 async def exchange_token(
     grant_type: str = Form(...),
