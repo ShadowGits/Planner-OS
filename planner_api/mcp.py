@@ -57,7 +57,7 @@ class ApiKeyTokenVerifier:
         for api_key in accounts.keys():
             if len(api_key) < 32:
                 raise ValueError("All MCP API keys must be at least 32 characters long.")
-        self._accounts = accounts
+        self._accounts = {k.strip(): v for k, v in accounts.items()}
 
     async def verify_token(self, token: str) -> AccessToken | None:
         token = token.strip()
@@ -94,8 +94,8 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any]:
             raise ValueError("MCP_ACCOUNTS environment variable is not valid JSON.") from e
             
     # Fallback to single user config for backwards compatibility
-    api_key = os.environ.get("MCP_API_KEY", "")
-    user_id = os.environ.get("MCP_USER_ID", "")
+    api_key = os.environ.get("MCP_API_KEY", "").strip()
+    user_id = os.environ.get("MCP_USER_ID", "").strip()
     if api_key and user_id:
         accounts[api_key] = user_id
         
