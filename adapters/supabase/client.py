@@ -191,7 +191,8 @@ class SupabaseRestClient:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
                 return response.read()
         except HTTPError as error:
-            raise SupabaseError(f"Supabase request failed with HTTP {error.code}") from error
+            error_body = error.read().decode("utf-8") if error.fp else "No body"
+            raise SupabaseError(f"Supabase request failed with HTTP {error.code}: {error_body}") from error
         except URLError as error:
             raise SupabaseError("Supabase request could not be completed") from error
 
