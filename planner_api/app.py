@@ -318,6 +318,16 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
 
     api.include_router(oauth_router)
 
+    from fastapi.responses import StreamingResponse
+    import asyncio
+    @api.get("/api/test-sse")
+    async def test_sse():
+        async def event_generator():
+            for i in range(3):
+                yield f"data: message {i}\n\n"
+                await asyncio.sleep(1)
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
     if cloud_mcp_app is not None:
         api.mount("/", cloud_mcp_app)
 
@@ -352,16 +362,5 @@ except Exception as _e:
     @app.get("/api/health")
     def configuration_health():
         return envelope(False, "Planner OS API configuration is incomplete", errors=[_startup_error or "Unknown startup error"])
-
-import asyncio
-from fastapi.responses import StreamingResponse
-
-@app.get("/api/test-sse")
-async def test_sse():
-    async def event_generator():
-        for i in range(3):
-            yield f"data: message {i}\n\n"
-            await asyncio.sleep(1)
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
