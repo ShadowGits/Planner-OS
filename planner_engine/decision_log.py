@@ -11,7 +11,12 @@ from typing import Any
 from uuid import uuid4
 
 
-DEFAULT_DECISION_LOG_PATH = Path("logs/decision_log.jsonl")
+import os
+
+if os.environ.get("VERCEL"):
+    DEFAULT_DECISION_LOG_PATH = Path("/tmp/logs/decision_log.jsonl")
+else:
+    DEFAULT_DECISION_LOG_PATH = Path("logs/decision_log.jsonl")
 
 
 class DecisionOutcome(str, Enum):

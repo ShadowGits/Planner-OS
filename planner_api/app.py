@@ -329,7 +329,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     if cloud_mcp_app is not None:
-        api.mount("/", cloud_mcp_app)
+        async def mcp_wrapper(scope, receive, send):
+            if scope["type"] == "http":
+                if scope.get("path") == "/messages":
+                    scope["path"] = "/messages/"
+            await cloud_mcp_app(scope, receive, send)
+            
+        api.mount("/", mcp_wrapper)
 
     return api
 
