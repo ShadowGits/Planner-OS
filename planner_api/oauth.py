@@ -37,7 +37,7 @@ async def authorize_form(
         <div class="container">
             <h2>Planner OS Auth</h2>
             <p>Please enter your <strong>MCP_API_KEY</strong> to authorize Claude.</p>
-            <form action="/authorize" method="POST">
+            <form action="/api/oauth/authorize" method="POST">
                 <input type="hidden" name="client_id" value="{client_id}">
                 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
                 <input type="hidden" name="state" value="{state}">
