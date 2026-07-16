@@ -44,63 +44,76 @@ def get_gpt_openapi():
         "paths": {}
     }
     
+    tool_names = []
+    schemas_text = []
+    
     for tool in manifest.get("tools", []):
         tool_name = tool["name"]
         description = tool.get("description", "")
         
-        properties = {}
-        required = []
+        tool_names.append(tool_name)
         
+        properties = {}
         for param in tool.get("parameters", []):
             param_name = param["name"]
             param_type = _type_to_schema(param.get("annotation", "str"))
+            req = "*" if param.get("required") else ""
+            properties[f"{param_name}{req}"] = param_type["type"]
             
-            # The manifest may contain None default values.
-            if param.get("description"):
-                param_type["description"] = param["description"]
-                
-            properties[param_name] = param_type
-            
-            if param.get("required"):
-                required.append(param_name)
-                
-        request_schema = {
-            "type": "object",
-            "properties": {
-                "workspace_id": {
-                    "type": "string",
-                    "format": "uuid",
-                    "description": "The target workspace ID"
-                },
-                "arguments": {
-                    "type": "object",
-                    "properties": properties,
-                }
-            },
-            "required": ["workspace_id", "arguments"]
-        }
+        schemas_text.append(f"- {tool_name}: {description}\n  args: {json.dumps(properties)}")
         
-        if required:
-            request_schema["properties"]["arguments"]["required"] = required
-            
-        openapi["paths"][f"/api/v1/tools/{tool_name}/invoke"] = {
-            "post": {
-                "summary": description,
-                "operationId": tool_name,
-                "requestBody": {
+    full_description = (
+        "Invoke a Planner OS tool. You MUST specify the exact tool_name in the path, "
+        "and pass the correct arguments as a JSON object in the request body.\n\n"
+        "AVAILABLE TOOLS AND THEIR ARGUMENT SCHEMAS (args with * are required):\n"
+        + "\n".join(schemas_text)
+    )
+
+    openapi["paths"]["/api/v1/tools/{tool_name}/invoke"] = {
+        "post": {
+            "summary": "Invoke any Planner OS Tool",
+            "description": full_description,
+            "operationId": "invoke_planner_os_tool",
+            "parameters": [
+                {
+                    "name": "tool_name",
+                    "in": "path",
                     "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": request_schema
+                    "schema": {
+                        "type": "string",
+                        "enum": tool_names
+                    },
+                    "description": "The exact name of the tool to invoke"
+                }
+            ],
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "description": "The target workspace ID"
+                                },
+                                "arguments": {
+                                    "type": "object",
+                                    "description": "A JSON object containing the arguments for the specific tool."
+                                }
+                            },
+                            "required": ["workspace_id", "arguments"]
                         }
                     }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Successful operation"
-                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Successful operation"
                 }
             }
         }
-        
+    }
+    
     return JSONResponse(openapi)
