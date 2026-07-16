@@ -421,6 +421,13 @@ def add_dated_task(
 
 
 @mcp.tool()
+def add_dated_tasks(tasks: list[dict]) -> dict:
+    """Add multiple tasks to exact workbook date columns."""
+    
+    return planner_tools.add_dated_tasks(tasks)
+
+
+@mcp.tool()
 def update_dated_task(task_id: str, changes: dict) -> dict:
     """Update a workbook-backed exact-date task."""
 
