@@ -157,6 +157,12 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         return envelope(True, "Planner OS API is ready", data={"version": api.version, "key_prefix": key[:15]})
 
+    @api.get("/api/debug-headers")
+    def debug_headers(request: Request) -> dict[str, Any]:
+        """Temporary debug endpoint - echoes back all received headers."""
+        headers = {k: v for k, v in request.headers.items()}
+        return envelope(True, "Headers received", data={"headers": headers})
+
     @api.get("/api/tools")
     @api.get("/api/v1/tools")
     def list_tools(user=Depends(current_user)):
