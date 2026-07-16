@@ -227,6 +227,7 @@ Day replanning currently supports today only. Bounded-session requests include
 | `move_task` | `task_name`, `destination_week`, `month?`, `status?` | Moves a weekly task to another workbook week with backup. |
 | `delete_task` | `task_name`, `month?` | Deletes a matching workbook task with backup. |
 | `add_dated_task` | `date`, `title`, `estimated_minutes`, optional scheduling fields | Creates an exact-date workbook task with permanent ID and backup. |
+| `add_dated_tasks` | `tasks` | Creates multiple exact-date workbook tasks with permanent IDs in a single operation. |
 | `update_dated_task` | `task_id`, `changes: object` | Updates an exact-date task by permanent ID; date moves retain identity. |
 | `delete_dated_task` | `task_id` | Deletes one exact-date task by permanent ID with backup. |
 | `list_dated_tasks` | `date` | Lists tasks stored for exactly one date. Read-only. |
