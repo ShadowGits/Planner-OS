@@ -27,7 +27,9 @@ from planner_api.manifest_data import MANIFEST_DATA
 def get_gpt_openapi():
     manifest = MANIFEST_DATA
         
-    public_url = os.environ.get("PLANNER_WEB_APP_URL", "https://planner-os-nine.vercel.app").rstrip("/")
+    # VERCEL_URL is automatically set by Vercel for every deployment (preview or production)
+    vercel_url = os.environ.get("VERCEL_URL", "")
+    public_url = os.environ.get("PLANNER_WEB_APP_URL", f"https://{vercel_url}" if vercel_url else "https://planner-os-nine.vercel.app").rstrip("/")
     
     openapi = {
         "openapi": "3.1.0",
