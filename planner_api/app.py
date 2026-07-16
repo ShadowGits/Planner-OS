@@ -306,7 +306,8 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
                 return cloud.service_execute(user.user_id, body.workspace_id, tool_name, args)
             except Exception as error:
                 logger.exception("service_execute failed: %s", error)
-                raise _api_error(409, "PLANNER_OPERATION_CONFLICT", f"DEBUG service_execute: {type(error).__name__}: {error}") from error
+                # Temporarily return 200 so ChatGPT shows the actual error body
+                return envelope(False, f"DEBUG: {type(error).__name__}: {error}", errors=["PLANNER_OPERATION_CONFLICT"])
         return invoke_tool(body.workspace_id, tool_name, ToolCall(arguments=args), user)
 
     @api.post("/api/workspaces/{workspace_id}/google-calendar/connect")
