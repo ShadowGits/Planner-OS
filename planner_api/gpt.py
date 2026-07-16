@@ -6,7 +6,9 @@ from fastapi.responses import JSONResponse
 
 gpt_router = APIRouter(tags=["GPT OpenAPI"])
 
-def _type_to_schema(annotation: str) -> dict:
+def _type_to_schema(annotation: str | None) -> dict:
+    if not annotation:
+        return {"type": "string"}
     if "list[" in annotation or "list" in annotation:
         return {"type": "array", "items": {"type": "string"}}
     if "int" in annotation:
