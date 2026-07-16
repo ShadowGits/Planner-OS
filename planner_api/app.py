@@ -280,11 +280,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     def invoke_versioned_tool(tool_name: str, body: VersionedToolCall, user=Depends(current_user)):
         args = body.arguments
         # ChatGPT often mistakenly nests the parameters inside an "args" or "arguments" object.
-        if isinstance(args, dict) and len(args) == 1:
+        while isinstance(args, dict) and len(args) == 1:
             if "args" in args and isinstance(args["args"], dict):
                 args = args["args"]
             elif "arguments" in args and isinstance(args["arguments"], dict):
                 args = args["arguments"]
+            else:
+                break
         return invoke_tool(body.workspace_id, tool_name, ToolCall(arguments=args), user)
 
     @api.post("/api/workspaces/{workspace_id}/google-calendar/connect")
