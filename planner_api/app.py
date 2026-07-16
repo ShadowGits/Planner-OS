@@ -256,7 +256,11 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
 
     @api.post("/api/v1/tools/{tool_name}/invoke")
     def invoke_versioned_tool(tool_name: str, body: VersionedToolCall, user=Depends(current_user)):
-        return invoke_tool(body.workspace_id, tool_name, ToolCall(arguments=body.arguments), user)
+        args = body.arguments
+        # ChatGPT often mistakenly nests the parameters inside an "args" object because of our schema docs.
+        if "args" in args and isinstance(args["args"], dict) and len(args) == 1:
+            args = args["args"]
+        return invoke_tool(body.workspace_id, tool_name, ToolCall(arguments=args), user)
 
     @api.post("/api/workspaces/{workspace_id}/google-calendar/connect")
     def connect_google(workspace_id: UUID, user=Depends(current_user)):
