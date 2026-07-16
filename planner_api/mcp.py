@@ -37,6 +37,7 @@ _ANNOTATIONS = {
     "dict": dict,
     "dict | None": dict | None,
     "int": int,
+    "list[dict]": list[dict],
     "list[str]": list[str],
     "object": object,
     "str": str,
