@@ -516,7 +516,7 @@ class PlannerMCPTools:
         )
         return self._writer_result(result, "Dated task added")
 
-    def add_dated_tasks(self, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    def add_dated_tasks(self, tasks: list) -> dict[str, Any]:
         result = self._writer().add_dated_tasks(tasks)
         return self._writer_result(result, "Dated tasks added")
 
