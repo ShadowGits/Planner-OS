@@ -123,6 +123,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         )
 
     def current_user(
+        request: Request,
         authorization: str | None = Header(default=None),
         x_api_key: str | None = Header(default=None, alias="x-api-key")
     ) -> AuthenticatedUser:
@@ -133,7 +134,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             try:
                 token = bearer_token(authorization)
             except AuthenticationError:
-                token = authorization.strip() # Fallback if it's not a Bearer format
+                token = authorization.strip()
         
         # Support API Key authentication for ChatGPT Actions and MCP
         mcp_api_key = os.environ.get("MCP_API_KEY", "").strip()
@@ -143,9 +144,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
                 raise _api_error(401, "AUTHENTICATION_REQUIRED", "MCP_USER_ID is not configured")
             return AuthenticatedUser(user_id=UUID(mcp_user_id), access_token=token)
             
+        # DEBUG: log received headers in error so we can see what ChatGPT sent
+        received = {k: v for k, v in request.headers.items() if k.lower() in ("authorization", "x-api-key", "x-api-key-name")}
+        logger.warning("AUTH FAILED - token=%r, received_auth_headers=%r", token, received)
+        
         try:
             if not token:
-                raise AuthenticationError("Authorization header is required")
+                raise AuthenticationError(f"Authorization header is required. DEBUG received_headers={received}")
             return token_verifier.verify(token)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
