@@ -63,10 +63,9 @@ def get_gpt_openapi():
         schemas_text.append(f"- {tool_name}: {description}\n  args: {json.dumps(properties)}")
         
     full_description = (
-        "Invoke a Planner OS tool. You MUST specify the exact tool_name in the path, "
-        "and pass the correct arguments as a JSON object in the request body.\n\n"
-        "AVAILABLE TOOLS AND THEIR ARGUMENT SCHEMAS (args with * are required):\n"
-        + "\n".join(schemas_text)
+        "Invoke a Planner OS tool by specifying the exact tool_name in the path. "
+        "Pass the arguments as a JSON object in the request body. "
+        "CRITICAL: Refer to your Custom Instructions or uploaded Knowledge Base for the exact argument schemas for each tool."
     )
 
     openapi["paths"]["/api/v1/tools/{tool_name}/invoke"] = {
