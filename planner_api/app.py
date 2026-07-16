@@ -168,6 +168,17 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         headers = {k: v for k, v in request.headers.items()}
         return envelope(True, "Headers received", data={"headers": headers})
 
+    @api.get("/api/debug-workspace")
+    def debug_workspace() -> dict[str, Any]:
+        """Temporary: query workspace directly with service role to diagnose lookup failure."""
+        from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
+        try:
+            client = SupabaseRestClient(SupabaseConfig.from_env())
+            rows = client.select("workspaces", filters={"id": "041b9163-c083-4ed2-9e14-176ed7f3f4a4"}, limit=1)
+            return envelope(True, "Query complete", data={"rows": rows, "count": len(rows)})
+        except Exception as e:
+            return envelope(False, f"Query failed: {type(e).__name__}: {e}")
+
     @api.get("/api/tools")
     @api.get("/api/v1/tools")
     def list_tools(user=Depends(current_user)):
