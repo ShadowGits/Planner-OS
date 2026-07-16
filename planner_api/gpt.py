@@ -19,11 +19,11 @@ def _type_to_schema(annotation: str) -> dict:
         return {"type": "object"}
     return {"type": "string"}
 
+from planner_api.manifest_data import MANIFEST_DATA
+
 @gpt_router.get("/api/gpt/openapi.json")
 def get_gpt_openapi():
-    manifest_path = Path(__file__).parents[1] / "planner_platform" / "function_manifest.json"
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
+    manifest = MANIFEST_DATA
         
     public_url = os.environ.get("PLANNER_WEB_APP_URL", "https://planner-os-nine.vercel.app").rstrip("/")
     
