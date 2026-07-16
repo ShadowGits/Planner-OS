@@ -141,9 +141,10 @@ class SupabaseRestClient:
         )
 
     def storage_download(self, bucket: str, object_key: str) -> bytes:
+        import time
         return self._request(
             "GET",
-            f"/storage/v1/object/{quote(bucket, safe='')}/{quote(object_key, safe='/')}",
+            f"/storage/v1/object/{quote(bucket, safe='')}/{quote(object_key, safe='/')}?t={time.time()}",
         )
 
     def storage_upload(

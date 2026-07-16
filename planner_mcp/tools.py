@@ -364,7 +364,7 @@ class PlannerMCPTools:
         """Return progress status and active slippage alerts."""
 
         try:
-            today = date.today()
+            today = self._today()
             month_plan = self._month_plan(today)
             progress = self._progress_from_workbook(month_plan, today)
             planned_items = self._planned_items(month_plan)
@@ -419,9 +419,9 @@ class PlannerMCPTools:
         """Mark a task complete through the Semantic Writer."""
 
         result = self._writer().complete_task(
-            month or self._month_name(date.today()),
+            month or self._month_name(self._today()),
             task_name,
-            completion_date=date.today(),
+            completion_date=self._today(),
         )
         return self._writer_result(result, "Task complete")
 
@@ -437,7 +437,7 @@ class PlannerMCPTools:
         """Add a weekly task through the Semantic Writer."""
 
         result = self._writer().add_weekly_task(
-            month or self._month_name(date.today()),
+            month or self._month_name(self._today()),
             week,
             task,
             category=category,
@@ -460,7 +460,7 @@ class PlannerMCPTools:
         """Update an existing task through the Semantic Writer."""
 
         result = self._writer().update_task(
-            month or self._month_name(date.today()),
+            month or self._month_name(self._today()),
             task_name,
             new_name=new_name,
             category=category,
@@ -481,7 +481,7 @@ class PlannerMCPTools:
         """Move a weekly task through the Semantic Writer."""
 
         result = self._writer().move_task(
-            month or self._month_name(date.today()),
+            month or self._month_name(self._today()),
             task_name,
             destination_week,
             status=status,
@@ -492,7 +492,7 @@ class PlannerMCPTools:
         """Delete a task through the Semantic Writer."""
 
         result = self._writer().delete_task(
-            month or self._month_name(date.today()),
+            month or self._month_name(self._today()),
             task_name,
         )
         return self._writer_result(result, "Task deleted")
@@ -566,7 +566,7 @@ class PlannerMCPTools:
         """Generate today's plan and sync it to Google Calendar."""
 
         try:
-            today = date.today()
+            today = self._today()
             plan = SchedulerEngine(RulesEngine(self.config.rules_path)).plan_day(
                 self._month_plan(today),
                 today,
@@ -585,7 +585,7 @@ class PlannerMCPTools:
         """Backward-compatible sync that explicitly means current week."""
 
         try:
-            today = date.today()
+            today = self._today()
             week_start = today - timedelta(days=today.weekday())
             week_end = week_start + timedelta(days=6)
             plan = SchedulerEngine(RulesEngine(self.config.rules_path)).plan_week(
@@ -886,6 +886,13 @@ class PlannerMCPTools:
 
         return self._planner_engine().get_month_plan(self._month_name(target_date))
 
+
+    def _today(self) -> date:
+        if self.config.timezone:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+            return datetime.now(ZoneInfo(self.config.timezone)).date()
+        return date.today()
     def _month_name(self, target_date: date) -> str:
         """Resolve configured month or infer one from date."""
 
