@@ -42,6 +42,7 @@ def get_gpt_openapi():
             }
         ],
         "components": {
+            "schemas": {},
             "securitySchemes": {
                 "ApiKeyAuth": {
                     "type": "http",
