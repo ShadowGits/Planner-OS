@@ -5,7 +5,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 300,
-      "includeFiles": ["config/**", "planner_platform/function_manifest.json"]
+      "includeFiles": "config/**"
     }
   },
   "rewrites": [
