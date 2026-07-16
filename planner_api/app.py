@@ -299,6 +299,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
                 args = args["arguments"]
             else:
                 break
+        # MCP/API key users have no valid Supabase JWT — use service role client instead.
+        mcp_api_key = os.environ.get("MCP_API_KEY", "").strip()
+        if mcp_api_key and user.access_token == mcp_api_key:
+            try:
+                return cloud.service_execute(user.user_id, body.workspace_id, tool_name, args)
+            except Exception as error:
+                raise _api_error(409, "PLANNER_OPERATION_CONFLICT", "Planner operation could not be completed") from error
         return invoke_tool(body.workspace_id, tool_name, ToolCall(arguments=args), user)
 
     @api.post("/api/workspaces/{workspace_id}/google-calendar/connect")

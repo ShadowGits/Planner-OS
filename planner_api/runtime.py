@@ -81,6 +81,35 @@ class CloudRuntime:
             previews=SupabasePreviewRepository(client),
         ).execute(tool_name, arguments)
 
+    def service_execute(self, user_id, workspace_id, tool_name, arguments):
+        """Execute using the service role client — for MCP/API key auth where no user JWT is available."""
+        client = self.service_client
+        workspaces = SupabaseWorkspaceRepository(client)
+        connections = SupabaseCalendarConnectionRepository(client)
+        external_links = SupabaseExternalLinkRepository(client)
+        google_factory = SupabaseGoogleCalendarClientFactory(
+            connections,
+            self.cipher,
+            external_links,
+        )
+
+        def tools_factory_builder(root, context):
+            return CloudPlannerToolsFactory(
+                state_root=root / "state",
+                google_client_factory=google_factory,
+                external_links_factory=external_links.bind,
+            )
+
+        return WorkbookSession(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            workspaces=workspaces,
+            storage=SupabaseWorkbookObjectStore(client),
+            operations=SupabaseOperationRepository(client),
+            tools_factory_builder=tools_factory_builder,
+            previews=SupabasePreviewRepository(client),
+        ).execute(tool_name, arguments)
+
     def google_oauth_for_user(self, user: AuthenticatedUser) -> GoogleOAuthService:
         client = self.user_client(user)
         return GoogleOAuthService(
