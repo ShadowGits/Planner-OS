@@ -4,7 +4,7 @@
     "mcp_server": "planner_mcp/server.py",
     "technical_reference": "docs/technical_reference.md"
   },
-  "tool_count": 90,
+  "tool_count": 91,
   "tools": [
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -85,6 +85,30 @@
       ],
       "return_annotation": "dict",
       "source_line": 404
+    },
+    {
+      "category": "Workbook Tasks And Dated Tasks",
+      "category_key": "workbook_tasks_and_dated_tasks",
+      "cloud": {
+        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
+        "status": "candidate"
+      },
+      "description": "Add multiple tasks to exact workbook date columns.\n\nEach dictionary in the `tasks` list should contain the same fields as add_dated_task:\n- date (str): e.g. '2026-07-16' (Required)\n- title (str): The task name (Required)\n- estimated_minutes (int): Duration (Required)\n- preferred_daypart (str, optional)\n- start_time (str, optional)\n- end_time (str, optional)\n- hard_time (bool, optional)\n- category (str, optional)\n- notes (str, optional)",
+      "documented_behavior": "Creates multiple exact-date workbook tasks with permanent IDs in a single operation.",
+      "documented_parameters": "`tasks`",
+      "effect": "workbook_write",
+      "name": "add_dated_tasks",
+      "parameters": [
+        {
+          "annotation": "list[dict]",
+          "default": null,
+          "kind": "positional_or_keyword",
+          "name": "tasks",
+          "required": true
+        }
+      ],
+      "return_annotation": "dict",
+      "source_line": 424
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -450,7 +474,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 635
+      "source_line": 654
     },
     {
       "category": "Planning And Replanning",
@@ -529,7 +553,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 575
+      "source_line": 594
     },
     {
       "category": "Recurrence",
@@ -553,7 +577,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 605
+      "source_line": 624
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -577,7 +601,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 587
+      "source_line": 606
     },
     {
       "category": "Planning And Replanning",
@@ -820,7 +844,7 @@
       "name": "calendar_sync_current_week",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 466
+      "source_line": 485
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -844,7 +868,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 501
+      "source_line": 520
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -868,7 +892,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 494
+      "source_line": 513
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -884,7 +908,7 @@
       "name": "calendar_sync_next_week",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 473
+      "source_line": 492
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -915,7 +939,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 487
+      "source_line": 506
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -931,7 +955,7 @@
       "name": "calendar_sync_today",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 452
+      "source_line": 471
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -947,7 +971,7 @@
       "name": "calendar_sync_week",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 459
+      "source_line": 478
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -978,7 +1002,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 480
+      "source_line": 499
     },
     {
       "category": "Google Calendar CRUD",
@@ -1088,7 +1112,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 508
+      "source_line": 527
     },
     {
       "category": "Check-In And Reviews",
@@ -1112,7 +1136,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 515
+      "source_line": 534
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1136,7 +1160,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 431
+      "source_line": 450
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1183,7 +1207,7 @@
       "name": "explain_active_constraints",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 563
+      "source_line": 582
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -1223,7 +1247,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 545
+      "source_line": 564
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -1247,7 +1271,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 445
+      "source_line": 464
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1271,7 +1295,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 438
+      "source_line": 457
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -1303,7 +1327,7 @@
       "name": "list_preferences",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 539
+      "source_line": 558
     },
     {
       "category": "Recurrence",
@@ -1319,7 +1343,7 @@
       "name": "list_recurrences",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 611
+      "source_line": 630
     },
     {
       "category": "Validation And Rules",
@@ -1359,7 +1383,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 527
+      "source_line": 546
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1428,7 +1452,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 641
+      "source_line": 660
     },
     {
       "category": "Recurrence",
@@ -1452,7 +1476,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 617
+      "source_line": 636
     },
     {
       "category": "Planning And Replanning",
@@ -1508,7 +1532,7 @@
       "name": "planner_doctor",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 533
+      "source_line": 552
     },
     {
       "category": "Apple Calendar",
@@ -1673,7 +1697,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 629
+      "source_line": 648
     },
     {
       "category": "Planning And Replanning",
@@ -1758,7 +1782,7 @@
       "name": "preview_planner_repair",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 569
+      "source_line": 588
     },
     {
       "category": "Recurrence",
@@ -1782,7 +1806,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 599
+      "source_line": 618
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -1806,7 +1830,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 581
+      "source_line": 600
     },
     {
       "category": "Planning And Replanning",
@@ -1965,7 +1989,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 557
+      "source_line": 576
     },
     {
       "category": "Recurrence",
@@ -1989,7 +2013,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 623
+      "source_line": 642
     },
     {
       "category": "Command Router",
@@ -2013,7 +2037,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 648
+      "source_line": 667
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -2141,7 +2165,7 @@
       "name": "undo_last_change",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 593
+      "source_line": 612
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -2172,7 +2196,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 424
+      "source_line": 443
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -2203,7 +2227,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 551
+      "source_line": 570
     },
     {
       "category": "Validation And Rules",
@@ -2347,7 +2371,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 521
+      "source_line": 540
     }
   ]
 }
