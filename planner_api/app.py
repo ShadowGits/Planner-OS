@@ -122,8 +122,18 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         )
 
     def current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
+        token = bearer_token(authorization)
+        
+        # Support API Key authentication for ChatGPT Actions and MCP
+        mcp_api_key = os.environ.get("MCP_API_KEY")
+        if mcp_api_key and token == mcp_api_key:
+            mcp_user_id = os.environ.get("MCP_USER_ID")
+            if not mcp_user_id:
+                raise _api_error(401, "AUTHENTICATION_REQUIRED", "MCP_USER_ID is not configured")
+            return AuthenticatedUser(user_id=UUID(mcp_user_id), access_token=token)
+            
         try:
-            return token_verifier.verify(bearer_token(authorization))
+            return token_verifier.verify(token)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
 
