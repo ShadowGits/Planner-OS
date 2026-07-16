@@ -27,6 +27,7 @@ from planner_platform.auth import (
     SupabaseJWTVerifier,
     bearer_token,
 )
+from planner_api.gpt import gpt_router
 from planner_platform.context import PlannerContext
 from planner_platform.function_manifest import build_manifest
 from planner_platform.policies import CloudStatus, policy_for
@@ -314,6 +315,8 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         context = cloud.context(user, workspace_id)
         SupabaseCalendarConnectionRepository(cloud.user_client(user)).set_status(context, "revoked")
         return envelope(True, "Google Calendar disconnected", target="google_calendar")
+
+    api.include_router(gpt_router)
 
     if cloud_mcp_app is not None:
         async def mcp_wrapper(scope, receive, send):
