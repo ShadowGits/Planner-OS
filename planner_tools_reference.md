@@ -5,7 +5,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## add_dated_task
 **Description:** Add a task to one exact workbook date column.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date*": "string",
@@ -22,7 +22,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## add_task
 **Description:** Add a weekly task.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task*": "string",
@@ -36,14 +36,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## apple_calendar_calendars
 **Description:** List writable local Apple calendars.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## apple_calendar_delete_event
 **Description:** Delete one explicitly identified Planner OS Apple event.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string",
@@ -53,7 +53,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apple_calendar_list_range
 **Description:** List Planner OS-owned Apple events in a range.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -63,7 +63,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apple_calendar_reconcile_range
 **Description:** Reconcile Apple Calendar events in a range.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -73,14 +73,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## apple_calendar_status
 **Description:** Report native Apple Calendar permission and capabilities.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## apple_calendar_update_event
 **Description:** Update one explicitly identified Planner OS Apple event.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string",
@@ -90,7 +90,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_apple_calendar_delete_range
 **Description:** Apply an approved Apple Calendar range deletion.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -99,7 +99,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_calendar_cleanup_orphans
 **Description:** Apply an approved orphan cleanup.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -108,7 +108,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_calendar_delete_range
 **Description:** Apply an approved Google event range deletion.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -117,7 +117,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_day_replan
 **Description:** Apply an explicitly approved day replan.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id": "string",
@@ -127,7 +127,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_execution_target_switch
 **Description:** Apply an approved target-switch preview.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -136,7 +136,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_goal_plan
 **Description:** Apply an approved goal plan preview to the workbook.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -145,7 +145,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_month_plan
 **Description:** Apply an explicitly approved monthly planning preview.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id": "string",
@@ -155,7 +155,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_move_external_items
 **Description:** Apply an approved explicit cross-target migration.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -164,7 +164,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_planner_repair
 **Description:** Apply an approved local repair preview.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -173,7 +173,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_recurrence
 **Description:** Apply an approved recurrence preview as dated workbook tasks.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -182,7 +182,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_undo
 **Description:** Apply an approved workbook undo preview.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id*": "string"
@@ -191,7 +191,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## apply_week_plan
 **Description:** Apply an explicitly approved weekly planning preview.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "preview_id": "string",
@@ -201,7 +201,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_delete_event
 **Description:** Delete one explicitly identified Planner OS Google event.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string"
@@ -210,7 +210,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_delete_future_series
 **Description:** Delete this and future Planner OS Google recurring events.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string"
@@ -219,7 +219,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_delete_series
 **Description:** Delete a Planner OS Google recurring series.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string"
@@ -228,7 +228,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_list_range
 **Description:** List Planner OS-owned Google events in a range.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -238,7 +238,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_lookup_event
 **Description:** Find Google events by stable planner block ID.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "planner_block_id*": "string",
@@ -249,7 +249,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_reconcile_range
 **Description:** Reconcile planner blocks with Google Calendar.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -259,7 +259,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_repair_mapping
 **Description:** Repair a local mapping from Planner OS Google event metadata.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string"
@@ -268,14 +268,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_sync_current_week
 **Description:** Sync the Monday-Sunday range containing today.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## calendar_sync_date
 **Description:** Sync exactly one date, including workbook-backed dated tasks.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date*": "string"
@@ -284,7 +284,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_sync_month
 **Description:** Sync all scheduled blocks in one explicit planner month.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "month*": "string"
@@ -293,14 +293,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_sync_next_week
 **Description:** Sync the Monday-Sunday range after the current week.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## calendar_sync_range
 **Description:** Sync one explicit inclusive date range.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -310,21 +310,21 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_sync_today
 **Description:** Generate today's plan and sync it to Google Calendar.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## calendar_sync_week
 **Description:** Backward-compatible alias that explicitly syncs current week.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## calendar_sync_week_number
 **Description:** Sync one explicit planner workbook week section.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "month*": "string",
@@ -334,7 +334,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## calendar_update_event
 **Description:** Update one explicitly identified Planner OS Google event.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "external_id*": "string",
@@ -344,7 +344,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## complete_task
 **Description:** Mark a task complete.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task_name*": "string",
@@ -354,7 +354,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## create_apple_calendar
 **Description:** Create and select a dedicated local Apple calendar.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "title": "string"
@@ -363,7 +363,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## daily_checkin
 **Description:** Generate a read-only daily progress check-in.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date": "string"
@@ -372,7 +372,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## daily_review
 **Description:** Generate a read-only daily review.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date": "string"
@@ -381,7 +381,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## delete_dated_task
 **Description:** Delete a workbook-backed exact-date task.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task_id*": "string"
@@ -390,7 +390,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## delete_task
 **Description:** Delete a task.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task_name*": "string",
@@ -400,21 +400,21 @@ Arguments marked with an asterisk (*) are required.
 
 ## explain_active_constraints
 **Description:** Explain the constraints currently affecting planning and publishing.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## get_active_execution_target
 **Description:** Return the persistent active downstream target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## get_preference
 **Description:** Read one planner preference.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "name*": "string"
@@ -423,7 +423,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## import_plan
 **Description:** Import a structured JSON planner file.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "input_path*": "string"
@@ -432,7 +432,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## list_dated_tasks
 **Description:** List workbook tasks assigned to one exact date.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date*": "string"
@@ -441,35 +441,35 @@ Arguments marked with an asterisk (*) are required.
 
 ## list_execution_targets
 **Description:** List supported targets and the one active target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## list_preferences
 **Description:** List persistent planner preferences and editable aliases.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## list_recurrences
 **Description:** List workbook-backed recurrence definitions.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## list_rules
 **Description:** List permanent planner rules.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## monthly_review
 **Description:** Generate a read-only monthly review.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "month*": "string"
@@ -478,7 +478,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## move_task
 **Description:** Move a weekly task to another week.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task_name*": "string",
@@ -490,7 +490,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## parse_common_intent
 **Description:** Parse a small supported set of common planner phrases.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "text*": "string"
@@ -499,7 +499,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## pause_recurrence
 **Description:** Pause a workbook-backed recurrence definition.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "recurrence_id*": "string"
@@ -508,14 +508,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## plan_today
 **Description:** Generate today's schedule without writing to Excel.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## plan_today_from_now
 **Description:** Plan today using only remaining time for flexible blocks.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "current_datetime": "string"
@@ -524,14 +524,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## planner_doctor
 **Description:** Run read-only local Planner OS diagnostics.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## preview_apple_calendar_delete_range
 **Description:** Preview exact Planner OS Apple events to delete.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -541,7 +541,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_calendar_cleanup_orphans
 **Description:** Preview orphaned Planner OS Google events for cleanup.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -551,7 +551,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_calendar_delete_range
 **Description:** Preview exact Planner OS Google events to delete.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -561,7 +561,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_day_replan
 **Description:** Preview today's remaining-time replan without writing.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "request*": "object"
@@ -570,7 +570,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_execution_target_switch
 **Description:** Preview changing future publishing to one target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "target*": "string"
@@ -579,7 +579,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_goal_plan
 **Description:** Preview deterministic breakdown of a structured goal.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "request*": "object"
@@ -588,7 +588,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_month_plan
 **Description:** Preview monthly milestones and dated daily proposals without writing.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "request*": "object"
@@ -597,7 +597,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_move_external_items
 **Description:** Preview explicit cross-target migration of external items.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "source_target*": "string",
@@ -609,14 +609,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_planner_repair
 **Description:** Preview local Planner OS consistency repairs.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## preview_recurrence
 **Description:** Preview generated occurrences for a recurrence definition.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "request*": "object"
@@ -625,7 +625,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_undo
 **Description:** Preview restoring a workbook backup referenced by Decision Log.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "decision_id": "string"
@@ -634,7 +634,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## preview_week_plan
 **Description:** Preview an explicit workbook week or date range without writing.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "request*": "object"
@@ -643,14 +643,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## publish_current_week
 **Description:** Publish current week using only the active execution target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## publish_date
 **Description:** Publish one date using only the active execution target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date*": "string"
@@ -659,7 +659,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## publish_range
 **Description:** Publish a range using only the active execution target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "start_date*": "string",
@@ -669,14 +669,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## publish_today
 **Description:** Publish today using only the active execution target.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## replan_today_from_now
 **Description:** Replan today from the current time without writing.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "current_datetime": "string"
@@ -685,7 +685,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## reset_preference
 **Description:** Reset one preference when a safe built-in reset exists.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "name*": "string"
@@ -694,7 +694,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## resume_recurrence
 **Description:** Resume a workbook-backed recurrence definition.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "recurrence_id*": "string"
@@ -703,7 +703,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## route_planner_command
 **Description:** Route one validated structured planner command safely.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "command*": "object"
@@ -712,7 +712,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## set_active_execution_target
 **Description:** Set future publishing target without moving existing items.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "target*": "string"
@@ -721,7 +721,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## set_apple_calendar
 **Description:** Persist the selected Apple Calendar identifier.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "calendar_id*": "string"
@@ -730,7 +730,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## set_no_work_days
 **Description:** Set no-work days.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "days*": "array"
@@ -739,7 +739,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## set_work_days
 **Description:** Set active work days.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "days*": "array"
@@ -748,21 +748,21 @@ Arguments marked with an asterisk (*) are required.
 
 ## status
 **Description:** Return progress status and active slippage alerts.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## undo_last_change
 **Description:** Undo the most recent workbook change with a Decision Log backup.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## update_dated_task
 **Description:** Update a workbook-backed exact-date task.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task_id*": "string",
@@ -772,7 +772,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## update_preference
 **Description:** Update one planner preference through a validated local store.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "name*": "string",
@@ -782,7 +782,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## update_rule
 **Description:** Update an existing permanent rule path.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "path*": "string",
@@ -792,7 +792,7 @@ Arguments marked with an asterisk (*) are required.
 
 ## update_task
 **Description:** Update an existing task.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "task_name*": "string",
@@ -808,14 +808,14 @@ Arguments marked with an asterisk (*) are required.
 
 ## validate
 **Description:** Check workbook readability, rules, and planner structure.
-**Arguments:**
+**tool_arguments:**
 ```json
 {}
 ```
 
 ## weekly_review
 **Description:** Generate a read-only weekly review.
-**Arguments:**
+**tool_arguments:**
 ```json
 {
   "date": "string"
