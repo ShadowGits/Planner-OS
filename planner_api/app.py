@@ -121,18 +121,30 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             content=envelope(False, "Request validation failed", errors=["REQUEST_VALIDATION_FAILED"]),
         )
 
-    def current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
-        token = bearer_token(authorization)
+    def current_user(
+        authorization: str | None = Header(default=None),
+        x_api_key: str | None = Header(default=None, alias="x-api-key")
+    ) -> AuthenticatedUser:
+        token = None
+        if x_api_key:
+            token = x_api_key.strip()
+        elif authorization:
+            try:
+                token = bearer_token(authorization)
+            except AuthenticationError:
+                token = authorization.strip() # Fallback if it's not a Bearer format
         
         # Support API Key authentication for ChatGPT Actions and MCP
-        mcp_api_key = os.environ.get("MCP_API_KEY")
-        if mcp_api_key and token == mcp_api_key:
-            mcp_user_id = os.environ.get("MCP_USER_ID")
+        mcp_api_key = os.environ.get("MCP_API_KEY", "").strip()
+        if mcp_api_key and token and token == mcp_api_key:
+            mcp_user_id = os.environ.get("MCP_USER_ID", "").strip()
             if not mcp_user_id:
                 raise _api_error(401, "AUTHENTICATION_REQUIRED", "MCP_USER_ID is not configured")
             return AuthenticatedUser(user_id=UUID(mcp_user_id), access_token=token)
             
         try:
+            if not token:
+                raise AuthenticationError("Authorization header is required")
             return token_verifier.verify(token)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error

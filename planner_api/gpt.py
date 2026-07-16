@@ -41,6 +41,19 @@ def get_gpt_openapi():
                 "url": public_url
             }
         ],
+        "components": {
+            "securitySchemes": {
+                "ApiKeyAuth": {
+                    "type": "http",
+                    "scheme": "bearer"
+                }
+            }
+        },
+        "security": [
+            {
+                "ApiKeyAuth": []
+            }
+        ],
         "paths": {}
     }
     
