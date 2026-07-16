@@ -174,7 +174,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
         try:
             client = SupabaseRestClient(SupabaseConfig.from_env())
-            rows = client.select("workspaces", filters={"id": "041b9163-c083-4ed2-9e14-176ed7f3f4a4"}, limit=1)
+            rows = client.select("workspaces", filters={}, limit=5)
             return envelope(True, "Query complete", data={"rows": rows, "count": len(rows)})
         except Exception as e:
             return envelope(False, f"Query failed: {type(e).__name__}: {e}")
