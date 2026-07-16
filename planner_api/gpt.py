@@ -44,15 +44,23 @@ def get_gpt_openapi():
         "components": {
             "schemas": {},
             "securitySchemes": {
-                "ApiKeyAuth": {
+                "BearerAuth": {
                     "type": "http",
                     "scheme": "bearer"
+                },
+                "XApiKey": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "x-api-key"
                 }
             }
         },
         "security": [
             {
-                "ApiKeyAuth": []
+                "BearerAuth": []
+            },
+            {
+                "XApiKey": []
             }
         ],
         "paths": {}
