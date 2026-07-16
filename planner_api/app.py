@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 class ToolCall(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
+    tool_arguments: dict[str, Any] | None = None
 
 
 class VersionedToolCall(ToolCall):
@@ -278,7 +279,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
 
     @api.post("/api/v1/tools/{tool_name}/invoke")
     def invoke_versioned_tool(tool_name: str, body: VersionedToolCall, user=Depends(current_user)):
-        args = body.arguments
+        args = body.tool_arguments if body.tool_arguments is not None else body.arguments
         # ChatGPT often mistakenly nests the parameters inside an "args" or "arguments" object.
         while isinstance(args, dict) and len(args) == 1:
             if "args" in args and isinstance(args["args"], dict):

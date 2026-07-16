@@ -110,12 +110,12 @@ def get_gpt_openapi():
                                     "format": "uuid",
                                     "description": "The target workspace ID"
                                 },
-                                "arguments": {
+                                "tool_arguments": {
                                     "type": "object",
                                     "description": "A JSON object containing the arguments for the specific tool."
                                 }
                             },
-                            "required": ["workspace_id", "arguments"]
+                            "required": ["workspace_id", "tool_arguments"]
                         }
                     }
                 }
