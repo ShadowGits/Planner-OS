@@ -425,7 +425,7 @@ def add_dated_tasks(tasks: list[dict]) -> dict:
     """Add multiple tasks to exact workbook date columns.
     
     Each dictionary in the `tasks` list should contain the same fields as add_dated_task:
-    - task_date (str): e.g. '2026-07-16' (Required)
+    - date (str): e.g. '2026-07-16' (Required)
     - title (str): The task name (Required)
     - estimated_minutes (int): Duration (Required)
     - preferred_daypart (str, optional)
