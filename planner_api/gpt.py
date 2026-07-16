@@ -116,6 +116,7 @@ def get_gpt_openapi():
                                 },
                                 "tool_arguments": {
                                     "type": "object",
+                                    "additionalProperties": True,
                                     "description": "A JSON object containing the arguments for the specific tool."
                                 }
                             },
