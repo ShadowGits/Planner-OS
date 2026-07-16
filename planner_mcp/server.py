@@ -422,7 +422,19 @@ def add_dated_task(
 
 @mcp.tool()
 def add_dated_tasks(tasks: list[dict]) -> dict:
-    """Add multiple tasks to exact workbook date columns."""
+    """Add multiple tasks to exact workbook date columns.
+    
+    Each dictionary in the `tasks` list should contain the same fields as add_dated_task:
+    - task_date (str): e.g. '2026-07-16' (Required)
+    - title (str): The task name (Required)
+    - estimated_minutes (int): Duration (Required)
+    - preferred_daypart (str, optional)
+    - start_time (str, optional)
+    - end_time (str, optional)
+    - hard_time (bool, optional)
+    - category (str, optional)
+    - notes (str, optional)
+    """
     
     return planner_tools.add_dated_tasks(tasks)
 
