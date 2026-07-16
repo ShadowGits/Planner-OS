@@ -85,6 +85,14 @@ class CloudRuntime:
         """Execute using the service role client — for MCP/API key auth where no user JWT is available."""
         client = self.service_client
         workspaces = SupabaseWorkspaceRepository(client)
+        
+        # Discover the actual owner of the workspace using the service role client (bypasses RLS).
+        # The user_id passed in from MCP auth may not match the workspace owner in Supabase.
+        workspace = workspaces.get_by_id(workspace_id)
+        if workspace is None:
+            raise ValueError(f"Planner workspace was not found: {workspace_id}")
+        actual_user_id = workspace.user_id
+        
         connections = SupabaseCalendarConnectionRepository(client)
         external_links = SupabaseExternalLinkRepository(client)
         google_factory = SupabaseGoogleCalendarClientFactory(
@@ -101,7 +109,7 @@ class CloudRuntime:
             )
 
         return WorkbookSession(
-            user_id=user_id,
+            user_id=actual_user_id,
             workspace_id=workspace_id,
             workspaces=workspaces,
             storage=SupabaseWorkbookObjectStore(client),

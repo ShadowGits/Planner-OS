@@ -52,6 +52,15 @@ class SupabaseWorkspaceRepository:
         )
         return workspace_from_row(rows[0]) if rows else None
 
+    def get_by_id(self, workspace_id: UUID) -> WorkspaceRecord | None:
+        """Look up a workspace by ID only — for service role clients that bypass RLS."""
+        rows = self.client.select(
+            "workspaces",
+            filters={"id": str(workspace_id)},
+            limit=1,
+        )
+        return workspace_from_row(rows[0]) if rows else None
+
     def list_owned(self, user_id: UUID) -> list[WorkspaceRecord]:
         rows = self.client.select("workspaces", filters={"user_id": str(user_id)})
         return [workspace_from_row(row) for row in rows]
