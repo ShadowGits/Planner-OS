@@ -81,7 +81,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     # MCP auth uses a simple API key — activate when key + public URL are set.
     cloud_mcp = None
     cloud_mcp_app = None
-    if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_WEB_APP_URL"):
+    if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_API_URL"):
         cloud_mcp, cloud_mcp_app = create_cloud_mcp(cloud)
 
     @asynccontextmanager
@@ -121,8 +121,12 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         )
 
     def current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
+        token = bearer_token(authorization)
+        mcp_key = os.environ.get("MCP_API_KEY")
+        if mcp_key and token == mcp_key:
+            return AuthenticatedUser(id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")))
         try:
-            return token_verifier.verify(bearer_token(authorization))
+            return token_verifier.verify(token)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
 
