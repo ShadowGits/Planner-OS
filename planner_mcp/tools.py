@@ -251,12 +251,14 @@ class PlannerMCPTools:
         return self._execution_result("Google mapping repaired", lambda: self._calendar_operations().repair_mapping(external_id))
 
     def plan_today(self) -> dict[str, Any]:
-        """Generate today's schedule without writing to Excel."""
+        """Generate today's schedule and ensure recurring tasks exist in workbook."""
 
         try:
             today = date.today()
-            month_plan = self._month_plan(today)
             rules = RulesEngine(self.config.rules_path)
+            from planner_engine.checkin import ensure_recurring_tasks_in_workbook
+            ensure_recurring_tasks_in_workbook(today, rules, self._writer())
+            month_plan = self._month_plan(today)
             progress = self._progress_from_workbook(month_plan, today)
             daily_progress = progress.calculate_daily_progress(
                 today,
@@ -365,6 +367,9 @@ class PlannerMCPTools:
 
         try:
             today = self._today()
+            rules = RulesEngine(self.config.rules_path)
+            from planner_engine.checkin import ensure_recurring_tasks_in_workbook
+            ensure_recurring_tasks_in_workbook(today, rules, self._writer())
             month_plan = self._month_plan(today)
             progress = self._progress_from_workbook(month_plan, today)
             planned_items = self._planned_items(month_plan)
@@ -383,13 +388,6 @@ class PlannerMCPTools:
             dated_tasks = self._planner_engine().list_dated_tasks(
                 self._month_name(today), today
             )
-            rules = RulesEngine(self.config.rules_path)
-            from planner_engine.checkin import RULES_ACTIVITY_TITLES
-            recurring_tasks = [
-                {"title": title, "source": f"rules:{key}", "category": key}
-                for key, title in RULES_ACTIVITY_TITLES.items()
-                if rules.is_rule_enabled(key)
-            ]
             return ToolResult(
                 success=True,
                 message="Status generated",
@@ -417,7 +415,6 @@ class PlannerMCPTools:
                         for alert in alerts
                     ],
                     "dated_tasks": [self._dated_task_dict(task) for task in dated_tasks],
-                    "recurring_tasks": recurring_tasks,
                 },
             ).to_dict()
         except Exception as error:
@@ -539,11 +536,19 @@ class PlannerMCPTools:
 
     def list_dated_tasks(self, task_date: str) -> dict[str, Any]:
         try:
-            tasks = self._writer().list_dated_tasks(date.fromisoformat(task_date))
+            target = date.fromisoformat(task_date)
+            rules = RulesEngine(self.config.rules_path)
+            writer = self._writer()
+            from planner_engine.checkin import ensure_recurring_tasks_in_workbook
+            ensure_recurring_tasks_in_workbook(target, rules, writer)
+            tasks = writer.list_dated_tasks(target)
             return ToolResult(
                 True,
                 "Dated tasks listed",
-                data={"date": task_date, "tasks": [self._dated_task_dict(task) for task in tasks]},
+                data={
+                    "date": task_date,
+                    "tasks": [self._dated_task_dict(task) for task in tasks],
+                },
             ).to_dict()
         except Exception as error:
             return self._error("Could not list dated tasks", error)
@@ -639,7 +644,9 @@ class PlannerMCPTools:
         try:
             rules = RulesEngine(self.config.rules_path)
             report = DailyCheckInService(
-                self._planner_engine(), rules_engine=rules
+                self._planner_engine(),
+                rules_engine=rules,
+                writer=self._writer(),
             ).generate_daily_checkin(
                 date.fromisoformat(task_date) if task_date else None
             )

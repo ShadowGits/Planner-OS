@@ -1,4 +1,4 @@
-"""Read-only daily progress review for Planner OS."""
+"""Daily progress review and recurring-task materialization for Planner OS."""
 
 from __future__ import annotations
 
@@ -19,6 +19,43 @@ RULES_ACTIVITY_TITLES: dict[str, str] = {
     "reading": "Reading",
     "gym": "Gym",
 }
+
+RULES_ACTIVITY_DURATIONS: dict[str, int] = {
+    "german": 45,
+    "piano": 30,
+    "reading": 30,
+    "gym": 60,
+}
+
+
+def ensure_recurring_tasks_in_workbook(
+    target: date,
+    rules_engine: RulesEngine,
+    writer: "Writer",
+) -> list[str]:
+    """Write workbook rows for each enabled recurring activity if not already present.
+
+    Returns the list of titles that were added (empty if all already existed).
+    """
+    from planner_engine.writer import Writer
+
+    added: list[str] = []
+    for rule_key, title in RULES_ACTIVITY_TITLES.items():
+        if not rules_engine.is_rule_enabled(rule_key):
+            continue
+        duration = RULES_ACTIVITY_DURATIONS[rule_key]
+        if rule_key == "piano":
+            duration = rules_engine.piano_duration_minutes()
+        result = writer.add_dated_task(
+            target,
+            title,
+            duration,
+            category=rule_key,
+            notes="Recurring (from rules)",
+        )
+        if result.success:
+            added.append(title)
+    return added
 
 
 @dataclass(frozen=True)
@@ -51,13 +88,17 @@ class DailyCheckInService:
         engine: PlannerEngine,
         progress_engine: ProgressEngine | None = None,
         rules_engine: RulesEngine | None = None,
+        writer: "Writer | None" = None,
     ) -> None:
         self.engine = engine
         self.progress = progress_engine or ProgressEngine()
         self.rules_engine = rules_engine
+        self._writer = writer
 
     def generate_daily_checkin(self, target_date: date | None = None) -> DailyCheckInReport:
         target = target_date or date.today()
+        if self.rules_engine and self._writer:
+            ensure_recurring_tasks_in_workbook(target, self.rules_engine, self._writer)
         month_plan = self.engine.get_month_plan(target.strftime("%b %Y"))
         planned = self._planned_for_date(month_plan, target)
         dated_tasks = self.engine.list_dated_tasks(target.strftime("%b %Y"), target)
@@ -69,9 +110,6 @@ class DailyCheckInService:
         partial.extend(item.title for item in dated_tasks if item.status == TaskStatus.IN_PROGRESS)
         missed = [item.name for item in planned if item.status not in {TaskStatus.DONE, TaskStatus.IN_PROGRESS}]
         missed.extend(item.title for item in dated_tasks if item.status not in {TaskStatus.DONE, TaskStatus.IN_PROGRESS})
-        rules_activities = self._rules_activities_for_date(target, completed)
-        completed.extend(rules_activities["completed"])
-        missed.extend(rules_activities["missed"])
         week_start = target - timedelta(days=target.weekday())
         all_items = self._all_items(month_plan)
         daily = self.progress.calculate_daily_progress(target, planned)
@@ -93,12 +131,11 @@ class DailyCheckInService:
                 f"Gym shortfall: {weekly.gym_sessions_required - weekly.gym_sessions_completed} session(s)"
             )
         carryover = [name for name in missed if name not in completed]
-        all_planned_names = [item.name for item in planned] + [item.title for item in dated_tasks] + rules_activities["planned"]
-        total_today = len(all_planned_names)
+        total_today = len(planned) + len(dated_tasks)
         today_percentage = round(((len(completed) + 0.5 * len(partial)) / total_today) * 100, 2) if total_today else 0.0
         return DailyCheckInReport(
             date=target,
-            planned_tasks=all_planned_names,
+            planned_tasks=[item.name for item in planned] + [item.title for item in dated_tasks],
             completed_tasks=completed,
             missed_tasks=missed,
             partial_tasks=partial,
@@ -186,28 +223,6 @@ class DailyCheckInService:
             if self._contains([item.title, item.category or ""], key):
                 return key
         return item.category
-
-    def _rules_activities_for_date(
-        self, target: date, already_completed: list[str]
-    ) -> dict[str, list[str]]:
-        if self.rules_engine is None:
-            return {"planned": [], "completed": [], "missed": []}
-        existing_names = {name.casefold() for name in already_completed}
-        planned: list[str] = []
-        completed: list[str] = []
-        missed: list[str] = []
-        for rule_key, title in RULES_ACTIVITY_TITLES.items():
-            if not self.rules_engine.is_rule_enabled(rule_key):
-                continue
-            if any(title.casefold() in name for name in existing_names) or any(
-                rule_key in name for name in existing_names
-            ):
-                planned.append(title)
-                completed.append(title)
-            else:
-                planned.append(title)
-                missed.append(title)
-        return {"planned": planned, "completed": completed, "missed": missed}
 
     def _contains(self, values: list[str], needle: str) -> bool:
         return any(needle.casefold() in value.casefold() for value in values)
