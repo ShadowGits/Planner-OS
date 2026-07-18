@@ -107,7 +107,7 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any]:
             "or set MCP_API_KEY and MCP_USER_ID."
         )
 
-    public_url = os.environ["PLANNER_WEB_APP_URL"].rstrip("/")
+    public_url = os.environ["PLANNER_API_URL"].rstrip("/")
 
     server = FastMCP(
         "Planner OS",
