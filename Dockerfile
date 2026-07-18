@@ -17,6 +17,7 @@ COPY planner_mcp/ ./planner_mcp/
 COPY planner_integrations/ ./planner_integrations/
 COPY adapters/ ./adapters/
 COPY config/ ./config/
+COPY docs/ ./docs/
 
 # Switch to non-root user
 USER planner
