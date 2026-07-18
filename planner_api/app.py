@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from adapters.supabase import SupabaseCalendarConnectionRepository, SupabaseWorkbookObjectStore
@@ -276,13 +276,34 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     def google_callback(state: str = Query(min_length=32), code: str = Query(min_length=1)):
         try:
             context = cloud.google_oauth_callback().complete(state=state, code=code)
-            web_app_url = os.environ.get("PLANNER_WEB_APP_URL", "").rstrip("/")
-            if web_app_url:
-                return RedirectResponse(
-                    f"{web_app_url}/?calendar=connected&workspace_id={context.workspace_id}",
-                    status_code=303,
-                )
-            return envelope(True, "Google Calendar connected", data={"workspace_id": str(context.workspace_id)}, operation="google_calendar_callback", target="google_calendar")
+            html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Calendar Connected</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; margin: 0; background: #f0fdf4; color: #166534; }}
+    .card {{ text-align: center; padding: 2rem 3rem; background: white;
+             border-radius: 1rem; box-shadow: 0 4px 24px rgba(0,0,0,.08); }}
+    .icon {{ font-size: 3rem; margin-bottom: 1rem; }}
+    h1 {{ font-size: 1.5rem; margin: 0 0 .5rem; }}
+    p {{ color: #64748b; margin: 0; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#x2705;</div>
+    <h1>Google Calendar Connected!</h1>
+    <p>Workspace <code>{context.workspace_id}</code> is ready.<br>You can close this tab and return to your assistant.</p>
+  </div>
+  <script>setTimeout(() => window.close(), 3000);</script>
+</body>
+</html>"""
+            return HTMLResponse(content=html, status_code=200)
         except Exception as error:
             logger.error(
                 "Google Calendar callback failed (%s): %s",
@@ -318,9 +339,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     if cloud_mcp_app is not None:
         async def mcp_wrapper(scope, receive, send):
             if scope["type"] == "http" and scope.get("path") == "/messages":
-                # FastMCP expects exactly "/messages/" for its POST route.
-                # Vercel forces trailing slash removal, which makes FastMCP return 404.
-                # This normalizes the scope path so FastMCP's internal Mount matches it.
+                # FastMCP expects "/messages/" (with trailing slash) for its POST route.
                 scope["path"] = "/messages/"
             await cloud_mcp_app(scope, receive, send)
 
