@@ -124,7 +124,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         token = bearer_token(authorization)
         mcp_key = os.environ.get("MCP_API_KEY")
         if mcp_key and token == mcp_key:
-            return AuthenticatedUser(id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")))
+            return AuthenticatedUser(user_id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")), access_token=token)
         try:
             return token_verifier.verify(token)
         except AuthenticationError as error:
