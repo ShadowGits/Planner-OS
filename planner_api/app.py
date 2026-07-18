@@ -85,6 +85,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     oauth_provider = None
     if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_API_URL"):
         cloud_mcp, cloud_mcp_app, oauth_provider = create_cloud_mcp(cloud)
+        logger.info("MCP server created with %d tools", len(cloud_mcp._tool_manager._tools))
 
     @asynccontextmanager
     async def lifespan(app):
@@ -141,6 +142,14 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         import os
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         return envelope(True, "Planner OS API is ready", data={"version": api.version, "key_prefix": key[:15]})
+
+    @api.get("/api/mcp-status")
+    def mcp_status() -> dict[str, Any]:
+        if cloud_mcp is None:
+            return envelope(False, "MCP not configured", data={"tool_count": 0})
+        tool_count = len(cloud_mcp._tool_manager._tools)
+        tool_names = sorted(cloud_mcp._tool_manager._tools.keys())
+        return envelope(True, "MCP server active", data={"tool_count": tool_count, "tools": tool_names})
 
     @api.get("/api/tools")
     @api.get("/api/v1/tools")
