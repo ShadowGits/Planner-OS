@@ -14,6 +14,7 @@ from uuid import uuid4
 from planner_engine.execution_targets.base import ExecutionTarget, PublishResult
 from planner_engine.external_links import ExternalLinkConflict, ExternalLinkStore
 from planner_engine.models import ScheduledBlock
+from planner_engine.preview_contract import CONTRACT_KEY, PreviewContract
 
 
 TARGETS = ("google_calendar", "apple_calendar", "none")
@@ -109,6 +110,9 @@ class ExecutionManager:
         self.links = links
         self.targets = targets
         self.preview_dir = Path(preview_dir)
+        self._contract = PreviewContract(
+            {"settings": settings.path, "external_links": links.path}
+        )
 
     def list_execution_targets(self) -> dict[str, Any]:
         return self.settings.list_targets()
@@ -128,6 +132,7 @@ class ExecutionManager:
 
     def apply_execution_target_switch(self, preview_id: str) -> dict[str, Any]:
         preview = self._load_preview(preview_id, "target_switch")
+        self._mark_applied(preview_id)
         result = self.set_active_execution_target(preview.destination_target)
         return {**result, "preview_id": preview_id}
 
@@ -160,6 +165,9 @@ class ExecutionManager:
 
     def apply_move_external_items(self, preview_id: str, blocks_by_id: dict[str, ScheduledBlock] | None = None) -> dict[str, Any]:
         preview = self._load_preview(preview_id, "target_migration")
+        # Consume before executing: a migration that partially fails must not
+        # be replayable from the same preview; the repair flow owns cleanup.
+        self._mark_applied(preview_id)
         blocks_by_id = blocks_by_id or {
             item["planner_block_id"]: ScheduledBlock(
                 title=item["title"], start=datetime.fromisoformat(item["start"]),
@@ -198,7 +206,15 @@ class ExecutionManager:
     def _save_preview(self, preview: ExecutionPreview) -> ExecutionPreview:
         self.preview_dir.mkdir(parents=True, exist_ok=True)
         path = self.preview_dir / f"{preview.preview_id}.json"
-        path.write_text(json.dumps(preview.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        depends_on = (
+            ("settings", "external_links")
+            if preview.operation == "target_migration"
+            else ("settings",)
+        )
+        payload = self._contract.seal(
+            preview.to_dict(), kind=preview.operation, depends_on=depends_on
+        )
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return preview
 
     def _load_preview(self, preview_id: str, operation: str) -> ExecutionPreview:
@@ -208,6 +224,11 @@ class ExecutionManager:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data["operation"] != operation:
             raise ValueError("Preview operation type does not match")
+        self._contract.validate(data, kind=operation)
         if datetime.fromisoformat(data["expires_at"]) <= datetime.now(timezone.utc):
             raise ValueError("Execution preview has expired")
+        data.pop(CONTRACT_KEY, None)
         return ExecutionPreview(**data)
+
+    def _mark_applied(self, preview_id: str) -> None:
+        PreviewContract.mark_applied_file(self.preview_dir / f"{preview_id}.json")

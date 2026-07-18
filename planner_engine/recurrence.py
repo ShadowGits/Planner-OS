@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from openpyxl import load_workbook
 
+from planner_engine.preview_contract import PreviewContract
 from planner_engine.writer import Writer, WriterResult
 
 
@@ -50,6 +51,7 @@ class RecurrenceService:
         self.writer = writer
         self.preview_dir = Path(preview_dir) if preview_dir is not None else None
         self._last_preview: RecurrencePreview | None = None
+        self._contract = PreviewContract({"workbook": self.workbook_path})
 
     def preview_recurrence(self, request: RecurrenceRequest) -> RecurrencePreview:
         recurrence_id = str(uuid4())
@@ -151,7 +153,10 @@ class RecurrenceService:
         if self.preview_dir is None:
             return
         self.preview_dir.mkdir(parents=True, exist_ok=True)
-        (self.preview_dir / f"{preview.preview_id}.json").write_text(json.dumps(preview.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        payload = self._contract.seal(
+            preview.to_dict(), kind="apply_recurrence", depends_on=("workbook",)
+        )
+        (self.preview_dir / f"{preview.preview_id}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _load_preview(self, preview_id: str) -> RecurrencePreview:
         if self.preview_dir is None:
@@ -164,6 +169,7 @@ class RecurrenceService:
             raise ValueError("Recurrence preview was already applied")
         if data["operation"] != "apply_recurrence":
             raise ValueError("Recurrence preview operation does not match")
+        self._contract.validate(data, kind="apply_recurrence")
         return RecurrencePreview(**{key: data[key] for key in RecurrencePreview.__dataclass_fields__ if key in data})
 
     def _mark_applied(self, preview_id: str) -> None:
