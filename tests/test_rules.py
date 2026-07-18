@@ -89,13 +89,21 @@ class RulesEngineTests(TestCase):
             self.assertEqual(engine.piano_duration_minutes(), 60)
 
     def test_missing_required_config_fields_raise_clear_validation_error(self) -> None:
-        invalid_rules = RULES_YAML.replace("  duration_minutes: 60\n", "")
+        invalid_rules = RULES_YAML.replace("  daily_follow_up: true\n", "")
 
         with TemporaryDirectory() as directory:
             rules_path = self.write_rules(directory, invalid_rules)
 
             with self.assertRaisesRegex(
                 RulesValidationError,
-                "Missing required rules field: piano.duration_minutes",
+                "Missing required rules field: planning.daily_follow_up",
             ):
                 RulesEngine(rules_path)
+
+    def test_empty_optional_sections_default_to_disabled(self) -> None:
+        relaxed_rules = RULES_YAML.replace("  duration_minutes: 60\n", "")
+
+        with TemporaryDirectory() as directory:
+            engine = RulesEngine(self.write_rules(directory, relaxed_rules))
+
+            self.assertEqual(engine.piano_duration_minutes(), 0)

@@ -11,6 +11,14 @@ from planner_engine.date_utils import week_number_for_date
 from planner_engine.models import DatedTask, MonthPlan, MonthlyGoal, PlannerTask, TaskStatus
 from planner_engine.planner import PlannerEngine
 from planner_engine.progress import ProgressEngine
+from planner_engine.rules import RulesEngine
+
+RULES_ACTIVITY_TITLES: dict[str, str] = {
+    "german": "German study",
+    "piano": "Piano practice",
+    "reading": "Reading",
+    "gym": "Gym",
+}
 
 
 @dataclass(frozen=True)
@@ -36,11 +44,17 @@ class DailyCheckInReport:
 
 
 class DailyCheckInService:
-    """Generate daily check-ins from workbook state and Progress Engine."""
+    """Generate daily check-ins from workbook state, rules, and Progress Engine."""
 
-    def __init__(self, engine: PlannerEngine, progress_engine: ProgressEngine | None = None) -> None:
+    def __init__(
+        self,
+        engine: PlannerEngine,
+        progress_engine: ProgressEngine | None = None,
+        rules_engine: RulesEngine | None = None,
+    ) -> None:
         self.engine = engine
         self.progress = progress_engine or ProgressEngine()
+        self.rules_engine = rules_engine
 
     def generate_daily_checkin(self, target_date: date | None = None) -> DailyCheckInReport:
         target = target_date or date.today()
@@ -55,6 +69,9 @@ class DailyCheckInService:
         partial.extend(item.title for item in dated_tasks if item.status == TaskStatus.IN_PROGRESS)
         missed = [item.name for item in planned if item.status not in {TaskStatus.DONE, TaskStatus.IN_PROGRESS}]
         missed.extend(item.title for item in dated_tasks if item.status not in {TaskStatus.DONE, TaskStatus.IN_PROGRESS})
+        rules_activities = self._rules_activities_for_date(target, completed)
+        completed.extend(rules_activities["completed"])
+        missed.extend(rules_activities["missed"])
         week_start = target - timedelta(days=target.weekday())
         all_items = self._all_items(month_plan)
         daily = self.progress.calculate_daily_progress(target, planned)
@@ -76,11 +93,12 @@ class DailyCheckInService:
                 f"Gym shortfall: {weekly.gym_sessions_required - weekly.gym_sessions_completed} session(s)"
             )
         carryover = [name for name in missed if name not in completed]
-        total_today = len(planned) + len(dated_tasks)
+        all_planned_names = [item.name for item in planned] + [item.title for item in dated_tasks] + rules_activities["planned"]
+        total_today = len(all_planned_names)
         today_percentage = round(((len(completed) + 0.5 * len(partial)) / total_today) * 100, 2) if total_today else 0.0
         return DailyCheckInReport(
             date=target,
-            planned_tasks=[item.name for item in planned] + [item.title for item in dated_tasks],
+            planned_tasks=all_planned_names,
             completed_tasks=completed,
             missed_tasks=missed,
             partial_tasks=partial,
@@ -169,6 +187,28 @@ class DailyCheckInService:
                 return key
         return item.category
 
+    def _rules_activities_for_date(
+        self, target: date, already_completed: list[str]
+    ) -> dict[str, list[str]]:
+        if self.rules_engine is None:
+            return {"planned": [], "completed": [], "missed": []}
+        existing_names = {name.casefold() for name in already_completed}
+        planned: list[str] = []
+        completed: list[str] = []
+        missed: list[str] = []
+        for rule_key, title in RULES_ACTIVITY_TITLES.items():
+            if not self.rules_engine.is_rule_enabled(rule_key):
+                continue
+            if any(title.casefold() in name for name in existing_names) or any(
+                rule_key in name for name in existing_names
+            ):
+                planned.append(title)
+                completed.append(title)
+            else:
+                planned.append(title)
+                missed.append(title)
+        return {"planned": planned, "completed": completed, "missed": missed}
+
     def _contains(self, values: list[str], needle: str) -> bool:
         return any(needle.casefold() in value.casefold() for value in values)
 
@@ -177,5 +217,6 @@ def generate_daily_checkin(
     engine: PlannerEngine,
     target_date: date | None = None,
     progress_engine: ProgressEngine | None = None,
+    rules_engine: RulesEngine | None = None,
 ) -> DailyCheckInReport:
-    return DailyCheckInService(engine, progress_engine).generate_daily_checkin(target_date)
+    return DailyCheckInService(engine, progress_engine, rules_engine=rules_engine).generate_daily_checkin(target_date)

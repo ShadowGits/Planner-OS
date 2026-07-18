@@ -247,12 +247,13 @@ class RulesEngine:
     def _build_rules(self, raw_rules: dict[str, Any]) -> PlannerRules:
         """Build typed rules from validated raw YAML data."""
 
-        gym_raw = raw_rules.get("gym", {})
-        german_raw = raw_rules.get("german", {})
-        ielts_raw = raw_rules.get("ielts", {})
-        ignou_raw = raw_rules.get("ignou", {})
-        piano_raw = raw_rules.get("piano", {})
-        reading_raw = raw_rules.get("reading", {})
+        # An empty YAML section such as "piano:" parses as None, not {}.
+        gym_raw = raw_rules.get("gym") or {}
+        german_raw = raw_rules.get("german") or {}
+        ielts_raw = raw_rules.get("ielts") or {}
+        ignou_raw = raw_rules.get("ignou") or {}
+        piano_raw = raw_rules.get("piano") or {}
+        reading_raw = raw_rules.get("reading") or {}
 
         return PlannerRules(
             profile=ProfileRules(**raw_rules["profile"]),

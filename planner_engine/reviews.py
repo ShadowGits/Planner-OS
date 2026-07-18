@@ -10,6 +10,7 @@ from planner_engine.checkin import DailyCheckInService
 from planner_engine.date_utils import month_bounds, week_number_for_date
 from planner_engine.models import TaskStatus
 from planner_engine.planner import PlannerEngine
+from planner_engine.rules import RulesEngine
 
 
 @dataclass(frozen=True)
@@ -38,12 +39,13 @@ class PlannerReview:
 
 
 class ReviewService:
-    def __init__(self, engine: PlannerEngine) -> None:
+    def __init__(self, engine: PlannerEngine, rules_engine: RulesEngine | None = None) -> None:
         self.engine = engine
+        self.rules_engine = rules_engine
 
     def daily_review(self, target: date | None = None):
         day = target or date.today()
-        report = DailyCheckInService(self.engine).generate_daily_checkin(day)
+        report = DailyCheckInService(self.engine, rules_engine=self.rules_engine).generate_daily_checkin(day)
         return PlannerReview(
             "daily",
             day.isoformat(),

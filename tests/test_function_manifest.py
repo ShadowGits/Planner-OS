@@ -18,7 +18,7 @@ def test_technical_reference_and_mcp_server_have_exact_tool_parity() -> None:
     documented = parse_documented_tools()
     registered = parse_registered_tools()
 
-    assert len(documented) == 90
+    assert len(documented) == 91
     assert set(documented) == set(registered)
 
 
@@ -27,7 +27,7 @@ def test_manifest_is_deterministic_and_matches_checked_in_file() -> None:
 
     checked_in = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     assert checked_in == build_manifest()
-    assert checked_in["tool_count"] == 90
+    assert checked_in["tool_count"] == 91
 
 
 def test_manifest_marks_local_apple_tools_cloud_disabled() -> None:

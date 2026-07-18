@@ -383,6 +383,13 @@ class PlannerMCPTools:
             dated_tasks = self._planner_engine().list_dated_tasks(
                 self._month_name(today), today
             )
+            rules = RulesEngine(self.config.rules_path)
+            from planner_engine.checkin import RULES_ACTIVITY_TITLES
+            recurring_tasks = [
+                {"title": title, "source": f"rules:{key}", "category": key}
+                for key, title in RULES_ACTIVITY_TITLES.items()
+                if rules.is_rule_enabled(key)
+            ]
             return ToolResult(
                 success=True,
                 message="Status generated",
@@ -410,6 +417,7 @@ class PlannerMCPTools:
                         for alert in alerts
                     ],
                     "dated_tasks": [self._dated_task_dict(task) for task in dated_tasks],
+                    "recurring_tasks": recurring_tasks,
                 },
             ).to_dict()
         except Exception as error:
@@ -629,7 +637,10 @@ class PlannerMCPTools:
 
     def daily_checkin(self, task_date: str | None = None) -> dict[str, Any]:
         try:
-            report = DailyCheckInService(self._planner_engine()).generate_daily_checkin(
+            rules = RulesEngine(self.config.rules_path)
+            report = DailyCheckInService(
+                self._planner_engine(), rules_engine=rules
+            ).generate_daily_checkin(
                 date.fromisoformat(task_date) if task_date else None
             )
             return ToolResult(True, "Daily check-in generated", data=report.to_dict()).to_dict()
@@ -637,7 +648,8 @@ class PlannerMCPTools:
             return self._error("Could not generate daily check-in", error)
 
     def daily_review(self, task_date: str | None = None) -> dict[str, Any]:
-        return self._execution_result("Daily review generated", lambda: ReviewService(self._planner_engine()).daily_review(date.fromisoformat(task_date) if task_date else None).to_dict())
+        rules = RulesEngine(self.config.rules_path)
+        return self._execution_result("Daily review generated", lambda: ReviewService(self._planner_engine(), rules_engine=rules).daily_review(date.fromisoformat(task_date) if task_date else None).to_dict())
 
     def weekly_review(self, task_date: str | None = None) -> dict[str, Any]:
         return self._execution_result("Weekly review generated", lambda: ReviewService(self._planner_engine()).weekly_review(date.fromisoformat(task_date) if task_date else None).to_dict())

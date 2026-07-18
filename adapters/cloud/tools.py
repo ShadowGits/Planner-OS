@@ -52,6 +52,7 @@ class CloudPlannerToolsFactory:
             external_links_path=root / "external-links.json",
             execution_preview_dir=root / "previews",
             decision_log_path=root / "decision-log.jsonl",
+            timezone=context.timezone,
         )
         calendar_client = (
             (lambda: self.google_client_factory(context))

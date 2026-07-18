@@ -32,6 +32,7 @@ class PlannerMCPConfig:
     apple_calendar_helper_path: Path = DEFAULT_APPLE_CALENDAR_HELPER_PATH
     apple_calendar_id: str | None = None
     decision_log_path: Path = DEFAULT_DECISION_LOG_PATH
+    timezone: str | None = None
 
 
 @dataclass(frozen=True)
