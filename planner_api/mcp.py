@@ -204,7 +204,18 @@ class ApiKeyOAuthProvider:
         if at and at.expires_at and time.time() > at.expires_at:
             self._access_tokens.pop(token, None)
             return None
-        return at
+        if at:
+            return at
+        user_id = self.validate_api_key(token)
+        if user_id:
+            return AccessToken(
+                token=token,
+                client_id="api-key-direct",
+                scopes=[],
+                expires_at=int(time.time() + ACCESS_TOKEN_TTL),
+                subject=user_id,
+            )
+        return None
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         self._access_tokens.pop(token.token, None)
