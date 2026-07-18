@@ -71,5 +71,5 @@ class GoalPlannerTests(TestCase):
             finally:
                 book.close()
 
-            with self.assertRaisesRegex(ValueError, "preview is stale"):
+            with self.assertRaisesRegex(ValueError, "(?i)preview is stale"):
                 service.apply_goal_plan(preview.preview_id)

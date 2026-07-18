@@ -224,25 +224,23 @@ def test_workspace_activation_first_checks_owner_then_uses_authenticated_rpc(tmp
     assert workspace.is_active is True
 
 
-def test_workspace_lock_rpc_never_accepts_caller_user_id(tmp_path) -> None:
+def test_workspace_lock_uses_operation_id_owner_and_ttl(tmp_path) -> None:
     context = _context(tmp_path)
     gateway = FakeSupabaseGateway()
-    gateway.rpc_result = _workspace_row(
-        context,
-        lock_owner=str(context.operation_id),
-        locked_until=datetime.now(timezone.utc).isoformat(),
-    )
+    gateway.select_result = [_workspace_row(context)]
+    gateway.update_result = [
+        _workspace_row(context, lock_owner=str(context.operation_id))
+    ]
 
+    before = datetime.now(timezone.utc)
     workspace = SupabaseWorkspaceRepository(gateway).acquire_lock(context, 45)
 
-    call = gateway.calls[0]
-    assert call[1] == "acquire_workspace_lock"
-    assert call[2] == {
-        "p_workspace_id": str(context.workspace_id),
-        "p_lock_owner": str(context.operation_id),
-        "p_ttl_seconds": 45,
-    }
-    assert "user_id" not in call[2]
+    update_call = next(call for call in gateway.calls if call[0] == "update")
+    assert update_call[2]["lock_owner"] == str(context.operation_id)
+    locked_until = datetime.fromisoformat(update_call[2]["locked_until"])
+    assert locked_until >= before + timedelta(seconds=44)
+    assert locked_until <= before + timedelta(seconds=60)
+    assert "user_id" not in update_call[2]
     assert workspace.lock_owner == context.operation_id
 
 
@@ -250,6 +248,13 @@ def test_workspace_busy_and_stale_revision_are_explicit(tmp_path) -> None:
     context = _context(tmp_path)
     gateway = FakeSupabaseGateway()
     repository = SupabaseWorkspaceRepository(gateway)
+    gateway.select_result = [
+        _workspace_row(
+            context,
+            lock_owner=str(uuid4()),
+            locked_until=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(),
+        )
+    ]
 
     with pytest.raises(WorkspaceBusyError):
         repository.acquire_lock(context)
@@ -262,7 +267,7 @@ def test_workspace_busy_and_stale_revision_are_explicit(tmp_path) -> None:
     assert update_call[3]["lock_owner"] == str(context.operation_id)
 
 
-def test_preview_repository_scopes_reads_and_uses_atomic_consume_rpc(tmp_path) -> None:
+def test_preview_repository_scopes_reads_and_consumes_single_use(tmp_path) -> None:
     context = _context(tmp_path)
     gateway = FakeSupabaseGateway()
     now = datetime.now(timezone.utc)
@@ -277,27 +282,37 @@ def test_preview_repository_scopes_reads_and_uses_atomic_consume_rpc(tmp_path) -
         "active_execution_target": context.execution_target,
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=1)).isoformat(),
-        "consumed_at": now.isoformat(),
+        "consumed_at": None,
     }
     gateway.select_result = [row]
-    gateway.rpc_result = row
     repository = SupabasePreviewRepository(gateway)
 
     assert repository.get(context, "preview-1") is not None
     consumed = repository.consume(context, "preview-1")
 
-    select_call, rpc_call = gateway.calls
+    select_call = gateway.calls[0]
     assert select_call[2] == {
         "id": "preview-1",
         "user_id": str(context.user_id),
         "workspace_id": str(context.workspace_id),
     }
-    assert rpc_call == (
-        "rpc",
-        "consume_planner_preview",
-        {"p_preview_id": "preview-1", "p_workspace_id": str(context.workspace_id)},
-    )
+    update_call = gateway.calls[-1]
+    assert update_call[0] == "update"
+    assert update_call[2]["consumed_at"] is not None
+    assert update_call[3] == {
+        "id": "preview-1",
+        "workspace_id": str(context.workspace_id),
+        "user_id": str(context.user_id),
+    }
     assert consumed.consumed_at is not None
+
+    gateway.select_result = [{**row, "consumed_at": now.isoformat()}]
+    with pytest.raises(ValueError, match="already consumed"):
+        repository.consume(context, "preview-1")
+
+    gateway.select_result = [{**row, "expires_at": (now - timedelta(minutes=1)).isoformat()}]
+    with pytest.raises(ValueError, match="expired"):
+        repository.consume(context, "preview-1")
 
 
 def test_preview_save_persists_revision_settings_and_target(tmp_path) -> None:

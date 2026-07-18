@@ -25,6 +25,7 @@ from planner_engine.monthly_planner import (
     WeeklyMilestone,
 )
 from planner_engine.planner import PlannerEngine
+from planner_engine.preview_contract import PreviewContract
 from planner_engine.rules import RulesEngine
 from planner_engine.writer import Writer
 
@@ -98,6 +99,12 @@ class PlanningCommandService:
         self._previews: dict[str, MonthlyPlanPreview | DayReplanPreview] = {}
         self._preview_revisions: dict[str, str] = {}
         self.preview_dir = Path(preview_dir)
+        self._contract = PreviewContract(
+            {
+                "workbook": engine.store.planner_path,
+                "rules": rules_engine.config_path,
+            }
+        )
 
     def preview_month_plan(self, request: MonthlyPlanningRequest) -> MonthlyPlanPreview:
         preview = self.monthly_planner.preview(request)
@@ -108,7 +115,11 @@ class PlanningCommandService:
         self,
         preview: str | dict[str, Any] | MonthlyPlanPreview,
     ) -> PlanApplyResult:
-        return self._apply(self._resolve(preview, MonthlyPlanPreview))
+        resolved = self._resolve(preview, MonthlyPlanPreview)
+        result = self._apply(resolved)
+        if result.success:
+            self._consume(resolved.preview_id)
+        return result
 
     def preview_week_plan(self, request: WeekPlanningRequest) -> MonthlyPlanPreview:
         month_plan = self.engine.get_month_plan(request.month)
@@ -137,7 +148,11 @@ class PlanningCommandService:
         self,
         preview: str | dict[str, Any] | MonthlyPlanPreview,
     ) -> PlanApplyResult:
-        return self._apply(self._resolve(preview, MonthlyPlanPreview))
+        resolved = self._resolve(preview, MonthlyPlanPreview)
+        result = self._apply(resolved)
+        if result.success:
+            self._consume(resolved.preview_id)
+        return result
 
     def preview_day_replan(self, request: DayReplanRequest) -> DayReplanPreview:
         timezone = ZoneInfo(self.rules_engine.rules.profile.timezone)
@@ -235,6 +250,7 @@ class PlanningCommandService:
                     list(result.warnings),
                     list(result.errors),
                 )
+            self._consume(resolved.preview_id)
             return PlanApplyResult(
                 True,
                 (
@@ -295,12 +311,13 @@ class PlanningCommandService:
     def _resolve(self, preview: str | Any, expected: type[Any]) -> Any:
         resolved = preview
         if isinstance(preview, str):
-            resolved = self._previews.get(preview)
+            stored = self._load_preview(preview, expected)
             cached_revision = self._preview_revisions.get(preview)
             if cached_revision and cached_revision != self._workbook_revision():
                 raise ValueError("Planning preview is stale because workbook changed")
+            resolved = self._previews.get(preview)
             if resolved is None:
-                resolved = self._load_preview(preview)
+                resolved = stored
         if isinstance(resolved, dict):
             resolved = self._preview_from_dict(resolved, expected)
         if not isinstance(resolved, expected):
@@ -322,6 +339,11 @@ class PlanningCommandService:
                 "stored_at": datetime.now().isoformat(),
             }
         )
+        self._contract.seal(
+            payload,
+            kind=type(preview).__name__,
+            depends_on=("workbook", "rules"),
+        )
         temporary: Path | None = None
         try:
             with NamedTemporaryFile(
@@ -340,15 +362,23 @@ class PlanningCommandService:
             if temporary is not None and temporary.exists():
                 temporary.unlink()
 
-    def _load_preview(self, preview_id: str) -> dict[str, Any] | None:
+    def _load_preview(self, preview_id: str, expected: type[Any]) -> dict[str, Any] | None:
         path = self.preview_dir / f"{preview_id}.json"
         if not path.exists():
             return None
         raw = json.loads(path.read_text(encoding="utf-8"))
-        meta = raw.get("_preview_meta", {}) if isinstance(raw, dict) else {}
+        if not isinstance(raw, dict):
+            return None
+        self._contract.validate(raw, kind=expected.__name__)
+        meta = raw.get("_preview_meta", {})
         if meta.get("source_revision") and meta["source_revision"] != self._workbook_revision():
             raise ValueError("Planning preview is stale because workbook changed")
-        return raw if isinstance(raw, dict) else None
+        return raw
+
+    def _consume(self, preview_id: str) -> None:
+        self._previews.pop(preview_id, None)
+        self._preview_revisions.pop(preview_id, None)
+        PreviewContract.mark_applied_file(self.preview_dir / f"{preview_id}.json")
 
     def _preview_from_dict(self, data: dict[str, Any], expected: type[Any]) -> Any:
         if expected is DayReplanPreview:

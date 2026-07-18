@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from planner_engine.preview_contract import PreviewContract
 from planner_engine.writer import Writer
 
 
@@ -152,7 +153,10 @@ class GoalBreakdownService:
 
     def _save(self, preview: GoalPlanPreview) -> None:
         self.preview_dir.mkdir(parents=True, exist_ok=True)
-        (self.preview_dir / f"{preview.preview_id}.json").write_text(json.dumps(preview.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        payload = PreviewContract({"workbook": self.workbook_path}).seal(
+            preview.to_dict(), kind="apply_goal_plan", depends_on=("workbook",)
+        )
+        (self.preview_dir / f"{preview.preview_id}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _load(self, preview_id: str) -> GoalPlanPreview:
         path = self.preview_dir / f"{preview_id}.json"
@@ -165,6 +169,7 @@ class GoalBreakdownService:
             raise ValueError("Goal preview operation does not match")
         if datetime.fromisoformat(data["expires_at"]) <= datetime.now(timezone.utc):
             raise ValueError("Goal preview expired")
+        PreviewContract({"workbook": self.workbook_path}).validate(data, kind="apply_goal_plan")
         return GoalPlanPreview(**{key: data[key] for key in GoalPlanPreview.__dataclass_fields__ if key in data})
 
     def _mark_applied(self, preview_id: str) -> None:

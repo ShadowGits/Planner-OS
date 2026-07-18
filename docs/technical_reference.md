@@ -559,8 +559,13 @@ No SQL or embedded database is used.
 - Cross-target migration requires explicit preview/apply.
 - Dated-task identity survives title, time, row, and date changes.
 - Repeated publication uses stable IDs and mappings to avoid duplicates.
-- Stale, expired, mismatched, or already-applied previews are rejected where
-  source-revision enforcement is implemented.
+- Stale, expired, mismatched, or already-applied previews are rejected through
+  the shared preview contract (`planner_engine/preview_contract.py`). Each
+  sealed preview records a content fingerprint of the planner state it depends
+  on (workbook, rules, execution settings, external links); apply operations
+  validate kind, expiry, single-use, and fingerprint in one place. Previews
+  stored before the contract existed validate as legacy and keep their
+  original service-level checks.
 
 ## Interface Differences
 

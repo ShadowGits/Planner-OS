@@ -114,6 +114,9 @@ class SessionStorage:
         self.calls.append(("download", context.user_id, context.workspace_id))
         return path
 
+    def download_rules(self, context, destination_dir):
+        return None
+
     def backup_current(self, context, checksum):
         self.calls.append(("backup", checksum))
         return "backup.xlsx"
@@ -229,7 +232,7 @@ def test_oauth_state_stores_only_hash_and_is_consumed_atomically(tmp_path) -> No
     user_gateway, service_gateway = FakeGateway(), FakeGateway()
     repository = SupabaseOAuthStateRepository(user_gateway, service_gateway)
 
-    state = repository.create(context, "http://localhost:8000/auth/google/callback")
+    state = repository.create(context, "http://localhost:8000/auth/google/callback", "pkce-verifier")
 
     payload = user_gateway.calls[0][2]
     assert state not in str(payload)
@@ -279,9 +282,10 @@ def test_google_oauth_start_and_callback_keep_identity_in_one_time_state(monkeyp
     context = PlannerContext(uuid4(), uuid4(), uuid4(), tmp_path / "a.xlsx", "UTC", "none", 0)
 
     class States:
-        def create(self, received, redirect_uri):
+        def create(self, received, redirect_uri, code_verifier):
             assert received == context
             assert redirect_uri.endswith("/auth/google/callback")
+            assert code_verifier
             return "state-value"
 
         def consume(self, state):
@@ -290,6 +294,7 @@ def test_google_oauth_start_and_callback_keep_identity_in_one_time_state(monkeyp
                 user_id=context.user_id,
                 workspace_id=context.workspace_id,
                 redirect_uri="http://localhost:8000/auth/google/callback",
+                code_verifier="pkce-verifier",
             )
 
     saved = []
@@ -312,7 +317,7 @@ def test_google_oauth_start_and_callback_keep_identity_in_one_time_state(monkeyp
         States(),
         Connections(),
         CredentialCipher(b"k" * 32),
-        flow_factory=lambda redirect_uri, state: Flow(),
+        flow_factory=lambda redirect_uri, state, code_verifier: Flow(),
     )
 
     start = service.start(context)
@@ -380,7 +385,7 @@ def test_api_requires_bearer_auth_and_never_accepts_client_user_id() -> None:
     assert len(runtime.execute_calls) == 1
 
 
-def test_api_tool_catalog_matches_90_tool_manifest_and_disables_apple_cloud_tools() -> None:
+def test_api_tool_catalog_matches_91_tool_manifest_and_disables_apple_cloud_tools() -> None:
     user_id, workspace_id = uuid4(), uuid4()
     client = TestClient(create_app(runtime=FakeRuntime(user_id, workspace_id), verifier=FakeVerifier(user_id)))
 
@@ -388,7 +393,7 @@ def test_api_tool_catalog_matches_90_tool_manifest_and_disables_apple_cloud_tool
     tools = response.json()["data"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 90
+    assert len(tools) == 91
     assert all(not item["available"] for item in tools if item["name"].startswith("apple_calendar"))
     assert next(item for item in tools if item["name"] == "validate")["available"] is True
     schema = client.get("/openapi.json").json()

@@ -78,6 +78,9 @@ class MemoryStorage:
         path.write_bytes(self.content)
         return path
 
+    def download_rules(self, context, destination_dir):
+        return None
+
     def backup_current(self, context, checksum):
         self.calls.append(("backup", checksum))
         return "tenant/backup.xlsx"
@@ -266,7 +269,7 @@ def test_two_users_cannot_list_or_invoke_each_others_workspaces() -> None:
     assert runtime.calls == []
 
 
-def test_versioned_catalog_matches_all_90_canonical_tools() -> None:
+def test_versioned_catalog_matches_all_91_canonical_tools() -> None:
     user_id, workspace_id = uuid4(), uuid4()
     runtime = MultiUserRuntime([api_record(user_id, workspace_id)])
     client = TestClient(create_app(runtime=runtime, verifier=MultiUserVerifier({"token": user_id})))
@@ -275,7 +278,7 @@ def test_versioned_catalog_matches_all_90_canonical_tools() -> None:
     described = client.get("/api/v1/tools/validate", headers={"Authorization": "Bearer token"})
 
     assert response.status_code == 200
-    assert response.json()["data"]["count"] == 90
+    assert response.json()["data"]["count"] == 91
     assert {tool["name"] for tool in response.json()["data"]["tools"]} == {tool["name"] for tool in build_manifest()["tools"]}
     assert described.json()["data"]["tool"]["name"] == "validate"
 

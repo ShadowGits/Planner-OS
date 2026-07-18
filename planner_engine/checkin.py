@@ -1,4 +1,4 @@
-"""Read-only daily progress review for Planner OS."""
+"""Daily progress review and recurring-task materialization for Planner OS."""
 
 from __future__ import annotations
 
@@ -11,6 +11,51 @@ from planner_engine.date_utils import week_number_for_date
 from planner_engine.models import DatedTask, MonthPlan, MonthlyGoal, PlannerTask, TaskStatus
 from planner_engine.planner import PlannerEngine
 from planner_engine.progress import ProgressEngine
+from planner_engine.rules import RulesEngine
+
+RULES_ACTIVITY_TITLES: dict[str, str] = {
+    "german": "German study",
+    "piano": "Piano practice",
+    "reading": "Reading",
+    "gym": "Gym",
+}
+
+RULES_ACTIVITY_DURATIONS: dict[str, int] = {
+    "german": 45,
+    "piano": 30,
+    "reading": 30,
+    "gym": 60,
+}
+
+
+def ensure_recurring_tasks_in_workbook(
+    target: date,
+    rules_engine: RulesEngine,
+    writer: "Writer",
+) -> list[str]:
+    """Write workbook rows for each enabled recurring activity if not already present.
+
+    Returns the list of titles that were added (empty if all already existed).
+    """
+    from planner_engine.writer import Writer
+
+    added: list[str] = []
+    for rule_key, title in RULES_ACTIVITY_TITLES.items():
+        if not rules_engine.is_rule_enabled(rule_key):
+            continue
+        duration = RULES_ACTIVITY_DURATIONS[rule_key]
+        if rule_key == "piano":
+            duration = rules_engine.piano_duration_minutes()
+        result = writer.add_dated_task(
+            target,
+            title,
+            duration,
+            category=rule_key,
+            notes="Recurring (from rules)",
+        )
+        if result.success:
+            added.append(title)
+    return added
 
 
 @dataclass(frozen=True)
@@ -36,14 +81,24 @@ class DailyCheckInReport:
 
 
 class DailyCheckInService:
-    """Generate daily check-ins from workbook state and Progress Engine."""
+    """Generate daily check-ins from workbook state, rules, and Progress Engine."""
 
-    def __init__(self, engine: PlannerEngine, progress_engine: ProgressEngine | None = None) -> None:
+    def __init__(
+        self,
+        engine: PlannerEngine,
+        progress_engine: ProgressEngine | None = None,
+        rules_engine: RulesEngine | None = None,
+        writer: "Writer | None" = None,
+    ) -> None:
         self.engine = engine
         self.progress = progress_engine or ProgressEngine()
+        self.rules_engine = rules_engine
+        self._writer = writer
 
     def generate_daily_checkin(self, target_date: date | None = None) -> DailyCheckInReport:
         target = target_date or date.today()
+        if self.rules_engine and self._writer:
+            ensure_recurring_tasks_in_workbook(target, self.rules_engine, self._writer)
         month_plan = self.engine.get_month_plan(target.strftime("%b %Y"))
         planned = self._planned_for_date(month_plan, target)
         dated_tasks = self.engine.list_dated_tasks(target.strftime("%b %Y"), target)
@@ -177,5 +232,6 @@ def generate_daily_checkin(
     engine: PlannerEngine,
     target_date: date | None = None,
     progress_engine: ProgressEngine | None = None,
+    rules_engine: RulesEngine | None = None,
 ) -> DailyCheckInReport:
-    return DailyCheckInService(engine, progress_engine).generate_daily_checkin(target_date)
+    return DailyCheckInService(engine, progress_engine, rules_engine=rules_engine).generate_daily_checkin(target_date)

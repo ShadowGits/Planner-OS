@@ -23,7 +23,7 @@
 - [ ] Goal Breakdown Engine v2
 - [ ] Command Router v2 phrase coverage
 - [ ] Scheduler v2 metadata and dependency constraints
-- [ ] Standard stale-preview/source-revision enforcement
+- [x] Standard stale-preview/source-revision enforcement
 - [ ] Undo across workbook, rules, progress, and execution targets
 - [ ] Recurring Engine
 - [ ] Detailed planner progress metrics and forecasts
