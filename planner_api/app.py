@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from adapters.supabase import SupabaseCalendarConnectionRepository, SupabaseWorkbookObjectStore
 from planner_api.config import load_local_environment
+from mcp.server.auth.provider import AuthorizationParams
 from planner_api.mcp import create_cloud_mcp
 from planner_api.runtime import CloudRuntime
 from planner_platform.auth import (
@@ -78,11 +79,12 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     cloud = runtime or CloudRuntime()
     # The REST API (/api/*) still uses Supabase JWT verification.
     token_verifier = verifier or SupabaseJWTVerifier()
-    # MCP auth uses a simple API key — activate when key + public URL are set.
+    # MCP with full OAuth — activate when key + public URL are set.
     cloud_mcp = None
     cloud_mcp_app = None
+    oauth_provider = None
     if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_API_URL"):
-        cloud_mcp, cloud_mcp_app = create_cloud_mcp(cloud)
+        cloud_mcp, cloud_mcp_app, oauth_provider = create_cloud_mcp(cloud)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -121,7 +123,10 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         )
 
     def current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
-        token = bearer_token(authorization)
+        try:
+            token = bearer_token(authorization)
+        except AuthenticationError as error:
+            raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
         mcp_key = os.environ.get("MCP_API_KEY")
         if mcp_key and token == mcp_key:
             return AuthenticatedUser(user_id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")), access_token=None)
@@ -340,10 +345,84 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         SupabaseCalendarConnectionRepository(cloud.user_client(user)).set_status(context, "revoked")
         return envelope(True, "Google Calendar disconnected", target="google_calendar")
 
-    if cloud_mcp_app is not None:
+    if cloud_mcp_app is not None and oauth_provider is not None:
+        @api.get("/oauth/authorize/confirm", response_class=HTMLResponse)
+        async def oauth_confirm_page(
+            client_id: str = Query(...),
+            redirect_uri: str = Query(...),
+            state: str = Query(""),
+            code_challenge: str = Query(...),
+            redirect_uri_provided_explicitly: bool = Query(True),
+        ):
+            return f"""<!doctype html>
+<html><head><title>Planner OS — Authorize</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center;
+         align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }}
+  .card {{ background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.1);
+           max-width: 400px; width: 100%; }}
+  h1 {{ font-size: 1.2rem; margin: 0 0 1rem; }}
+  input {{ width: 100%; padding: .6rem; margin: .5rem 0; box-sizing: border-box;
+           border: 1px solid #ddd; border-radius: 6px; font-size: .95rem; }}
+  button {{ width: 100%; padding: .7rem; margin-top: .5rem; background: #2563eb; color: white;
+            border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; }}
+  button:hover {{ background: #1d4ed8; }}
+  .error {{ color: #dc2626; font-size: .85rem; display: none; margin-top: .5rem; }}
+</style></head><body>
+<div class="card">
+  <h1>Authorize Planner OS</h1>
+  <p>Paste your API key to connect Claude to your workspace.</p>
+  <form method="POST" action="/oauth/authorize/submit">
+    <input type="hidden" name="client_id" value="{client_id}">
+    <input type="hidden" name="redirect_uri" value="{redirect_uri}">
+    <input type="hidden" name="state" value="{state}">
+    <input type="hidden" name="code_challenge" value="{code_challenge}">
+    <input type="hidden" name="redirect_uri_provided_explicitly" value="{redirect_uri_provided_explicitly}">
+    <input type="password" name="api_key" placeholder="Your MCP API key" required autofocus>
+    <button type="submit">Authorize</button>
+  </form>
+</div></body></html>"""
+
+        @api.post("/oauth/authorize/submit")
+        async def oauth_submit(request: Request):
+            from urllib.parse import urlencode
+            form = await request.form()
+            api_key = str(form.get("api_key", ""))
+            client_id = str(form.get("client_id", ""))
+            redirect_uri_str = str(form.get("redirect_uri", ""))
+            state = str(form.get("state", ""))
+            code_challenge = str(form.get("code_challenge", ""))
+            redirect_uri_explicit = str(form.get("redirect_uri_provided_explicitly", "True")).lower() == "true"
+
+            matched_user = oauth_provider.validate_api_key(api_key)
+            if not matched_user:
+                return HTMLResponse(
+                    "<html><body><h2>Invalid API key.</h2>"
+                    "<p><a href='javascript:history.back()'>Try again</a></p>"
+                    "</body></html>",
+                    status_code=403,
+                )
+
+            client = await oauth_provider.get_client(client_id)
+            if client is None:
+                return HTMLResponse("<html><body><h2>Unknown client.</h2></body></html>", status_code=400)
+
+            from pydantic import AnyUrl
+            params = AuthorizationParams(
+                state=state,
+                scopes=[],
+                code_challenge=code_challenge,
+                redirect_uri=AnyUrl(redirect_uri_str),
+                redirect_uri_provided_explicitly=redirect_uri_explicit,
+            )
+            code = await oauth_provider.create_authorization_code(client, params, matched_user)
+
+            target = f"{redirect_uri_str}?{urlencode({'code': code, 'state': state})}"
+            from starlette.responses import RedirectResponse
+            return RedirectResponse(target, status_code=302)
+
         async def mcp_wrapper(scope, receive, send):
             if scope["type"] == "http" and scope.get("path") == "/messages":
-                # FastMCP expects "/messages/" (with trailing slash) for its POST route.
                 scope["path"] = "/messages/"
             await cloud_mcp_app(scope, receive, send)
 

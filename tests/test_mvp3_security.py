@@ -375,15 +375,12 @@ def test_calendar_mapping_queries_are_always_tenant_scoped(tmp_path) -> None:
     assert gateway.calls[1][1]["planner_block_id"] == "block-1"
 
 
-def test_vercel_configuration_keeps_api_server_side_and_documents_release_gate() -> None:
-    import json
-
-    config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))
+def test_cloud_run_deployment_documents_release_gate() -> None:
     guide = Path("docs/mvp3_deployment.md").read_text(encoding="utf-8")
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
-    assert config["framework"] == "nextjs"
-    assert "api/index.py" in config["functions"]
-    assert any(rule["source"] == "/auth/google/callback" for rule in config["rewrites"])
+    assert "uvicorn" in dockerfile
+    assert "planner_api" in dockerfile
     assert "SUPABASE_SERVICE_ROLE_KEY" in guide
     assert "two-user" in guide.casefold()
     assert "python -m pytest" in guide
