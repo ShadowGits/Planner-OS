@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM mirror.gcr.io/library/python:3.12-slim
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash planner
