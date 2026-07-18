@@ -2,19 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 300,
-      "includeFiles": "config/**"
-    }
-  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index.py" },
-    { "source": "/auth/google/callback", "destination": "/api/index.py" },
-    { "source": "/mcp", "destination": "/api/index.py" },
-    { "source": "/mcp/:path*", "destination": "/api/index.py" },
-    { "source": "/.well-known/oauth-protected-resource/mcp", "destination": "/api/index.py" },
-    { "source": "/messages", "destination": "/api/index.py" },
-    { "source": "/messages/:path*", "destination": "/api/index.py" }
+    { "source": "/api/:path*",                              "destination": "https://planner-os-api-PLACEHOLDER.a.run.app/api/:path*" },
+    { "source": "/auth/:path*",                             "destination": "https://planner-os-api-PLACEHOLDER.a.run.app/auth/:path*" },
+    { "source": "/mcp",                                     "destination": "https://planner-os-api-PLACEHOLDER.a.run.app/mcp" },
+    { "source": "/mcp/:path*",                              "destination": "https://planner-os-api-PLACEHOLDER.a.run.app/mcp/:path*" },
+    { "source": "/.well-known/oauth-protected-resource/mcp","destination": "https://planner-os-api-PLACEHOLDER.a.run.app/.well-known/oauth-protected-resource/mcp" },
+    { "source": "/messages",                                "destination": "https://planner-os-api-PLACEHOLDER.a.run.app/messages" },
+    { "source": "/messages/:path*",                         "destination": "https://planner-os-api-PLACEHOLDER.a.run.app/messages/:path*" }
   ]
 }
