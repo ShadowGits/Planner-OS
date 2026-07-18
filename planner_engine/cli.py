@@ -584,7 +584,8 @@ class ShadowCLI:
 
     def _run_checkin(self) -> int:
         target = date.fromisoformat(self.args.date) if self.args.date else date.today()
-        report = DailyCheckInService(self._planner_engine()).generate_daily_checkin(target)
+        rules = RulesEngine(self.args.rules)
+        report = DailyCheckInService(self._planner_engine(), rules_engine=rules).generate_daily_checkin(target)
         print(json.dumps(report.to_dict(), indent=2))
         return 0
 
@@ -698,7 +699,7 @@ class ShadowCLI:
             Writer(engine, ProgressEngine()),
             RulesManager(self.args.rules),
             CalendarSyncService(engine, rules, self._calendar_client()),
-            DailyCheckInService(engine),
+            DailyCheckInService(engine, rules_engine=rules),
             execution_manager=self._execution_manager(),
             publisher=ExecutionPublishingService(engine, rules, self._execution_manager()),
             preferences=self._preference_service(),
