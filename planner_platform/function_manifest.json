@@ -1131,7 +1131,7 @@
       "description": "Generate a read-only daily progress check-in.",
       "documented_behavior": "Read-only planned/completed/missed/partial report with carryover actions.",
       "documented_parameters": "`date?: str`",
-      "effect": "read",
+      "effect": "workbook_write",
       "name": "daily_checkin",
       "parameters": [
         {
@@ -1314,7 +1314,7 @@
       "description": "List workbook tasks assigned to one exact date.",
       "documented_behavior": "Lists tasks stored for exactly one date. Read-only.",
       "documented_parameters": "`date`",
-      "effect": "read",
+      "effect": "workbook_write",
       "name": "list_dated_tasks",
       "parameters": [
         {
@@ -1519,7 +1519,7 @@
       "description": "Generate today's schedule without writing to Excel.",
       "documented_behavior": "Generates today's schedule. No workbook/calendar mutation.",
       "documented_parameters": "none",
-      "effect": "read",
+      "effect": "workbook_write",
       "name": "plan_today",
       "parameters": [],
       "return_annotation": "dict",
@@ -1535,7 +1535,7 @@
       "description": "Plan today using only remaining time for flexible blocks.",
       "documented_behavior": "Plans flexible blocks only after the supplied/current time. Read-only.",
       "documented_parameters": "`current_datetime?: str`",
-      "effect": "read",
+      "effect": "workbook_write",
       "name": "plan_today_from_now",
       "parameters": [
         {
@@ -1984,7 +1984,7 @@
       "description": "Replan today from the current time without writing.",
       "documented_behavior": "Replans remaining time while preserving fixed/history blocks. Read-only.",
       "documented_parameters": "`current_datetime?: str`",
-      "effect": "read",
+      "effect": "workbook_write",
       "name": "replan_today_from_now",
       "parameters": [
         {
@@ -2176,7 +2176,7 @@
       "description": "Return progress status and active slippage alerts.",
       "documented_behavior": "Read-only daily/weekly/monthly progress and slippage summary.",
       "documented_parameters": "none",
-      "effect": "read",
+      "effect": "workbook_write",
       "name": "status",
       "parameters": [],
       "return_annotation": "dict",
