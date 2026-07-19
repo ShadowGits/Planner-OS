@@ -264,10 +264,15 @@ class PlannerMCPTools:
                         continue
                     block_id = f"dated-{task_id}"
                     try:
-                        # Retire any legacy import marker keyed by the raw event
+                        # Delete any legacy import marker keyed by the raw event
                         # ID so the block-keyed link below does not collide with
-                        # the unique external_id constraint.
-                        ops.links.deactivate(event["external_id"], "google_calendar")
+                        # the unique external_id constraint, regardless of the
+                        # marker's status or the index definition.
+                        remover = getattr(ops.links, "remove", None)
+                        if remover is not None:
+                            remover(event["external_id"], "google_calendar")
+                        else:
+                            ops.links.deactivate(event["external_id"], "google_calendar")
                     except Exception:
                         pass
                     ops.links.upsert(block_id, "google_calendar", event["external_id"], "imported")

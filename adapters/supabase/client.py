@@ -35,6 +35,8 @@ class SupabaseGateway(Protocol):
         filters: Mapping[str, Any],
     ) -> list[dict[str, Any]]: ...
 
+    def delete(self, table: str, *, filters: Mapping[str, Any]) -> None: ...
+
     def rpc(self, function: str, payload: Mapping[str, Any]) -> Any: ...
 
     def storage_download(self, bucket: str, object_key: str) -> bytes: ...
@@ -131,6 +133,20 @@ class SupabaseRestClient:
             f"/rest/v1/{self._identifier(table)}?{query}",
             payload,
             prefer="return=representation",
+        )
+
+    def delete(self, table: str, *, filters: Mapping[str, Any]) -> None:
+        if not filters:
+            raise ValueError("Refusing to delete without filters")
+        query_parts = {}
+        for key, value in filters.items():
+            if isinstance(value, bool):
+                query_parts[key] = f"eq.{'true' if value else 'false'}"
+            else:
+                query_parts[key] = f"eq.{value}"
+        self._json_request(
+            "DELETE",
+            f"/rest/v1/{self._identifier(table)}?{urlencode(query_parts)}",
         )
 
     def rpc(self, function: str, payload: Mapping[str, Any]) -> Any:

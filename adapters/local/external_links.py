@@ -37,3 +37,6 @@ class LocalExternalLinkRepository:
     ) -> dict[str, Any]:
         return self.store.upsert(planner_block_id, target_name, external_id, checksum)
 
+    def remove(self, context: PlannerContext, planner_block_id: str, target_name: str) -> None:
+        self.store.remove(planner_block_id, target_name)
+
