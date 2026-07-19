@@ -233,6 +233,17 @@ class SupabaseExternalLinkRepository:
             },
         )
 
+    def remove(self, context, planner_block_id, target_name):
+        self.client.delete(
+            "calendar_event_mappings",
+            filters={
+                "user_id": str(context.user_id),
+                "workspace_id": str(context.workspace_id),
+                "planner_block_id": planner_block_id,
+                "provider": target_name,
+            },
+        )
+
     @staticmethod
     def _public(row):
         return {
@@ -262,6 +273,9 @@ class BoundExternalLinkStore:
 
     def deactivate(self, planner_block_id, target_name):
         return self.repository.deactivate(self.context, planner_block_id, target_name)
+
+    def remove(self, planner_block_id, target_name):
+        return self.repository.remove(self.context, planner_block_id, target_name)
 
     def retire_target(self, target_name):
         return 0

@@ -38,6 +38,16 @@ class ExternalLinkStore:
         self._save(links)
         return dict(record)
 
+    def remove(self, planner_block_id: str, target_name: str) -> None:
+        links = self._load()
+        remaining = [
+            item
+            for item in links
+            if not (item["planner_block_id"] == planner_block_id and item["target_name"] == target_name)
+        ]
+        if len(remaining) != len(links):
+            self._save(remaining)
+
     def deactivate(self, planner_block_id: str, target_name: str) -> None:
         links = self._load()
         for item in links:
