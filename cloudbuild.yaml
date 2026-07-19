@@ -1,0 +1,49 @@
+# Google Cloud Build — automatically builds and deploys the FastAPI backend
+# to Cloud Run on every push to the `main` branch.
+#
+# Setup (one-time):
+#   gcloud builds triggers create github \
+#     --repo-name=Planner-OS \
+#     --repo-owner=ShadowGits \
+#     --branch-pattern=^main$ \
+#     --build-config=cloudbuild.yaml \
+#     --name=planner-os-api-deploy
+
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/planner-os-api:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/planner-os-api:latest'
+      - '.'
+
+  # Step 2: Push the image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/planner-os-api'
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'planner-os-api'
+      - '--image=gcr.io/$PROJECT_ID/planner-os-api:$BUILD_ID'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--min-instances=0'
+      - '--max-instances=10'
+      - '--memory=1Gi'
+      - '--cpu=1'
+      - '--timeout=300'
+      - '--concurrency=80'
+
+images:
+  - 'gcr.io/$PROJECT_ID/planner-os-api'

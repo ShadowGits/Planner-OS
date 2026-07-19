@@ -110,8 +110,13 @@ class ExecutionManager:
         self.links = links
         self.targets = targets
         self.preview_dir = Path(preview_dir)
+        # Cloud link stores are database-backed and have no file; fingerprint
+        # them as a never-existing path so the contract records "absent".
+        links_path = getattr(links, "path", None)
+        if links_path is None:
+            links_path = self.preview_dir / "external-links.db-backed"
         self._contract = PreviewContract(
-            {"settings": settings.path, "external_links": links.path}
+            {"settings": settings.path, "external_links": links_path}
         )
 
     def list_execution_targets(self) -> dict[str, Any]:

@@ -1,0 +1,38 @@
+# Node.js / frontend
+node_modules/
+.next/
+npm-debug.log*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Git
+.git/
+.gitignore
+
+# Vercel
+.vercel/
+.vercelignore
+
+# Local env
+.env.local
+.env.*.local
+
+# Scratch / test
+scratch/
+scratch_*.py
+patch_*.py
+tests/
+backups/
+logs/
+data/
+examples/
+
+# Misc
+.DS_Store
+*.md
+openapi*.json

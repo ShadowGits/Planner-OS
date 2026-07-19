@@ -14,11 +14,12 @@ from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from adapters.supabase import SupabaseCalendarConnectionRepository, SupabaseWorkbookObjectStore
 from planner_api.config import load_local_environment
+from mcp.server.auth.provider import AuthorizationParams
 from planner_api.mcp import create_cloud_mcp
 from planner_api.runtime import CloudRuntime
 from planner_platform.auth import (
@@ -78,11 +79,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     cloud = runtime or CloudRuntime()
     # The REST API (/api/*) still uses Supabase JWT verification.
     token_verifier = verifier or SupabaseJWTVerifier()
-    # MCP auth uses a simple API key — activate when key + public URL are set.
+    # MCP with full OAuth — activate when key + public URL are set.
     cloud_mcp = None
     cloud_mcp_app = None
-    if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_WEB_APP_URL"):
-        cloud_mcp, cloud_mcp_app = create_cloud_mcp(cloud)
+    oauth_provider = None
+    if os.environ.get("MCP_API_KEY") and os.environ.get("PLANNER_API_URL"):
+        cloud_mcp, cloud_mcp_app, oauth_provider = create_cloud_mcp(cloud)
+        logger.info("MCP server created with %d tools", len(cloud_mcp._tool_manager._tools))
 
     @asynccontextmanager
     async def lifespan(app):
@@ -122,7 +125,14 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
 
     def current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
         try:
-            return token_verifier.verify(bearer_token(authorization))
+            token = bearer_token(authorization)
+        except AuthenticationError as error:
+            raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
+        mcp_key = os.environ.get("MCP_API_KEY")
+        if mcp_key and token == mcp_key:
+            return AuthenticatedUser(user_id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")), access_token=None)
+        try:
+            return token_verifier.verify(token)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
 
@@ -132,6 +142,14 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         import os
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         return envelope(True, "Planner OS API is ready", data={"version": api.version, "key_prefix": key[:15]})
+
+    @api.get("/api/mcp-status")
+    def mcp_status() -> dict[str, Any]:
+        if cloud_mcp is None:
+            return envelope(False, "MCP not configured", data={"tool_count": 0})
+        tool_count = len(cloud_mcp._tool_manager._tools)
+        tool_names = sorted(cloud_mcp._tool_manager._tools.keys())
+        return envelope(True, "MCP server active", data={"tool_count": tool_count, "tools": tool_names})
 
     @api.get("/api/tools")
     @api.get("/api/v1/tools")
@@ -276,13 +294,34 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     def google_callback(state: str = Query(min_length=32), code: str = Query(min_length=1)):
         try:
             context = cloud.google_oauth_callback().complete(state=state, code=code)
-            web_app_url = os.environ.get("PLANNER_WEB_APP_URL", "").rstrip("/")
-            if web_app_url:
-                return RedirectResponse(
-                    f"{web_app_url}/?calendar=connected&workspace_id={context.workspace_id}",
-                    status_code=303,
-                )
-            return envelope(True, "Google Calendar connected", data={"workspace_id": str(context.workspace_id)}, operation="google_calendar_callback", target="google_calendar")
+            html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Calendar Connected</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; margin: 0; background: #f0fdf4; color: #166534; }}
+    .card {{ text-align: center; padding: 2rem 3rem; background: white;
+             border-radius: 1rem; box-shadow: 0 4px 24px rgba(0,0,0,.08); }}
+    .icon {{ font-size: 3rem; margin-bottom: 1rem; }}
+    h1 {{ font-size: 1.5rem; margin: 0 0 .5rem; }}
+    p {{ color: #64748b; margin: 0; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#x2705;</div>
+    <h1>Google Calendar Connected!</h1>
+    <p>Workspace <code>{context.workspace_id}</code> is ready.<br>You can close this tab and return to your assistant.</p>
+  </div>
+  <script>setTimeout(() => window.close(), 3000);</script>
+</body>
+</html>"""
+            return HTMLResponse(content=html, status_code=200)
         except Exception as error:
             logger.error(
                 "Google Calendar callback failed (%s): %s",
@@ -315,12 +354,84 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         SupabaseCalendarConnectionRepository(cloud.user_client(user)).set_status(context, "revoked")
         return envelope(True, "Google Calendar disconnected", target="google_calendar")
 
-    if cloud_mcp_app is not None:
+    if cloud_mcp_app is not None and oauth_provider is not None:
+        @api.get("/oauth/authorize/confirm", response_class=HTMLResponse)
+        async def oauth_confirm_page(
+            client_id: str = Query(...),
+            redirect_uri: str = Query(...),
+            state: str = Query(""),
+            code_challenge: str = Query(...),
+            redirect_uri_provided_explicitly: bool = Query(True),
+        ):
+            return f"""<!doctype html>
+<html><head><title>Planner OS — Authorize</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center;
+         align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }}
+  .card {{ background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.1);
+           max-width: 400px; width: 100%; }}
+  h1 {{ font-size: 1.2rem; margin: 0 0 1rem; }}
+  input {{ width: 100%; padding: .6rem; margin: .5rem 0; box-sizing: border-box;
+           border: 1px solid #ddd; border-radius: 6px; font-size: .95rem; }}
+  button {{ width: 100%; padding: .7rem; margin-top: .5rem; background: #2563eb; color: white;
+            border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; }}
+  button:hover {{ background: #1d4ed8; }}
+  .error {{ color: #dc2626; font-size: .85rem; display: none; margin-top: .5rem; }}
+</style></head><body>
+<div class="card">
+  <h1>Authorize Planner OS</h1>
+  <p>Paste your API key to connect Claude to your workspace.</p>
+  <form method="POST" action="/oauth/authorize/submit">
+    <input type="hidden" name="client_id" value="{client_id}">
+    <input type="hidden" name="redirect_uri" value="{redirect_uri}">
+    <input type="hidden" name="state" value="{state}">
+    <input type="hidden" name="code_challenge" value="{code_challenge}">
+    <input type="hidden" name="redirect_uri_provided_explicitly" value="{redirect_uri_provided_explicitly}">
+    <input type="password" name="api_key" placeholder="Your MCP API key" required autofocus>
+    <button type="submit">Authorize</button>
+  </form>
+</div></body></html>"""
+
+        @api.post("/oauth/authorize/submit")
+        async def oauth_submit(request: Request):
+            from urllib.parse import urlencode
+            form = await request.form()
+            api_key = str(form.get("api_key", ""))
+            client_id = str(form.get("client_id", ""))
+            redirect_uri_str = str(form.get("redirect_uri", ""))
+            state = str(form.get("state", ""))
+            code_challenge = str(form.get("code_challenge", ""))
+            redirect_uri_explicit = str(form.get("redirect_uri_provided_explicitly", "True")).lower() == "true"
+
+            matched_user = oauth_provider.validate_api_key(api_key)
+            if not matched_user:
+                return HTMLResponse(
+                    "<html><body><h2>Invalid API key.</h2>"
+                    "<p><a href='javascript:history.back()'>Try again</a></p>"
+                    "</body></html>",
+                    status_code=403,
+                )
+
+            client = await oauth_provider.get_client(client_id)
+            if client is None:
+                return HTMLResponse("<html><body><h2>Unknown client.</h2></body></html>", status_code=400)
+
+            from pydantic import AnyUrl
+            params = AuthorizationParams(
+                state=state,
+                scopes=[],
+                code_challenge=code_challenge,
+                redirect_uri=AnyUrl(redirect_uri_str),
+                redirect_uri_provided_explicitly=redirect_uri_explicit,
+            )
+            code = await oauth_provider.create_authorization_code(client, params, matched_user)
+
+            target = f"{redirect_uri_str}?{urlencode({'code': code, 'state': state})}"
+            from starlette.responses import RedirectResponse
+            return RedirectResponse(target, status_code=302)
+
         async def mcp_wrapper(scope, receive, send):
             if scope["type"] == "http" and scope.get("path") == "/messages":
-                # FastMCP expects exactly "/messages/" for its POST route.
-                # Vercel forces trailing slash removal, which makes FastMCP return 404.
-                # This normalizes the scope path so FastMCP's internal Mount matches it.
                 scope["path"] = "/messages/"
             await cloud_mcp_app(scope, receive, send)
 
