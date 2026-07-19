@@ -28,25 +28,30 @@ _READ_ONLY_TOOLS = {
     "calendar_list_range",
     "calendar_lookup_event",
     "calendar_reconcile_range",
-    "daily_checkin",
     "daily_review",
     "explain_active_constraints",
     "get_active_execution_target",
     "get_preference",
-    "list_dated_tasks",
     "list_execution_targets",
     "list_preferences",
     "list_recurrences",
     "list_rules",
     "monthly_review",
     "parse_common_intent",
-    "plan_today",
-    "plan_today_from_now",
     "planner_doctor",
-    "replan_today_from_now",
-    "status",
     "validate",
     "weekly_review",
+}
+
+# These tools read data but also materialize recurring tasks into the workbook
+# as a side effect, so they need write locks in cloud mode.
+_IMPLICIT_WRITES = {
+    "daily_checkin",
+    "list_dated_tasks",
+    "plan_today",
+    "plan_today_from_now",
+    "replan_today_from_now",
+    "status",
 }
 
 _LOCAL_STATE_WRITES = {
@@ -208,6 +213,8 @@ def _effect_for(name: str) -> str:
         return "preview"
     if name in _READ_ONLY_TOOLS:
         return "read"
+    if name in _IMPLICIT_WRITES:
+        return "workbook_write"
     if name in _LOCAL_STATE_WRITES:
         return "local_state_write"
     if name in _EXTERNAL_WRITES:
