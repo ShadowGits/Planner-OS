@@ -225,6 +225,7 @@ class PlannerMCPTools:
         """Import non-Planner Google Calendar events as dated tasks."""
         def _import():
             from datetime import datetime as dt
+            from uuid import uuid4
             ops = self._calendar_operations()
             external = ops.list_external_events(date.fromisoformat(start_date), date.fromisoformat(end_date))
             if not external:
@@ -233,6 +234,7 @@ class PlannerMCPTools:
             imported = []
             for event in external:
                 event_start = event["start"]
+                task_id = f"dt_{uuid4().hex}"
                 if event["all_day"]:
                     task_date = date.fromisoformat(event_start)
                     start_time = None
@@ -245,14 +247,20 @@ class PlannerMCPTools:
                     start_time = parsed_start.strftime("%H:%M")
                     end_time = parsed_end.strftime("%H:%M")
                     minutes = max(15, int((parsed_end - parsed_start).total_seconds() // 60))
-                result = writer.add_dated_task(
-                    task_date, event["title"], minutes,
-                    start_time=start_time, end_time=end_time,
-                    hard_time=not event["all_day"],
-                    notes=f"Imported from Google Calendar ({event['external_id']})",
-                )
+                result = writer.add_dated_tasks([{
+                    "date": task_date,
+                    "title": event["title"],
+                    "estimated_minutes": minutes,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "hard_time": not event["all_day"],
+                    "notes": f"Imported from Google Calendar ({event['external_id']})",
+                    "task_id": task_id,
+                }])
                 if result.success:
+                    block_id = f"dated-{task_id}"
                     ops.links.upsert(event["external_id"], "google_calendar", event["external_id"], "imported")
+                    ops.links.upsert(block_id, "google_calendar", event["external_id"], "imported")
                     imported.append({"title": event["title"], "date": task_date.isoformat(), "external_id": event["external_id"]})
             return {"imported": len(imported), "events": imported}
         return self._execution_result("External calendar events imported", _import)
