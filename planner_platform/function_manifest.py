@@ -70,6 +70,7 @@ _EXTERNAL_WRITES = {
     "apply_calendar_delete_range",
     "apply_move_external_items",
     "calendar_delete_event",
+    "calendar_import_external",
     "calendar_delete_future_series",
     "calendar_delete_series",
     "calendar_sync_current_week",

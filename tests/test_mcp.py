@@ -153,6 +153,7 @@ class PlannerMCPToolsTests(TestCase):
                     "preview_apple_calendar_delete_range",
                     "apply_apple_calendar_delete_range",
                     "calendar_list_range",
+                    "calendar_import_external",
                     "calendar_lookup_event",
                     "calendar_update_event",
                     "calendar_delete_event",
