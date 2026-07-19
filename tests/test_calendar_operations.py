@@ -91,7 +91,7 @@ class GoogleCalendarOperationsTests(TestCase):
             def get_month_plan(self, month):
                 return MonthPlan(month, month, [], [])
 
-            def list_dated_tasks(self, month, target_date):
+            def list_dated_tasks(self, month, target_date=None):
                 del month, target_date
                 return []
 

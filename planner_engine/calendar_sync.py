@@ -87,12 +87,17 @@ class CalendarSyncService:
 
     def _sync_range(self, start: date, end: date, scope: str) -> ParameterizedSyncResult:
         days = []
+        month_plans: dict[str, Any] = {}
+        dated_by_month: dict[str, list[Any]] = {}
         cursor = start
         while cursor <= end:
             month = cursor.strftime("%b %Y")
-            month_plan = self.engine.get_month_plan(month)
+            if month not in month_plans:
+                month_plans[month] = self.engine.get_month_plan(month)
+                dated_by_month[month] = self.engine.list_dated_tasks(month)
+            month_plan = month_plans[month]
             day_plan = self.scheduler.plan_day(month_plan, cursor)
-            dated = self.engine.list_dated_tasks(month, cursor)
+            dated = [task for task in dated_by_month[month] if task.date == cursor]
             dated_blocks, dated_conflicts = DatedTaskScheduler(
                 self.rules_engine
             ).schedule_date(cursor, dated, day_plan.blocks)
