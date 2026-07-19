@@ -46,13 +46,21 @@ class GoogleCalendarOperations:
             datetime.combine(start, time.min, zone),
             datetime.combine(end + timedelta(days=1), time.min, zone),
         )
+        # One batched read instead of one link lookup per event. Rows whose
+        # planner_block_id equals the external_id are legacy import markers
+        # that never got a workbook task persisted; ignore them so those
+        # events can be imported again.
+        imported_external_ids = {
+            str(link["external_id"])
+            for link in self.links.list(target_name="google_calendar", status="active")
+            if str(link.get("planner_block_id", "")) != str(link.get("external_id", ""))
+        }
         external = []
         for event in all_events:
             if self.client._is_planner_event(event):
                 continue
             event_id = str(event.get("id", ""))
-            existing_link = self.links.active_for(event_id)
-            if existing_link:
+            if event_id in imported_external_ids:
                 continue
             start_raw = event.get("start", {})
             end_raw = event.get("end", {})
