@@ -262,9 +262,15 @@ class GoogleCalendarClient:
         sync_start = self._range_datetime(start, beginning=True)
         sync_end = self._range_datetime(end, beginning=False)
         if sync_start is None and blocks:
-            sync_start = min(block.start for block in blocks)
+            sync_start = min(
+                (b.start.replace(tzinfo=ZoneInfo(self.timezone)) if b.start.tzinfo is None else b.start)
+                for b in blocks
+            )
         if sync_end is None and blocks:
-            sync_end = max(block.end for block in blocks)
+            sync_end = max(
+                (b.end.replace(tzinfo=ZoneInfo(self.timezone)) if b.end.tzinfo is None else b.end)
+                for b in blocks
+            )
         if sync_start is None or sync_end is None:
             result = CalendarSyncResult(sync_scope=scope)
             self._record_sync(plan, result)
@@ -535,6 +541,8 @@ class GoogleCalendarClient:
         if value is None:
             return None
         if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=ZoneInfo(self.timezone))
             return value
         if beginning:
             return datetime.combine(value, time.min, ZoneInfo(self.timezone))
