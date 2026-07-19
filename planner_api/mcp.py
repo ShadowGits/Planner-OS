@@ -8,7 +8,8 @@ Clients (Claude Desktop, claude.ai, mcp-remote) go through standard OAuth
 discovery → dynamic client registration → authorize → token exchange.
 The authorize step shows a simple HTML form where the user pastes their
 API key. On success the server mints a short-lived access token and a
-long-lived refresh token, both stored in memory.
+long-lived refresh token, persisted (hashed) in Supabase so they survive
+deploys and cold starts.
 
 Required environment variables
 --------------------------------
@@ -63,11 +64,13 @@ AUTH_CODE_TTL = 300
 class ApiKeyOAuthProvider:
     """OAuth provider backed by static API keys.
 
-    Stores clients, auth codes, and tokens in memory. On restart everything
-    is wiped and clients re-authorize — fine for a personal planning tool.
+    Clients, auth codes, and tokens live in a pluggable state store. With the
+    Supabase-backed store they survive deploys and cold starts, so connected
+    MCP clients stay authorized. Codes and tokens are keyed by SHA-256 hash;
+    the raw secrets are never persisted.
     """
 
-    def __init__(self, accounts: dict[str, str], public_url: str) -> None:
+    def __init__(self, accounts: dict[str, str], public_url: str, store: Any | None = None) -> None:
         if not accounts:
             raise ValueError("At least one MCP account must be configured.")
         for api_key in accounts:
@@ -75,16 +78,29 @@ class ApiKeyOAuthProvider:
                 raise ValueError("All MCP API keys must be at least 32 characters long.")
         self._accounts = accounts
         self._public_url = public_url
-        self._clients: dict[str, OAuthClientInformationFull] = {}
-        self._auth_codes: dict[str, AuthorizationCode] = {}
-        self._access_tokens: dict[str, AccessToken] = {}
-        self._refresh_tokens: dict[str, RefreshToken] = {}
+        if store is None:
+            from adapters.supabase.oauth_state import MemoryOAuthStateStore
+
+            store = MemoryOAuthStateStore()
+        self._store = store
+
+    @staticmethod
+    def _digest(secret: str) -> str:
+        return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._clients.get(client_id)
+        payload = self._store.get("client", client_id)
+        if payload is None:
+            return None
+        return OAuthClientInformationFull.model_validate(payload)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        self._clients[client_info.client_id] = client_info
+        self._store.put(
+            "client",
+            client_info.client_id,
+            client_info.model_dump(mode="json"),
+            None,
+        )
 
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -105,7 +121,7 @@ class ApiKeyOAuthProvider:
         user_id: str,
     ) -> str:
         code = secrets.token_urlsafe(32)
-        self._auth_codes[code] = AuthorizationCode(
+        record = AuthorizationCode(
             code=code,
             scopes=params.scopes or [],
             expires_at=time.time() + AUTH_CODE_TTL,
@@ -115,13 +131,22 @@ class ApiKeyOAuthProvider:
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             subject=user_id,
         )
+        self._store.put(
+            "auth_code",
+            self._digest(code),
+            record.model_dump(mode="json", exclude={"code"}),
+            record.expires_at,
+        )
         return code
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        ac = self._auth_codes.get(authorization_code)
-        if ac and ac.client_id == client.client_id and time.time() < ac.expires_at:
+        payload = self._store.get("auth_code", self._digest(authorization_code))
+        if payload is None:
+            return None
+        ac = AuthorizationCode.model_validate({**payload, "code": authorization_code})
+        if ac.client_id == client.client_id and time.time() < ac.expires_at:
             return ac
         return None
 
@@ -130,24 +155,39 @@ class ApiKeyOAuthProvider:
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
-        self._auth_codes.pop(authorization_code.code, None)
+        self._store.delete("auth_code", self._digest(authorization_code.code))
+        return self._issue_tokens(
+            client.client_id, authorization_code.scopes, authorization_code.subject
+        )
 
+    def _issue_tokens(self, client_id: str, scopes: list[str], subject: str) -> OAuthToken:
         access = secrets.token_urlsafe(32)
         refresh = secrets.token_urlsafe(32)
-
-        self._access_tokens[access] = AccessToken(
+        access_record = AccessToken(
             token=access,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
+            client_id=client_id,
+            scopes=scopes,
             expires_at=int(time.time() + ACCESS_TOKEN_TTL),
-            subject=authorization_code.subject,
+            subject=subject,
         )
-        self._refresh_tokens[refresh] = RefreshToken(
+        refresh_record = RefreshToken(
             token=refresh,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
+            client_id=client_id,
+            scopes=scopes,
             expires_at=int(time.time() + REFRESH_TOKEN_TTL),
-            subject=authorization_code.subject,
+            subject=subject,
+        )
+        self._store.put(
+            "access_token",
+            self._digest(access),
+            access_record.model_dump(mode="json", exclude={"token"}),
+            float(access_record.expires_at),
+        )
+        self._store.put(
+            "refresh_token",
+            self._digest(refresh),
+            refresh_record.model_dump(mode="json", exclude={"token"}),
+            float(refresh_record.expires_at),
         )
         return OAuthToken(
             access_token=access,
@@ -159,13 +199,16 @@ class ApiKeyOAuthProvider:
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
-        rt = self._refresh_tokens.get(refresh_token)
-        if rt and rt.client_id == client.client_id:
-            if rt.expires_at and time.time() > rt.expires_at:
-                self._refresh_tokens.pop(refresh_token, None)
-                return None
-            return rt
-        return None
+        payload = self._store.get("refresh_token", self._digest(refresh_token))
+        if payload is None:
+            return None
+        rt = RefreshToken.model_validate({**payload, "token": refresh_token})
+        if rt.client_id != client.client_id:
+            return None
+        if rt.expires_at and time.time() > rt.expires_at:
+            self._store.delete("refresh_token", self._digest(refresh_token))
+            return None
+        return rt
 
     async def exchange_refresh_token(
         self,
@@ -173,38 +216,18 @@ class ApiKeyOAuthProvider:
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        self._refresh_tokens.pop(refresh_token.token, None)
-
-        new_access = secrets.token_urlsafe(32)
-        new_refresh = secrets.token_urlsafe(32)
-
-        self._access_tokens[new_access] = AccessToken(
-            token=new_access,
-            client_id=client.client_id,
-            scopes=scopes or refresh_token.scopes,
-            expires_at=int(time.time() + ACCESS_TOKEN_TTL),
-            subject=refresh_token.subject,
-        )
-        self._refresh_tokens[new_refresh] = RefreshToken(
-            token=new_refresh,
-            client_id=client.client_id,
-            scopes=scopes or refresh_token.scopes,
-            expires_at=int(time.time() + REFRESH_TOKEN_TTL),
-            subject=refresh_token.subject,
-        )
-        return OAuthToken(
-            access_token=new_access,
-            token_type="Bearer",
-            expires_in=ACCESS_TOKEN_TTL,
-            refresh_token=new_refresh,
+        self._store.delete("refresh_token", self._digest(refresh_token.token))
+        return self._issue_tokens(
+            client.client_id, scopes or refresh_token.scopes, refresh_token.subject
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        at = self._access_tokens.get(token)
-        if at and at.expires_at and time.time() > at.expires_at:
-            self._access_tokens.pop(token, None)
-            return None
-        if at:
+        payload = self._store.get("access_token", self._digest(token))
+        if payload is not None:
+            at = AccessToken.model_validate({**payload, "token": token})
+            if at.expires_at and time.time() > at.expires_at:
+                self._store.delete("access_token", self._digest(token))
+                return None
             return at
         user_id = self.validate_api_key(token)
         if user_id:
@@ -218,8 +241,8 @@ class ApiKeyOAuthProvider:
         return None
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        self._access_tokens.pop(token.token, None)
-        self._refresh_tokens.pop(token.token, None)
+        self._store.delete("access_token", self._digest(token.token))
+        self._store.delete("refresh_token", self._digest(token.token))
 
     def validate_api_key(self, api_key: str) -> str | None:
         api_key = api_key.strip()
@@ -255,7 +278,15 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any, ApiKeyOAuthProvider]:
         )
 
     public_url = os.environ["PLANNER_API_URL"].rstrip("/")
-    oauth_provider = ApiKeyOAuthProvider(accounts, public_url)
+    store = None
+    try:
+        from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
+        from adapters.supabase.oauth_state import SupabaseOAuthStateStore
+
+        store = SupabaseOAuthStateStore(SupabaseRestClient(SupabaseConfig.from_env()))
+    except ValueError:
+        store = None
+    oauth_provider = ApiKeyOAuthProvider(accounts, public_url, store=store)
 
     server = FastMCP(
         "Planner OS",
