@@ -305,6 +305,8 @@ class GoogleCalendarClient:
             and self._planner_block_id_from_event(event) is not None
         }
         desired_blocks = {self.stable_block_id(block): block for block in blocks}
+        links_by_block = self._active_links_by_block()
+        events_by_id = {str(event["id"]): event for event in existing_events}
 
         created = updated = deleted = unchanged = 0
         errors: list[str] = []
@@ -312,18 +314,18 @@ class GoogleCalendarClient:
         for block_id, block in desired_blocks.items():
             existing = planner_events.get(block_id)
             if existing is None:
-                existing = self._linked_event(block_id)
+                existing = self._linked_event(block_id, links_by_block, events_by_id)
             try:
                 if existing is None:
                     created_event = self.create_event(block)
-                    self._record_external_link(block_id, str(created_event["id"]), block)
+                    self._record_external_link(block_id, str(created_event["id"]), block, links_by_block)
                     created += 1
                 elif self._event_matches_block(existing, block):
-                    self._record_external_link(block_id, str(existing["id"]), block)
+                    self._record_external_link(block_id, str(existing["id"]), block, links_by_block)
                     unchanged += 1
                 else:
                     self.update_event(str(existing["id"]), block)
-                    self._record_external_link(block_id, str(existing["id"]), block)
+                    self._record_external_link(block_id, str(existing["id"]), block, links_by_block)
                     updated += 1
             except Exception as error:
                 errors.append(f"{block.title}: {error}")
@@ -360,31 +362,80 @@ class GoogleCalendarClient:
             sync_scope=scope,
         )
 
-    def _linked_event(self, block_id: str) -> dict[str, Any] | None:
+    def _active_links_by_block(self) -> dict[str, dict[str, Any]]:
+        """Load every active Google Calendar link in one call for a sync pass."""
+
+        if self.external_links is None:
+            return {}
+        try:
+            return {
+                str(item["planner_block_id"]): item
+                for item in self.external_links.list(target_name="google_calendar", status="active")
+            }
+        except Exception:
+            return {}
+
+    def _linked_event(
+        self,
+        block_id: str,
+        links_by_block: dict[str, dict[str, Any]] | None = None,
+        events_by_id: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
         """Load an already-linked event even when it is outside this sync range."""
 
         if self.external_links is None:
             return None
-        link = self.external_links.active_for(block_id)
+        if links_by_block is not None:
+            link = links_by_block.get(block_id)
+        else:
+            link = self.external_links.active_for(block_id)
         if not link or link.get("target_name") != "google_calendar":
             return None
-        try:
-            event = self.get_event(str(link["external_id"]))
-        except Exception:
+        external_id = str(link["external_id"])
+        event = (events_by_id or {}).get(external_id)
+        if event is None:
+            try:
+                event = self.get_event(external_id)
+            except Exception:
+                return None
+        if event.get("status") == "cancelled":
             return None
-        if self._is_planner_event(event) and self._planner_block_id_from_event(event) == block_id:
-            return event
-        return None
+        if self._is_planner_event(event):
+            return event if self._planner_block_id_from_event(event) == block_id else None
+        return event
 
-    def _record_external_link(self, block_id: str, external_id: str, block: ScheduledBlock) -> None:
+    def _record_external_link(
+        self,
+        block_id: str,
+        external_id: str,
+        block: ScheduledBlock,
+        links_by_block: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         """Persist the Planner OS block to Google event mapping when configured."""
 
         if self.external_links is None:
             return
+        checksum = self._checksum(block)
+        if links_by_block is not None:
+            current = links_by_block.get(block_id)
+            if (
+                current
+                and str(current.get("external_id")) == external_id
+                and current.get("checksum") == checksum
+            ):
+                return
         try:
-            self.external_links.upsert(block_id, "google_calendar", external_id, self._checksum(block))
+            self.external_links.upsert(block_id, "google_calendar", external_id, checksum)
         except Exception:
             return
+        if links_by_block is not None:
+            links_by_block[block_id] = {
+                "planner_block_id": block_id,
+                "target_name": "google_calendar",
+                "external_id": external_id,
+                "status": "active",
+                "checksum": checksum,
+            }
 
     def _checksum(self, block: ScheduledBlock) -> str:
         event = self.event_from_block(block)
