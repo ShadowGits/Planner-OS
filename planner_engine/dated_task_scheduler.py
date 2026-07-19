@@ -60,7 +60,7 @@ class DatedTaskScheduler:
 
     def _first_slot(self, start: datetime, limit: datetime, duration: timedelta, blocks: list[ScheduledBlock]) -> datetime | None:
         cursor = start
-        for block in sorted((item for item in blocks if self._aware(item.end) > start and self._aware(item.start) < limit), key=lambda item: item.start):
+        for block in sorted((item for item in blocks if self._aware(item.end) > start and self._aware(item.start) < limit), key=lambda item: self._aware(item.start)):
             block_start = self._aware(block.start)
             block_end = self._aware(block.end)
             if cursor + duration <= block_start:
