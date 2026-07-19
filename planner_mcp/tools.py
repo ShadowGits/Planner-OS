@@ -232,37 +232,49 @@ class PlannerMCPTools:
                 return {"imported": 0, "events": []}
             writer = self._writer()
             imported = []
+            errors = []
             for event in external:
-                event_start = event["start"]
-                task_id = f"dt_{uuid4().hex}"
-                if event["all_day"]:
-                    task_date = date.fromisoformat(event_start)
-                    start_time = None
-                    end_time = None
-                    minutes = 60
-                else:
-                    parsed_start = dt.fromisoformat(event_start)
-                    parsed_end = dt.fromisoformat(event["end"])
-                    task_date = parsed_start.date()
-                    start_time = parsed_start.strftime("%H:%M")
-                    end_time = parsed_end.strftime("%H:%M")
-                    minutes = max(15, int((parsed_end - parsed_start).total_seconds() // 60))
-                result = writer.add_dated_tasks([{
-                    "date": task_date,
-                    "title": event["title"],
-                    "estimated_minutes": minutes,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "hard_time": not event["all_day"],
-                    "notes": f"Imported from Google Calendar ({event['external_id']})",
-                    "task_id": task_id,
-                }])
-                if result.success:
+                try:
+                    event_start = event["start"]
+                    task_id = f"dt_{uuid4().hex}"
+                    if event["all_day"]:
+                        task_date = date.fromisoformat(event_start)
+                        start_time = None
+                        end_time = None
+                        minutes = 60
+                    else:
+                        parsed_start = dt.fromisoformat(event_start)
+                        parsed_end = dt.fromisoformat(event["end"])
+                        task_date = parsed_start.date()
+                        start_time = parsed_start.strftime("%H:%M")
+                        end_time = parsed_end.strftime("%H:%M")
+                        minutes = max(15, int((parsed_end - parsed_start).total_seconds() // 60))
+                    result = writer.add_dated_tasks([{
+                        "date": task_date,
+                        "title": event["title"],
+                        "estimated_minutes": minutes,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "hard_time": not event["all_day"],
+                        "notes": f"Imported from Google Calendar ({event['external_id']})",
+                        "task_id": task_id,
+                    }])
+                    if not result.success:
+                        errors.append(f"{event['title']}: {result.message}")
+                        continue
                     block_id = f"dated-{task_id}"
-                    ops.links.upsert(event["external_id"], "google_calendar", event["external_id"], "imported")
+                    try:
+                        # Retire any legacy import marker keyed by the raw event
+                        # ID so the block-keyed link below does not collide with
+                        # the unique external_id constraint.
+                        ops.links.deactivate(event["external_id"], "google_calendar")
+                    except Exception:
+                        pass
                     ops.links.upsert(block_id, "google_calendar", event["external_id"], "imported")
                     imported.append({"title": event["title"], "date": task_date.isoformat(), "external_id": event["external_id"]})
-            return {"imported": len(imported), "events": imported}
+                except Exception as error:
+                    errors.append(f"{event.get('title', event.get('external_id', '?'))}: {error}")
+            return {"imported": len(imported), "events": imported, "errors": errors}
         return self._execution_result("External calendar events imported", _import)
 
     def calendar_lookup_event(self, planner_block_id: str, start_date: str, end_date: str) -> dict[str, Any]:
