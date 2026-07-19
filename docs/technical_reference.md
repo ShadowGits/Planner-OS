@@ -138,6 +138,7 @@ ID is local configuration; OAuth and cloud hosting are not involved.
 | Tool | Parameters | Behavior and side effects |
 |---|---|---|
 | `calendar_list_range` | `start_date`, `end_date` | Lists Planner OS-owned Google events in an inclusive range. |
+| `calendar_import_external` | `start_date`, `end_date` | Imports non-Planner Google Calendar events as dated tasks. |
 | `calendar_lookup_event` | `planner_block_id`, `start_date`, `end_date` | Finds events by stable Planner OS block identity. |
 | `calendar_update_event` | `external_id`, `block` | Updates one explicitly identified Planner OS Google event. |
 | `calendar_delete_event` | `external_id` | Deletes one identified Planner OS event. |

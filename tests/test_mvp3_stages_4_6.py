@@ -385,7 +385,7 @@ def test_api_requires_bearer_auth_and_never_accepts_client_user_id() -> None:
     assert len(runtime.execute_calls) == 1
 
 
-def test_api_tool_catalog_matches_91_tool_manifest_and_disables_apple_cloud_tools() -> None:
+def test_api_tool_catalog_matches_92_tool_manifest_and_disables_apple_cloud_tools() -> None:
     user_id, workspace_id = uuid4(), uuid4()
     client = TestClient(create_app(runtime=FakeRuntime(user_id, workspace_id), verifier=FakeVerifier(user_id)))
 
@@ -393,7 +393,7 @@ def test_api_tool_catalog_matches_91_tool_manifest_and_disables_apple_cloud_tool
     tools = response.json()["data"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 91
+    assert len(tools) == 92
     assert all(not item["available"] for item in tools if item["name"].startswith("apple_calendar"))
     assert next(item for item in tools if item["name"] == "validate")["available"] is True
     schema = client.get("/openapi.json").json()

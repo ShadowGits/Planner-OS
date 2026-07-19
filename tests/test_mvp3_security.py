@@ -278,7 +278,7 @@ def test_versioned_catalog_matches_all_91_canonical_tools() -> None:
     described = client.get("/api/v1/tools/validate", headers={"Authorization": "Bearer token"})
 
     assert response.status_code == 200
-    assert response.json()["data"]["count"] == 91
+    assert response.json()["data"]["count"] == 92
     assert {tool["name"] for tool in response.json()["data"]["tools"]} == {tool["name"] for tool in build_manifest()["tools"]}
     assert described.json()["data"]["tool"]["name"] == "validate"
 

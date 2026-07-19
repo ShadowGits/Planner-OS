@@ -179,6 +179,12 @@ def calendar_list_range(start_date: str, end_date: str) -> dict:
 
 
 @mcp.tool()
+def calendar_import_external(start_date: str, end_date: str) -> dict:
+    """Import non-Planner Google Calendar events as dated tasks in the workbook."""
+    return planner_tools.calendar_import_external(start_date, end_date)
+
+
+@mcp.tool()
 def calendar_lookup_event(planner_block_id: str, start_date: str, end_date: str) -> dict:
     """Find Google events by stable planner block ID."""
     return planner_tools.calendar_lookup_event(planner_block_id, start_date, end_date)

@@ -39,6 +39,33 @@ class GoogleCalendarOperations:
     def list_range(self, start: date, end: date):
         return [asdict(item) for item in self.target.list_items(start, end)]
 
+    def list_external_events(self, start: date, end: date) -> list[dict[str, Any]]:
+        """Return non-Planner-OS events in a range (events not created by us)."""
+        zone = ZoneInfo(self.client.timezone)
+        all_events = self.client.list_events(
+            datetime.combine(start, time.min, zone),
+            datetime.combine(end + timedelta(days=1), time.min, zone),
+        )
+        external = []
+        for event in all_events:
+            if self.client._is_planner_event(event):
+                continue
+            event_id = str(event.get("id", ""))
+            existing_link = self.links.active_for(event_id)
+            if existing_link:
+                continue
+            start_raw = event.get("start", {})
+            end_raw = event.get("end", {})
+            external.append({
+                "external_id": event_id,
+                "title": str(event.get("summary", "(no title)")),
+                "start": start_raw.get("dateTime") or start_raw.get("date", ""),
+                "end": end_raw.get("dateTime") or end_raw.get("date", ""),
+                "all_day": "date" in start_raw and "dateTime" not in start_raw,
+                "description": str(event.get("description", "")),
+            })
+        return external
+
     def lookup_event(self, planner_block_id: str, start: date, end: date):
         return [item for item in self.list_range(start, end) if item["planner_block_id"] == planner_block_id]
 
