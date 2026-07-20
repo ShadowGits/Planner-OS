@@ -44,6 +44,9 @@ steps:
       - '--cpu=1'
       - '--timeout=300'
       - '--concurrency=80'
+      # Give the container extra CPU during startup so cold starts boot faster.
+      # No extra charge — startup CPU boost is included at the same price.
+      - '--cpu-boost'
 
 options:
   logging: CLOUD_LOGGING_ONLY
