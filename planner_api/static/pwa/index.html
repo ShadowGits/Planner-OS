@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>Day</title>
-  <meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -29,17 +29,8 @@
 
   <header class="top">
     <div class="top-row">
-      <div>
-        <h1 id="day-title">Today</h1>
-        <p id="day-subtitle" class="subtitle"></p>
-      </div>
-      <div class="ring-wrap" title="Done today">
-        <svg id="ring" viewBox="0 0 44 44" width="44" height="44">
-          <circle class="ring-bg" cx="22" cy="22" r="19"></circle>
-          <circle id="ring-fg" class="ring-fg" cx="22" cy="22" r="19"></circle>
-        </svg>
-        <span id="ring-label" class="ring-label">0/0</span>
-      </div>
+      <h1 id="day-title">Today <span class="chev">›</span></h1>
+      <span id="day-count" class="day-count"></span>
     </div>
     <div class="week-row">
       <button id="week-prev" class="week-nav" aria-label="Previous week">‹</button>
@@ -50,11 +41,10 @@
 
   <main>
     <section id="inbox" class="inbox hidden">
-      <h2 class="inbox-title">Inbox</h2>
       <div id="inbox-list" class="inbox-list"></div>
     </section>
     <section id="timeline" class="timeline">
-      <div id="grid"></div>
+      <div id="list"></div>
       <div id="empty" class="empty hidden">
         <div class="empty-emoji">🌤️</div>
         <p>Nothing planned yet.</p>
@@ -68,7 +58,7 @@
   <div id="sheet-backdrop" class="sheet-backdrop hidden"></div>
   <div id="sheet" class="sheet hidden">
     <div class="sheet-handle"></div>
-    <h2>New task</h2>
+    <h2 id="sheet-title">New task</h2>
     <input id="new-title" type="text" placeholder="What are you doing?" autocomplete="off">
     <div class="sheet-row">
       <label class="sheet-label">Start
@@ -85,6 +75,7 @@
       </label>
     </div>
     <button id="sheet-save" class="sheet-save">Add to day</button>
+    <button id="sheet-delete" class="sheet-delete hidden">Delete task</button>
   </div>
 
   <div id="toast" class="toast hidden"></div>

@@ -110,4 +110,16 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.delete("/v2/day/tasks/{task_id}")
+    def delete_day_task(task_id: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.delete_task(task_id)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=404, detail={"code": "TASK_NOT_FOUND", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
     api.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="day-planner")

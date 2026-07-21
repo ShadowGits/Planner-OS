@@ -198,6 +198,22 @@ def test_bad_patch_rejected(client) -> None:
     assert bad_time.status_code == 400
 
 
+def test_delete_day_task(client) -> None:
+    created = client.post(
+        "/v2/day/tasks", json={"title": "Temp", "date": "2026-07-22"}, headers=APP_KEY
+    )
+    task_id = created.json()["data"]["task"]["id"]
+
+    gone = client.delete(f"/v2/day/tasks/{task_id}", headers=APP_KEY)
+    assert gone.status_code == 200
+
+    day = client.get("/v2/day?date=2026-07-22", headers=APP_KEY)
+    assert day.json()["data"]["items"] == []
+
+    assert client.delete(f"/v2/day/tasks/{task_id}", headers=APP_KEY).status_code == 404
+    assert client.delete(f"/v2/day/tasks/{task_id}").status_code == 401
+
+
 def test_static_shell_is_served(client) -> None:
     page = client.get("/app/")
     assert page.status_code == 200
