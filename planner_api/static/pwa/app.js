@@ -1,12 +1,15 @@
 /* Structured-style day planner over the /v2/day API.
-   All state lives in Postgres; this file only renders and reports. */
+   A flowing list (not a scaled calendar): tasks stack as rows on a dotted
+   spine, free gaps collapse into a "+ Add Task" row. All state lives in
+   Postgres; this file only renders and reports. */
 
 (() => {
   "use strict";
 
-  const PX_PER_MIN = 1.15;
-  const MIN_CARD_PX = 56;
   const SNAP_MIN = 5;
+  const GAP_MIN = 15;
+  const PX_PER_MIN = 1.8; // proportional: an hour is a real, scrollable hour
+  const MIN_ROW_PX = 52;
   const KEY_STORE = "day-planner-key";
 
   const $ = (id) => document.getElementById(id);
@@ -15,10 +18,10 @@
     selected: startOfDay(new Date()),
     items: [],
     tz: null,
-    dragging: false,
+    editing: null, // task id when the sheet is in edit mode
   };
 
-  /* ---------- helpers ---------- */
+  /* ---------- date helpers ---------- */
 
   function startOfDay(d) {
     const x = new Date(d);
@@ -51,45 +54,66 @@
 
   function fmtClock(min) {
     const d = new Date();
-    d.setHours(Math.floor(min / 60), min % 60, 0, 0);
+    d.setHours(Math.floor(min / 60), Math.round(min % 60), 0, 0);
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
 
-  function fmtHour(min) {
-    const d = new Date();
-    d.setHours(Math.floor(min / 60), 0, 0, 0);
-    return d.toLocaleTimeString([], { hour: "numeric" });
+  function fmtDur(min) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    if (h && m) return `${h}h ${m}m`;
+    if (h) return `${h}h`;
+    return `${m}m`;
   }
 
+  /* ---------- icons + colors ---------- */
+
   const EMOJI_RULES = [
-    [/german|deutsch|a1|a2|duolingo/i, "🇩🇪"],
-    [/gym|workout|lift|train/i, "🏋️"],
+    [/german|deutsch|\ba1\b|\ba2\b|duolingo|babbel/i, "🇩🇪"],
+    [/gym|workout|lift|train|exercise|brahmri|yoga/i, "🏋️"],
     [/run|jog|walk/i, "🏃"],
-    [/math|calc|algebra|geometry/i, "📐"],
-    [/study|learn|read|course|revise/i, "📚"],
+    [/math|calc|algebra|geometry|applied/i, "📐"],
+    [/read|book/i, "📖"],
+    [/study|learn|course|revise/i, "📚"],
     [/call|phone|hr\b/i, "📞"],
     [/mail|email|reply/i, "✉️"],
-    [/visa|embassy|passport|apostille/i, "🛂"],
-    [/college|uni|apply|application|sop|lor/i, "🎓"],
-    [/doc|form|paper|print/i, "📄"],
-    [/bank|money|finance|pay|invest|tax/i, "💰"],
+    [/visa|embassy|passport|apostille|aps/i, "🛂"],
+    [/college|uni|apply|application|sop|lor|shortlist/i, "🎓"],
+    [/plan|schedule|organi[sz]e/i, "🗓️"],
+    [/doc|form|paper|print|transcript|cv/i, "📄"],
+    [/bank|money|finance|pay|invest|tax|fund|blocked account/i, "💰"],
     [/food|cook|meal|lunch|dinner|breakfast/i, "🍳"],
     [/clean|laundry|tidy/i, "🧹"],
     [/meet|sync|standup|interview/i, "👥"],
     [/code|build|deploy|bug|dev/i, "💻"],
     [/write|journal|blog|note/i, "✍️"],
-    [/ielts|toefl|test|exam/i, "📝"],
-    [/sleep|rest|nap/i, "😴"],
+    [/piano|music|guitar/i, "🎹"],
+    [/ielts|toefl|test|exam|mock/i, "📝"],
+    [/wind down|skin|sleep|rest|nap|night/i, "🌙"],
   ];
 
   const PASTELS = [
-    "#ffe3e0", "#fff0d4", "#e5f4d7", "#d8f0f4", "#e2e7ff",
-    "#f4e0f4", "#e0f4ea", "#fde8d2", "#e8e4fb", "#d9f0ff",
+    "#ffe3e0", "#fff0d4", "#e6f3d8", "#d9f0f3", "#e3e8ff",
+    "#f5e1f3", "#e0f4ea", "#fde8d2", "#e9e4fb", "#dcf0ff",
   ];
   const PASTELS_DARK = [
     "#4b2f2d", "#4b3e26", "#33452c", "#2b4348", "#2f3555",
     "#472f47", "#2c4639", "#4a3a27", "#383152", "#28404f",
   ];
+  const RINGS = [
+    "#c0504d", "#e08b3a", "#4f86d0", "#8e5bd0", "#3fae86",
+    "#d6588f", "#5b9bb0", "#c98a2b", "#7267d8", "#4aa3c7",
+  ];
+  const GAP_LINES = [
+    "Create away!", "A canvas for ideas.", "Time to make magic.",
+    "Your move.", "Fill it wisely.", "Room to breathe.",
+  ];
+
+  function hash(str) {
+    let h = 0;
+    for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return h;
+  }
 
   function emojiFor(title) {
     for (const [re, e] of EMOJI_RULES) if (re.test(title)) return e;
@@ -97,10 +121,12 @@
   }
 
   function pastelFor(title) {
-    let h = 0;
-    for (const c of title) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    return (dark ? PASTELS_DARK : PASTELS)[h % PASTELS.length];
+    return (dark ? PASTELS_DARK : PASTELS)[hash(title) % PASTELS.length];
+  }
+
+  function ringFor(title) {
+    return RINGS[hash(title) % RINGS.length];
   }
 
   /* ---------- api ---------- */
@@ -163,23 +189,13 @@
     const today = startOfDay(new Date());
     const diff = Math.round((state.selected - today) / 86400000);
     const names = { "-1": "Yesterday", 0: "Today", 1: "Tomorrow" };
-    $("day-title").textContent =
-      names[diff] ??
-      state.selected.toLocaleDateString([], { weekday: "long" });
-    $("day-subtitle").textContent = state.selected.toLocaleDateString([], {
-      weekday: diff in names ? "long" : undefined,
-      day: "numeric",
-      month: "long",
-    });
+    const label =
+      names[diff] ?? state.selected.toLocaleDateString([], { weekday: "long" });
+    $("day-title").innerHTML = `${label} <span class="chev">›</span>`;
 
     const done = state.items.filter((t) => t.done).length;
     const total = state.items.length;
-    const r = 19;
-    const circ = 2 * Math.PI * r;
-    const fg = $("ring-fg");
-    fg.style.strokeDasharray = circ;
-    fg.style.strokeDashoffset = total ? circ * (1 - done / total) : circ;
-    $("ring-label").textContent = `${done}/${total}`;
+    $("day-count").textContent = total ? `${done}/${total} done` : "";
   }
 
   function renderWeek() {
@@ -214,101 +230,230 @@
     loadDay().catch(showError);
   }
 
-  /* ---------- timeline ---------- */
+  /* ---------- timeline (proportional) ---------- */
 
   function render() {
     renderHeader();
     renderWeek();
 
-    const timed = state.items.filter((t) => t.start_time);
+    const timed = state.items
+      .filter((t) => t.start_time)
+      .sort((a, b) => timeToMin(a.start_time) - timeToMin(b.start_time));
     const inbox = state.items.filter((t) => !t.start_time);
 
     renderInbox(inbox);
 
-    const grid = $("grid");
-    grid.innerHTML = "";
+    const list = $("list");
+    list.innerHTML = "";
     $("empty").classList.toggle("hidden", state.items.length > 0);
     if (!timed.length && !inbox.length) {
-      grid.style.height = "0px";
+      list.style.height = "0px";
       return;
     }
 
     const mins = timed.map((t) => timeToMin(t.start_time));
-    const ends = timed.map(
-      (t, i) => mins[i] + (t.estimated_minutes || 30)
-    );
-    let startH = Math.min(7, ...mins.map((m) => Math.floor(m / 60)));
-    let endH = Math.max(22, ...ends.map((m) => Math.ceil(m / 60) + 1));
-    if (!timed.length) [startH, endH] = [7, 22];
-
-    grid.style.height = `${(endH - startH) * 60 * PX_PER_MIN + 20}px`;
+    const ends = timed.map((t, i) => mins[i] + (t.estimated_minutes || 30));
+    let startH = timed.length ? Math.min(7, ...mins.map((m) => Math.floor(m / 60))) : 7;
+    let endH = timed.length ? Math.max(22, ...ends.map((m) => Math.ceil(m / 60) + 1)) : 22;
+    const top0 = startH * 60;
+    list.style.height = `${(endH - startH) * 60 * PX_PER_MIN + 24}px`;
 
     const spine = document.createElement("div");
     spine.className = "spine";
-    grid.appendChild(spine);
+    list.appendChild(spine);
 
     for (let h = startH; h <= endH; h++) {
-      const row = document.createElement("div");
-      row.className = "hour";
-      row.style.top = `${(h - startH) * 60 * PX_PER_MIN}px`;
-      row.innerHTML = `<span>${fmtHour(h * 60)}</span>`;
-      grid.appendChild(row);
+      const lbl = document.createElement("div");
+      lbl.className = "hourlabel";
+      lbl.style.top = `${(h * 60 - top0) * PX_PER_MIN}px`;
+      lbl.textContent = fmtClock(h * 60);
+      list.appendChild(lbl);
     }
 
     if (sameDay(state.selected, new Date())) {
       const now = new Date();
       const m = now.getHours() * 60 + now.getMinutes();
-      if (m >= startH * 60 && m <= endH * 60) {
-        const line = document.createElement("div");
-        line.className = "now-line";
-        line.style.top = `${(m - startH * 60) * PX_PER_MIN}px`;
-        grid.appendChild(line);
+      if (m >= top0 && m <= endH * 60) {
+        const nl = document.createElement("div");
+        nl.className = "now-line";
+        nl.style.top = `${(m - top0) * PX_PER_MIN}px`;
+        list.appendChild(nl);
       }
     }
 
-    for (const task of timed) grid.appendChild(taskCard(task, startH));
+    for (let i = 0; i < timed.length; i++) {
+      list.appendChild(taskRow(timed[i], top0));
+      const nextStart = i + 1 < timed.length ? mins[i + 1] : null;
+      if (nextStart !== null && nextStart - ends[i] >= GAP_MIN) {
+        list.appendChild(gapRow(ends[i], nextStart, top0));
+      }
+    }
   }
 
-  function taskCard(task, startH) {
+  function taskRow(task, top0) {
     const start = timeToMin(task.start_time);
     const dur = task.estimated_minutes || 30;
-    const el = document.createElement("div");
-    el.className = "task" + (task.done ? " done" : "");
-    el.style.top = `${(start - startH * 60) * PX_PER_MIN}px`;
-    el.style.height = `${Math.max(MIN_CARD_PX, dur * PX_PER_MIN)}px`;
-    el.dataset.id = task.id;
+    const row = document.createElement("div");
+    row.className = "row" + (task.done ? " done" : "");
+    row.style.top = `${(start - top0) * PX_PER_MIN}px`;
+    row.style.height = `${Math.max(MIN_ROW_PX, dur * PX_PER_MIN)}px`;
+    row.style.setProperty("--ring", ringFor(task.title));
 
-    const node = document.createElement("button");
-    node.className = "node" + (task.done ? " checked" : "");
-    node.style.background = task.done ? "" : pastelFor(task.title);
-    node.textContent = task.done ? "✓" : emojiFor(task.title);
-    node.addEventListener("click", (e) => {
+    const recur = task.recurrence_key ? " ↻" : "";
+    row.innerHTML = `
+      <div class="rail"><div class="icon" style="background:${pastelFor(task.title)}">${emojiFor(task.title)}</div></div>
+      <div class="body">
+        <div class="meta">${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}</div>
+        <div class="title">${escapeHtml(task.title)}</div>
+      </div>
+      <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
+
+    row.querySelector(".ring").addEventListener("click", (e) => {
       e.stopPropagation();
-      toggleDone(task, node, el);
+      toggleDone(task, row);
     });
-    el.appendChild(node);
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".ring")) return;
+      if (row._suppressClick) {
+        row._suppressClick = false;
+        return;
+      }
+      openEdit(task);
+    });
+    attachDrag(row, task, top0);
+    return row;
+  }
 
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = task.title;
-    el.appendChild(title);
-
-    const when = document.createElement("div");
-    when.className = "when";
-    when.textContent = `${fmtClock(start)} – ${fmtClock(start + dur)}`;
-    el.appendChild(when);
-
-    attachDrag(el, task, startH);
+  function gapRow(fromMin, toMin, top0) {
+    const free = toMin - fromMin;
+    const note = GAP_LINES[Math.floor(fromMin / 37) % GAP_LINES.length];
+    const el = document.createElement("div");
+    el.className = "gap";
+    el.style.top = `${(fromMin - top0) * PX_PER_MIN}px`;
+    el.style.height = `${free * PX_PER_MIN}px`;
+    el.innerHTML = `
+      <div class="rail"></div>
+      <div class="gap-body">
+        <div class="gap-note">🕐 Use <b>${fmtDur(free)}</b> wisely. ${note}</div>
+        <button class="gap-add">＋ Add Task</button>
+      </div>`;
+    const slot = Math.round(fromMin / SNAP_MIN) * SNAP_MIN;
+    el.querySelector(".gap-add").addEventListener("click", () => openSheet(slot));
     return el;
   }
 
-  async function toggleDone(task, node, card) {
+  /* press-and-hold to lift, drag vertically to a new time (5-min snap).
+     Cards are touch-action:none so the browser never steals the gesture;
+     a quick pre-hold vertical move scrolls the page by hand instead. */
+  function attachDrag(row, task, top0) {
+    let holdTimer = null;
+    let lifted = false;
+    let scrolling = false;
+    let originY = 0;
+    let originTop = 0;
+    let lastY = 0;
+    let pointerId = null;
+    let badge = null;
+    let newStart = null;
+
+    row.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".ring")) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      originY = e.clientY;
+      lastY = e.clientY;
+      originTop = parseFloat(row.style.top);
+      pointerId = e.pointerId;
+      scrolling = false;
+      try {
+        row.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      holdTimer = setTimeout(() => {
+        lifted = true;
+        row.classList.add("lifted");
+        if (navigator.vibrate) navigator.vibrate(15);
+        badge = document.createElement("div");
+        badge.className = "drag-badge";
+        row.appendChild(badge);
+        updateBadge(parseFloat(row.style.top));
+      }, 240);
+    });
+
+    row.addEventListener("pointermove", (e) => {
+      if (!lifted) {
+        const dy = e.clientY - originY;
+        if (!scrolling && Math.abs(dy) > 8) {
+          scrolling = true;
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+        if (scrolling) {
+          window.scrollBy(0, lastY - e.clientY);
+          lastY = e.clientY;
+        }
+        return;
+      }
+      e.preventDefault();
+      const top = Math.max(0, originTop + (e.clientY - originY));
+      row.style.top = `${top}px`;
+      updateBadge(top);
+    });
+
+    function updateBadge(top) {
+      const raw = top / PX_PER_MIN + top0;
+      newStart = Math.min(Math.max(Math.round(raw / SNAP_MIN) * SNAP_MIN, 0), 24 * 60 - 5);
+      if (badge) badge.textContent = fmtClock(newStart);
+    }
+
+    async function finish(save) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      scrolling = false;
+      if (pointerId !== null) {
+        try {
+          row.releasePointerCapture(pointerId);
+        } catch (_) {}
+        pointerId = null;
+      }
+      if (!lifted) return; // a tap → the click handler opens edit
+      lifted = false;
+      row.classList.remove("lifted");
+      row._suppressClick = true;
+      if (badge) {
+        badge.remove();
+        badge = null;
+      }
+      const cur = task.start_time ? task.start_time.slice(0, 5) : null;
+      if (save && newStart !== null && minToTime(newStart) !== cur) {
+        try {
+          await api("PATCH", `/v2/day/tasks/${task.id}`, { start_time: minToTime(newStart) });
+          task.start_time = minToTime(newStart);
+          render();
+        } catch (e) {
+          showError(e);
+          loadDay().catch(() => {});
+        }
+      } else {
+        render();
+      }
+    }
+
+    row.addEventListener("pointerup", () => finish(true));
+    row.addEventListener("pointercancel", () => finish(false));
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+    );
+  }
+
+  async function toggleDone(task, row) {
     const next = !task.done;
     task.done = next;
-    node.classList.toggle("checked", next);
-    node.textContent = next ? "✓" : emojiFor(task.title);
-    node.style.background = next ? "" : pastelFor(task.title);
-    card.classList.toggle("done", next);
+    row.classList.toggle("done", next);
+    const ring = row.querySelector(".ring");
+    ring.classList.toggle("checked", next);
+    row.querySelector(".icon").textContent = next ? "" : emojiFor(task.title);
     if (navigator.vibrate) navigator.vibrate(10);
     renderHeader();
     try {
@@ -320,114 +465,7 @@
     }
   }
 
-  /* press-and-hold to lift, drag vertically, snap, save.
-     Cards have touch-action:none so the browser never steals the gesture for
-     a page scroll. We capture the pointer on down, then decide: a quick
-     vertical move before the hold fires means "scroll" (we pan the page
-     ourselves), a held-still touch means "drag". */
-  function attachDrag(el, task, startH) {
-    let holdTimer = null;
-    let lifted = false;
-    let scrolling = false;
-    let originY = 0;
-    let originTop = 0;
-    let lastY = 0;
-    let pointerId = null;
-    let badge = null;
-    let newStart = null;
-
-    el.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(".node")) return;
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      originY = e.clientY;
-      lastY = e.clientY;
-      originTop = parseFloat(el.style.top);
-      pointerId = e.pointerId;
-      scrolling = false;
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch (_) {}
-      holdTimer = setTimeout(() => {
-        lifted = true;
-        state.dragging = true;
-        el.classList.add("lifted");
-        if (navigator.vibrate) navigator.vibrate(15);
-        badge = document.createElement("div");
-        badge.className = "drag-badge";
-        el.appendChild(badge);
-        updateBadge(parseFloat(el.style.top));
-      }, 240);
-    });
-
-    el.addEventListener("pointermove", (e) => {
-      if (!lifted) {
-        const dy = e.clientY - originY;
-        // Moved before the hold fired → this is a scroll, not a drag.
-        if (!scrolling && Math.abs(dy) > 8) {
-          scrolling = true;
-          clearTimeout(holdTimer);
-          holdTimer = null;
-        }
-        if (scrolling) {
-          // touch-action is none, so pan the page by hand to mimic scroll.
-          window.scrollBy(0, lastY - e.clientY);
-          lastY = e.clientY;
-        }
-        return;
-      }
-      e.preventDefault();
-      const top = Math.max(0, originTop + (e.clientY - originY));
-      el.style.top = `${top}px`;
-      updateBadge(top);
-    });
-
-    function updateBadge(top) {
-      const raw = top / PX_PER_MIN + startH * 60;
-      newStart = Math.round(raw / SNAP_MIN) * SNAP_MIN;
-      newStart = Math.min(Math.max(newStart, 0), 24 * 60 - 5);
-      if (badge) badge.textContent = fmtClock(newStart);
-    }
-
-    async function finish(save) {
-      clearTimeout(holdTimer);
-      holdTimer = null;
-      scrolling = false;
-      if (pointerId !== null) {
-        try {
-          el.releasePointerCapture(pointerId);
-        } catch (_) {}
-        pointerId = null;
-      }
-      if (!lifted) return;
-      lifted = false;
-      state.dragging = false;
-      el.classList.remove("lifted");
-      if (badge) {
-        badge.remove();
-        badge = null;
-      }
-      if (save && newStart !== null && minToTime(newStart) !== task.start_time.slice(0, 5)) {
-        el.style.top = `${(newStart - startH * 60) * PX_PER_MIN}px`;
-        try {
-          await api("PATCH", `/v2/day/tasks/${task.id}`, {
-            start_time: minToTime(newStart),
-          });
-          task.start_time = minToTime(newStart);
-          render();
-        } catch (e) {
-          showError(e);
-          loadDay().catch(() => {});
-        }
-      } else {
-        el.style.top = `${originTop}px`;
-      }
-    }
-
-    el.addEventListener("pointerup", () => finish(true));
-    el.addEventListener("pointercancel", () => finish(false));
-  }
-
-  /* ---------- inbox ---------- */
+  /* ---------- inbox tray ---------- */
 
   function renderInbox(items) {
     const box = $("inbox");
@@ -437,35 +475,27 @@
     for (const task of items) {
       const card = document.createElement("div");
       card.className = "inbox-card";
-      if (task.done) card.style.opacity = "0.6";
-      const emoji = document.createElement("div");
-      emoji.className = "emoji";
-      emoji.style.background = pastelFor(task.title);
-      emoji.textContent = task.done ? "✓" : emojiFor(task.title);
-      const t = document.createElement("div");
-      t.className = "t";
-      t.textContent = task.title;
-      if (task.done) t.style.textDecoration = "line-through";
-      card.appendChild(emoji);
-      card.appendChild(t);
+      if (task.done) card.style.opacity = "0.55";
+      card.innerHTML = `
+        <div class="icon" style="background:${pastelFor(task.title)}">${task.done ? "✓" : emojiFor(task.title)}</div>
+        <div class="t"${task.done ? ' style="text-decoration:line-through"' : ""}>${escapeHtml(task.title)}</div>`;
       if (!task.done) {
         const clock = document.createElement("button");
         clock.className = "clock";
         clock.textContent = "Schedule";
         clock.addEventListener("click", () => scheduleNext(task));
         card.appendChild(clock);
-        emoji.addEventListener("click", () =>
-          api("PATCH", `/v2/day/tasks/${task.id}`, { done: true })
-            .then(loadDay)
-            .catch(showError)
+        card.querySelector(".icon").addEventListener("click", () =>
+          api("PATCH", `/v2/day/tasks/${task.id}`, { done: true }).then(loadDay).catch(showError)
         );
+        card.querySelector(".t").addEventListener("click", () => openEdit(task));
       }
       list.appendChild(card);
     }
   }
 
   async function scheduleNext(task) {
-    const timed = state.items
+    const blocks = state.items
       .filter((t) => t.start_time)
       .map((t) => ({
         start: timeToMin(t.start_time),
@@ -477,60 +507,114 @@
       ? Math.ceil((now.getHours() * 60 + now.getMinutes()) / 30) * 30
       : 9 * 60;
     const need = task.estimated_minutes || 30;
-    for (const slot of timed) {
+    for (const slot of blocks) {
       if (candidate + need <= slot.start) break;
       if (candidate < slot.end) candidate = slot.end;
     }
     candidate = Math.min(candidate, 23 * 60);
     try {
-      await api("PATCH", `/v2/day/tasks/${task.id}`, {
-        start_time: minToTime(candidate),
-      });
+      await api("PATCH", `/v2/day/tasks/${task.id}`, { start_time: minToTime(candidate) });
       await loadDay();
     } catch (e) {
       showError(e);
     }
   }
 
-  /* ---------- add sheet ---------- */
+  /* ---------- add / edit sheet ---------- */
 
   let sheetMinutes = 30;
 
-  $("fab").addEventListener("click", () => {
+  function openSheet(prefillMin) {
+    state.editing = null;
+    $("sheet-title").textContent = "New task";
+    $("sheet-save").textContent = "Add to day";
+    $("sheet-delete").classList.add("hidden");
+    $("new-title").value = "";
+    $("new-title").disabled = false;
+    $("new-time").value = prefillMin != null ? minToTime(prefillMin) : "";
+    setDuration(30);
+    openSheetEl();
+    $("new-title").focus();
+  }
+
+  function openEdit(task) {
+    state.editing = task.id;
+    $("sheet-title").textContent = "Edit task";
+    $("sheet-save").textContent = "Save";
+    $("sheet-delete").classList.remove("hidden");
+    $("new-title").value = task.title;
+    $("new-title").disabled = false;
+    $("new-time").value = task.start_time ? task.start_time.slice(0, 5) : "";
+    setDuration(task.estimated_minutes || 30);
+    openSheetEl();
+  }
+
+  function openSheetEl() {
     $("sheet").classList.remove("hidden");
     $("sheet-backdrop").classList.remove("hidden");
-    $("new-title").value = "";
-    $("new-time").value = "";
-    $("new-title").focus();
-  });
+  }
 
+  function setDuration(min) {
+    sheetMinutes = min;
+    let matched = false;
+    for (const b of $("dur-chips").children) {
+      const on = Number(b.dataset.min) === min;
+      b.classList.toggle("on", on);
+      if (on) matched = true;
+    }
+    // if custom duration, leave the nearest chip highlighted off; save still uses sheetMinutes
+    if (!matched) for (const b of $("dur-chips").children) b.classList.remove("on");
+  }
+
+  $("fab").addEventListener("click", () => openSheet(null));
   $("sheet-backdrop").addEventListener("click", closeSheet);
 
   function closeSheet() {
     $("sheet").classList.add("hidden");
     $("sheet-backdrop").classList.add("hidden");
+    state.editing = null;
   }
 
   $("dur-chips").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-    for (const b of $("dur-chips").children) b.classList.remove("on");
-    btn.classList.add("on");
-    sheetMinutes = Number(btn.dataset.min);
+    setDuration(Number(btn.dataset.min));
   });
 
   $("sheet-save").addEventListener("click", async () => {
     const title = $("new-title").value.trim();
     if (!title) return;
+    const time = $("new-time").value || null;
     try {
-      await api("POST", "/v2/day/tasks", {
-        title,
-        date: iso(state.selected),
-        start_time: $("new-time").value || null,
-        estimated_minutes: sheetMinutes,
-      });
+      if (state.editing) {
+        await api("PATCH", `/v2/day/tasks/${state.editing}`, {
+          title,
+          start_time: time,
+          estimated_minutes: sheetMinutes,
+        });
+      } else {
+        await api("POST", "/v2/day/tasks", {
+          title,
+          date: iso(state.selected),
+          start_time: time,
+          estimated_minutes: sheetMinutes,
+        });
+      }
       closeSheet();
-      toast("Added ✓");
+      toast(state.editing ? "Saved ✓" : "Added ✓");
+      await loadDay();
+    } catch (e) {
+      showError(e);
+    }
+  });
+
+  $("sheet-delete").addEventListener("click", async () => {
+    if (!state.editing) return;
+    const id = state.editing;
+    closeSheet();
+    try {
+      await api("DELETE", `/v2/day/tasks/${id}`);
+      toast("Deleted");
       await loadDay();
     } catch (e) {
       showError(e);
@@ -546,7 +630,7 @@
     el.textContent = msg;
     el.classList.remove("hidden");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.add("hidden"), 2200);
+    toastTimer = setTimeout(() => el.classList.add("hidden"), 2000);
   }
 
   function showError(e) {
@@ -562,14 +646,13 @@
       reloadedForUpdate = true;
       location.reload();
     });
-    navigator.serviceWorker
-      .register("sw.js")
-      .then((reg) => reg.update())
-      .catch(() => {});
+    navigator.serviceWorker.register("sw.js").then((reg) => reg.update()).catch(() => {});
   }
 
   setInterval(() => {
-    if (!state.dragging && !document.hidden) loadDay().catch(() => {});
+    if (!document.hidden && key() && $("sheet").classList.contains("hidden")) {
+      loadDay().catch(() => {});
+    }
   }, 60000);
 
   document.addEventListener("visibilitychange", () => {
@@ -578,7 +661,6 @@
 
   if (!key()) {
     showGate(false);
-    render();
   } else {
     loadDay().catch(showError);
   }
