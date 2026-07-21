@@ -320,37 +320,58 @@
     }
   }
 
-  /* press-and-hold to lift, drag vertically, snap, save */
+  /* press-and-hold to lift, drag vertically, snap, save.
+     Cards have touch-action:none so the browser never steals the gesture for
+     a page scroll. We capture the pointer on down, then decide: a quick
+     vertical move before the hold fires means "scroll" (we pan the page
+     ourselves), a held-still touch means "drag". */
   function attachDrag(el, task, startH) {
     let holdTimer = null;
     let lifted = false;
+    let scrolling = false;
     let originY = 0;
     let originTop = 0;
+    let lastY = 0;
+    let pointerId = null;
     let badge = null;
     let newStart = null;
 
     el.addEventListener("pointerdown", (e) => {
       if (e.target.closest(".node")) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
       originY = e.clientY;
+      lastY = e.clientY;
       originTop = parseFloat(el.style.top);
+      pointerId = e.pointerId;
+      scrolling = false;
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch (_) {}
       holdTimer = setTimeout(() => {
         lifted = true;
         state.dragging = true;
         el.classList.add("lifted");
-        el.setPointerCapture(e.pointerId);
         if (navigator.vibrate) navigator.vibrate(15);
         badge = document.createElement("div");
         badge.className = "drag-badge";
         el.appendChild(badge);
         updateBadge(parseFloat(el.style.top));
-      }, 260);
+      }, 240);
     });
 
     el.addEventListener("pointermove", (e) => {
       if (!lifted) {
-        if (holdTimer && Math.abs(e.clientY - originY) > 10) {
+        const dy = e.clientY - originY;
+        // Moved before the hold fired → this is a scroll, not a drag.
+        if (!scrolling && Math.abs(dy) > 8) {
+          scrolling = true;
           clearTimeout(holdTimer);
           holdTimer = null;
+        }
+        if (scrolling) {
+          // touch-action is none, so pan the page by hand to mimic scroll.
+          window.scrollBy(0, lastY - e.clientY);
+          lastY = e.clientY;
         }
         return;
       }
@@ -370,6 +391,13 @@
     async function finish(save) {
       clearTimeout(holdTimer);
       holdTimer = null;
+      scrolling = false;
+      if (pointerId !== null) {
+        try {
+          el.releasePointerCapture(pointerId);
+        } catch (_) {}
+        pointerId = null;
+      }
       if (!lifted) return;
       lifted = false;
       state.dragging = false;
