@@ -324,6 +324,10 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any, ApiKeyOAuthProvider]:
             },
         )
 
+    from planner_core.mcp_tools import register_core_tools
+
+    register_core_tools(server)
+
     return server, server.streamable_http_app(), oauth_provider
 
 

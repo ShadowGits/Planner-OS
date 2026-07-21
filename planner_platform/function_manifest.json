@@ -4,7 +4,7 @@
     "mcp_server": "planner_mcp/server.py",
     "technical_reference": "docs/technical_reference.md"
   },
-  "tool_count": 93,
+  "tool_count": 81,
   "tools": [
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -84,7 +84,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 410
+      "source_line": 350
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -108,7 +108,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 430
+      "source_line": 370
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -167,187 +167,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 340
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "List writable local Apple calendars.",
-      "documented_behavior": "Lists Apple calendars and writability.",
-      "documented_parameters": "none",
-      "effect": "read",
-      "name": "apple_calendar_calendars",
-      "parameters": [],
-      "return_annotation": "dict",
-      "source_line": 122
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Delete one explicitly identified Planner OS Apple event.",
-      "documented_behavior": "Deletes one identified event; scope is `single`, `future`, or `series`.",
-      "documented_parameters": "`external_id`, `delete_scope = \"single\"`",
-      "effect": "external_write",
-      "name": "apple_calendar_delete_event",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "external_id",
-          "required": true
-        },
-        {
-          "annotation": "str",
-          "default": "'single'",
-          "kind": "positional_or_keyword",
-          "name": "delete_scope",
-          "required": false
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 152
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "List Planner OS-owned Apple events in a range.",
-      "documented_behavior": "Lists Planner OS-owned Apple events in an inclusive range.",
-      "documented_parameters": "`start_date`, `end_date`",
-      "effect": "read",
-      "name": "apple_calendar_list_range",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "start_date",
-          "required": true
-        },
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "end_date",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 140
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Reconcile Apple Calendar events in a range.",
-      "documented_behavior": "Reports missing, orphaned, duplicate, and stale Apple mappings.",
-      "documented_parameters": "`start_date`, `end_date`",
-      "effect": "read",
-      "name": "apple_calendar_reconcile_range",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "start_date",
-          "required": true
-        },
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "end_date",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 146
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Report native Apple Calendar permission and capabilities.",
-      "documented_behavior": "Reports EventKit permission, selected calendar, and capabilities.",
-      "documented_parameters": "none",
-      "effect": "read",
-      "name": "apple_calendar_status",
-      "parameters": [],
-      "return_annotation": "dict",
-      "source_line": 116
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Update one explicitly identified Planner OS Apple event.",
-      "documented_behavior": "Updates one explicitly identified Planner OS Apple event.",
-      "documented_parameters": "`external_id`, `block`",
-      "effect": "external_write",
-      "name": "apple_calendar_update_event",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "external_id",
-          "required": true
-        },
-        {
-          "annotation": "dict",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "block",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 158
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Apply an approved Apple Calendar range deletion.",
-      "documented_behavior": "Applies an approved Apple range-deletion preview.",
-      "documented_parameters": "`preview_id`",
-      "effect": "external_write",
-      "name": "apply_apple_calendar_delete_range",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "preview_id",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 170
+      "source_line": 280
     },
     {
       "category": "Google Calendar CRUD",
@@ -371,7 +191,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 242
+      "source_line": 182
     },
     {
       "category": "Google Calendar CRUD",
@@ -395,7 +215,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 224
+      "source_line": 164
     },
     {
       "category": "Planning And Replanning",
@@ -426,7 +246,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 316
+      "source_line": 256
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -474,7 +294,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 667
+      "source_line": 607
     },
     {
       "category": "Planning And Replanning",
@@ -505,7 +325,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 282
+      "source_line": 222
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -553,7 +373,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 607
+      "source_line": 547
     },
     {
       "category": "Recurrence",
@@ -577,7 +397,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 637
+      "source_line": 577
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -601,7 +421,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 619
+      "source_line": 559
     },
     {
       "category": "Planning And Replanning",
@@ -632,7 +452,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 299
+      "source_line": 239
     },
     {
       "category": "Google Calendar CRUD",
@@ -656,7 +476,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 200
+      "source_line": 140
     },
     {
       "category": "Google Calendar CRUD",
@@ -680,7 +500,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 212
+      "source_line": 152
     },
     {
       "category": "Google Calendar CRUD",
@@ -704,7 +524,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 206
+      "source_line": 146
     },
     {
       "category": "Google Calendar CRUD",
@@ -735,7 +555,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 182
+      "source_line": 122
     },
     {
       "category": "Google Calendar CRUD",
@@ -766,7 +586,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 176
+      "source_line": 116
     },
     {
       "category": "Google Calendar CRUD",
@@ -804,7 +624,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 188
+      "source_line": 128
     },
     {
       "category": "Google Calendar CRUD",
@@ -835,7 +655,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 230
+      "source_line": 170
     },
     {
       "category": "Google Calendar CRUD",
@@ -859,7 +679,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 248
+      "source_line": 188
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -875,7 +695,7 @@
       "name": "calendar_sync_current_week",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 498
+      "source_line": 438
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -899,7 +719,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 533
+      "source_line": 473
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -923,7 +743,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 526
+      "source_line": 466
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -939,7 +759,7 @@
       "name": "calendar_sync_next_week",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 505
+      "source_line": 445
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -970,7 +790,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 519
+      "source_line": 459
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -986,7 +806,7 @@
       "name": "calendar_sync_today",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 484
+      "source_line": 424
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -1002,7 +822,7 @@
       "name": "calendar_sync_week",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 491
+      "source_line": 431
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -1033,7 +853,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 512
+      "source_line": 452
     },
     {
       "category": "Google Calendar CRUD",
@@ -1064,7 +884,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 194
+      "source_line": 134
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1095,31 +915,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 333
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Create and select a dedicated local Apple calendar.",
-      "documented_behavior": "Creates an Apple calendar and persists its identifier.",
-      "documented_parameters": "`title: str = \"Planner OS\"`",
-      "effect": "external_write",
-      "name": "create_apple_calendar",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": "'Planner OS'",
-          "kind": "positional_or_keyword",
-          "name": "title",
-          "required": false
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 128
+      "source_line": 273
     },
     {
       "category": "Check-In And Reviews",
@@ -1143,7 +939,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 540
+      "source_line": 480
     },
     {
       "category": "Check-In And Reviews",
@@ -1167,7 +963,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 547
+      "source_line": 487
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1191,7 +987,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 456
+      "source_line": 396
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1215,7 +1011,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 463
+      "source_line": 403
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1246,7 +1042,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 403
+      "source_line": 343
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -1262,7 +1058,7 @@
       "name": "explain_active_constraints",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 595
+      "source_line": 535
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -1302,7 +1098,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 577
+      "source_line": 517
     },
     {
       "category": "Import And Google Calendar Sync",
@@ -1326,7 +1122,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 477
+      "source_line": 417
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1350,7 +1146,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 470
+      "source_line": 410
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -1382,7 +1178,7 @@
       "name": "list_preferences",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 571
+      "source_line": 511
     },
     {
       "category": "Recurrence",
@@ -1398,7 +1194,7 @@
       "name": "list_recurrences",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 643
+      "source_line": 583
     },
     {
       "category": "Validation And Rules",
@@ -1438,7 +1234,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 559
+      "source_line": 499
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -1483,31 +1279,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 386
-    },
-    {
-      "category": "Command Router",
-      "category_key": "command_router",
-      "cloud": {
-        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
-        "status": "candidate"
-      },
-      "description": "Parse a small supported set of common planner phrases.",
-      "documented_behavior": "Deterministically parses supported phrases into a `PlannerCommand`; never mutates.",
-      "documented_parameters": "`text`",
-      "effect": "read",
-      "name": "parse_common_intent",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "text",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 673
+      "source_line": 326
     },
     {
       "category": "Recurrence",
@@ -1531,7 +1303,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 649
+      "source_line": 589
     },
     {
       "category": "Planning And Replanning",
@@ -1547,7 +1319,7 @@
       "name": "plan_today",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 254
+      "source_line": 194
     },
     {
       "category": "Planning And Replanning",
@@ -1571,7 +1343,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 261
+      "source_line": 201
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -1587,38 +1359,7 @@
       "name": "planner_doctor",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 565
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Preview exact Planner OS Apple events to delete.",
-      "documented_behavior": "Returns the exact Planner OS events proposed for deletion. No deletion.",
-      "documented_parameters": "`start_date`, `end_date`",
-      "effect": "preview",
-      "name": "preview_apple_calendar_delete_range",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "start_date",
-          "required": true
-        },
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "end_date",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 164
+      "source_line": 505
     },
     {
       "category": "Google Calendar CRUD",
@@ -1649,7 +1390,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 236
+      "source_line": 176
     },
     {
       "category": "Google Calendar CRUD",
@@ -1680,7 +1421,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 218
+      "source_line": 158
     },
     {
       "category": "Planning And Replanning",
@@ -1704,7 +1445,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 309
+      "source_line": 249
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -1752,7 +1493,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 661
+      "source_line": 601
     },
     {
       "category": "Planning And Replanning",
@@ -1776,7 +1517,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 275
+      "source_line": 215
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -1837,7 +1578,7 @@
       "name": "preview_planner_repair",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 601
+      "source_line": 541
     },
     {
       "category": "Recurrence",
@@ -1861,7 +1602,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 631
+      "source_line": 571
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -1885,7 +1626,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 613
+      "source_line": 553
     },
     {
       "category": "Planning And Replanning",
@@ -1909,7 +1650,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 292
+      "source_line": 232
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -2020,7 +1761,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 268
+      "source_line": 208
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -2044,7 +1785,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 589
+      "source_line": 529
     },
     {
       "category": "Recurrence",
@@ -2068,31 +1809,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 655
-    },
-    {
-      "category": "Command Router",
-      "category_key": "command_router",
-      "cloud": {
-        "reason": "Stage 2 must bind this tool to tenant-safe ports and policy metadata.",
-        "status": "candidate"
-      },
-      "description": "Route one validated structured planner command safely.",
-      "documented_behavior": "Validates and dispatches one structured command; refuses ambiguity/unconfirmed writes.",
-      "documented_parameters": "`command: PlannerCommand`",
-      "effect": "mixed",
-      "name": "route_planner_command",
-      "parameters": [
-        {
-          "annotation": "dict",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "command",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 680
+      "source_line": 595
     },
     {
       "category": "Execution Targets And Generic Publishing",
@@ -2117,30 +1834,6 @@
       ],
       "return_annotation": "dict",
       "source_line": 62
-    },
-    {
-      "category": "Apple Calendar",
-      "category_key": "apple_calendar",
-      "cloud": {
-        "reason": "Requires the local macOS EventKit helper and cannot run on Vercel.",
-        "status": "disabled"
-      },
-      "description": "Persist the selected Apple Calendar identifier.",
-      "documented_behavior": "Persists the selected Apple calendar identifier.",
-      "documented_parameters": "`calendar_id: str`",
-      "effect": "local_state_write",
-      "name": "set_apple_calendar",
-      "parameters": [
-        {
-          "annotation": "str",
-          "default": null,
-          "kind": "positional_or_keyword",
-          "name": "calendar_id",
-          "required": true
-        }
-      ],
-      "return_annotation": "dict",
-      "source_line": 134
     },
     {
       "category": "Validation And Rules",
@@ -2204,7 +1897,7 @@
       "name": "status",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 326
+      "source_line": 266
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -2220,7 +1913,7 @@
       "name": "undo_last_change",
       "parameters": [],
       "return_annotation": "dict",
-      "source_line": 625
+      "source_line": 565
     },
     {
       "category": "Workbook Tasks And Dated Tasks",
@@ -2251,7 +1944,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 449
+      "source_line": 389
     },
     {
       "category": "Diagnostics, Preferences, Repair, And Undo",
@@ -2282,7 +1975,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 583
+      "source_line": 523
     },
     {
       "category": "Validation And Rules",
@@ -2386,7 +2079,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 361
+      "source_line": 301
     },
     {
       "category": "Validation And Rules",
@@ -2426,7 +2119,7 @@
         }
       ],
       "return_annotation": "dict",
-      "source_line": 553
+      "source_line": 493
     }
   ]
 }

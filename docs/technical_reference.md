@@ -5,7 +5,7 @@ This document inventories the public Planner OS interface as implemented on
 `planner_mcp/server.py`; the source of truth for CLI syntax is
 `planner_engine/cli.py:build_parser()`.
 
-The inventory covers all 90 STDIO MCP tools and all 25 top-level Shadow CLI
+The inventory covers all 81 STDIO MCP tools and all 25 top-level Shadow CLI
 command groups. Private Python helpers are intentionally excluded because they
 are implementation details rather than callable product functions.
 
@@ -114,24 +114,6 @@ checks prevent Planner OS deletion commands from deleting unrelated events.
 
 With active target `none`, generic publishing succeeds as a local-only skip and
 does not write either calendar.
-
-### Apple Calendar
-
-| Tool | Parameters | Behavior and side effects |
-|---|---|---|
-| `apple_calendar_status` | none | Reports EventKit permission, selected calendar, and capabilities. |
-| `apple_calendar_calendars` | none | Lists Apple calendars and writability. |
-| `create_apple_calendar` | `title: str = "Planner OS"` | Creates an Apple calendar and persists its identifier. |
-| `set_apple_calendar` | `calendar_id: str` | Persists the selected Apple calendar identifier. |
-| `apple_calendar_list_range` | `start_date`, `end_date` | Lists Planner OS-owned Apple events in an inclusive range. |
-| `apple_calendar_reconcile_range` | `start_date`, `end_date` | Reports missing, orphaned, duplicate, and stale Apple mappings. |
-| `apple_calendar_update_event` | `external_id`, `block` | Updates one explicitly identified Planner OS Apple event. |
-| `apple_calendar_delete_event` | `external_id`, `delete_scope = "single"` | Deletes one identified event; scope is `single`, `future`, or `series`. |
-| `preview_apple_calendar_delete_range` | `start_date`, `end_date` | Returns the exact Planner OS events proposed for deletion. No deletion. |
-| `apply_apple_calendar_delete_range` | `preview_id` | Applies an approved Apple range-deletion preview. |
-
-Apple Calendar uses a local signed Swift/EventKit helper. The selected calendar
-ID is local configuration; OAuth and cloud hosting are not involved.
 
 ### Google Calendar CRUD
 
@@ -342,36 +324,20 @@ Frequency is `daily`, `weekdays`, `weekends`, `selected_weekdays`, `weekly`, or
 }
 ```
 
-### Command Router
+## Planner Core v2 Cloud Tools
 
-| Tool | Parameters | Behavior and side effects |
-|---|---|---|
-| `parse_common_intent` | `text` | Deterministically parses supported phrases into a `PlannerCommand`; never mutates. |
-| `route_planner_command` | `command: PlannerCommand` | Validates and dispatches one structured command; refuses ambiguity/unconfirmed writes. |
-
-`PlannerCommand`:
-
-```json
-{
-  "command_type": "add_dated_task",
-  "payload": {
-    "date": "2026-07-13",
-    "title": "Call plumber",
-    "estimated_minutes": 30,
-    "preferred_daypart": "morning"
-  },
-  "preview_required": false,
-  "source_text": "call plumber tomorrow",
-  "confidence": "high",
-  "requires_confirmation": false
-}
-```
-
-Supported command types include task CRUD, dated-task CRUD, day/week/month
-planning, Google sync, check-in/reviews, rules/preferences, goal planning,
-execution-target switching/publishing/migration, recurrence, repair, undo, and
-doctor. Low-confidence or materially ambiguous commands return recognized data
-and require confirmation without mutation.
+The cloud MCP server additionally registers twelve `core_*` tools backed by
+Supabase Postgres instead of the Excel workbook: `core_create_project`,
+`core_update_project`, `core_add_milestone`, `core_update_milestone`,
+`core_list_projects`, `core_create_task`, `core_update_task`,
+`core_complete_task`, `core_delete_task`, `core_list_tasks`, `core_today`,
+and `core_metrics`. They live in `planner_core/mcp_tools.py`, run without the
+workbook download/lock cycle, and are intentionally outside the manifest above
+because they are cloud-only. Companion HTTP surface: `GET /v2/metrics`
+(dashboard snapshot), `POST /v2/reminders/run` (cron, `X-Cron-Key` =
+`CRON_SECRET`), and `POST /v2/telegram/webhook` (tick-back and `today`/`status`
+commands, secured by `TELEGRAM_WEBHOOK_SECRET` and pinned to
+`TELEGRAM_CHAT_ID`; sends replies with `TELEGRAM_BOT_TOKEN`).
 
 ## Shadow CLI Reference
 

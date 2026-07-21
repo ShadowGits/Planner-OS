@@ -113,66 +113,6 @@ def publish_current_week() -> dict:
 
 
 @mcp.tool()
-def apple_calendar_status() -> dict:
-    """Report native Apple Calendar permission and capabilities."""
-    return planner_tools.apple_calendar_status()
-
-
-@mcp.tool()
-def apple_calendar_calendars() -> dict:
-    """List writable local Apple calendars."""
-    return planner_tools.apple_calendar_calendars()
-
-
-@mcp.tool()
-def create_apple_calendar(title: str = "Planner OS") -> dict:
-    """Create and select a dedicated local Apple calendar."""
-    return planner_tools.create_apple_calendar(title)
-
-
-@mcp.tool()
-def set_apple_calendar(calendar_id: str) -> dict:
-    """Persist the selected Apple Calendar identifier."""
-    return planner_tools.set_apple_calendar(calendar_id)
-
-
-@mcp.tool()
-def apple_calendar_list_range(start_date: str, end_date: str) -> dict:
-    """List Planner OS-owned Apple events in a range."""
-    return planner_tools.apple_calendar_list_range(start_date, end_date)
-
-
-@mcp.tool()
-def apple_calendar_reconcile_range(start_date: str, end_date: str) -> dict:
-    """Reconcile Apple Calendar events in a range."""
-    return planner_tools.apple_calendar_reconcile_range(start_date, end_date)
-
-
-@mcp.tool()
-def apple_calendar_delete_event(external_id: str, delete_scope: str = "single") -> dict:
-    """Delete one explicitly identified Planner OS Apple event."""
-    return planner_tools.apple_calendar_delete_event(external_id, delete_scope)
-
-
-@mcp.tool()
-def apple_calendar_update_event(external_id: str, block: dict) -> dict:
-    """Update one explicitly identified Planner OS Apple event."""
-    return planner_tools.apple_calendar_update_event(external_id, block)
-
-
-@mcp.tool()
-def preview_apple_calendar_delete_range(start_date: str, end_date: str) -> dict:
-    """Preview exact Planner OS Apple events to delete."""
-    return planner_tools.preview_apple_calendar_delete_range(start_date, end_date)
-
-
-@mcp.tool()
-def apply_apple_calendar_delete_range(preview_id: str) -> dict:
-    """Apply an approved Apple Calendar range deletion."""
-    return planner_tools.apply_apple_calendar_delete_range(preview_id)
-
-
-@mcp.tool()
 def calendar_list_range(start_date: str, end_date: str) -> dict:
     """List Planner OS-owned Google events in a range."""
     return planner_tools.calendar_list_range(start_date, end_date)
@@ -667,20 +607,6 @@ def preview_goal_plan(request: dict) -> dict:
 def apply_goal_plan(preview_id: str) -> dict:
     """Apply an approved goal plan preview to the workbook."""
     return planner_tools.apply_goal_plan(preview_id)
-
-
-@mcp.tool()
-def parse_common_intent(text: str) -> dict:
-    """Parse a small supported set of common planner phrases."""
-
-    return planner_tools.parse_common_intent(text)
-
-
-@mcp.tool()
-def route_planner_command(command: dict) -> dict:
-    """Route one validated structured planner command safely."""
-
-    return planner_tools.route_planner_command(command)
 
 
 def main() -> None:
