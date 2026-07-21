@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy only backend source directories
 COPY planner_api/ ./planner_api/
+COPY planner_core/ ./planner_core/
 COPY planner_platform/ ./planner_platform/
 COPY planner_engine/ ./planner_engine/
 COPY planner_mcp/ ./planner_mcp/
