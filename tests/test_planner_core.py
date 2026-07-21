@@ -178,6 +178,25 @@ def test_today_buckets_scheduled_due_and_overdue(services) -> None:
     assert "Scheduled today" in [row["title"] for row in data["scheduled"]]
 
 
+def test_today_checklist_flags_done_and_sorts_open_first(services) -> None:
+    tasks, _, _, _ = services
+    today = _today().isoformat()
+    tasks.create_task("Gym", scheduled_date=today)
+    tasks.create_task("Write SOP", due_date=today)
+    done = tasks.create_task("Call baby HR", scheduled_date=today)
+    tasks.create_task("Not today", due_date="2027-01-01")
+    tasks.complete_task(done["data"]["task"]["id"])
+
+    data = tasks.today_checklist()["data"]
+    titles = [item["title"] for item in data["items"]]
+
+    assert data["done_count"] == 1 and data["total_count"] == 3
+    assert "Not today" not in titles
+    assert titles[-1] == "Call baby HR"  # done sorts to the bottom
+    assert data["items"][-1]["done"] is True
+    assert all(item["done"] is False for item in data["items"][:-1])
+
+
 def test_metrics_snapshot_and_dashboard_flat_shape(services) -> None:
     tasks, projects, metrics, _ = services
     project = projects.create_project("German", track="german", target_date="2026-08-22")

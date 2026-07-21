@@ -150,3 +150,13 @@ def test_telegram_webhook_secret_chat_gating_and_done_flow(client) -> None:
 
     assert response.status_code == 200
     assert response.json()["data"]["action"] == "status"
+
+
+def test_today_command_renders_checklist_without_error(client) -> None:
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "hook-secret"}
+    update = {"message": {"chat": {"id": 42}, "text": "today"}}
+
+    response = client.post("/v2/telegram/webhook", json=update, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["action"] == "today"
