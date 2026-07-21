@@ -1207,7 +1207,7 @@
       "name": "delete_dated_tasks",
       "parameters": [
         {
-          "annotation": "list",
+          "annotation": "list[str]",
           "default": null,
           "kind": "positional_or_keyword",
           "name": "task_ids",
