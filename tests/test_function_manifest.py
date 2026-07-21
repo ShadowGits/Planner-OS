@@ -18,7 +18,7 @@ def test_technical_reference_and_mcp_server_have_exact_tool_parity() -> None:
     documented = parse_documented_tools()
     registered = parse_registered_tools()
 
-    assert len(documented) == 93
+    assert len(documented) == 81
     assert set(documented) == set(registered)
 
 
@@ -27,7 +27,7 @@ def test_manifest_is_deterministic_and_matches_checked_in_file() -> None:
 
     checked_in = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     assert checked_in == build_manifest()
-    assert checked_in["tool_count"] == 93
+    assert checked_in["tool_count"] == 81
 
 
 def test_every_manifest_parameter_resolves_at_cloud_boot() -> None:
@@ -50,11 +50,12 @@ def test_every_manifest_parameter_resolves_at_cloud_boot() -> None:
                 ) from error
 
 
-def test_manifest_marks_local_apple_tools_cloud_disabled() -> None:
-    tools = {tool["name"]: tool for tool in build_manifest()["tools"]}
+def test_manifest_no_longer_exposes_apple_or_router_tools() -> None:
+    names = {tool["name"] for tool in build_manifest()["tools"]}
 
-    assert tools["apple_calendar_status"]["cloud"]["status"] == "disabled"
-    assert tools["apple_calendar_delete_event"]["effect"] == "external_write"
+    assert not any("apple" in name for name in names)
+    assert "route_planner_command" not in names
+    assert "parse_common_intent" not in names
 
 
 def test_manifest_marks_local_path_import_for_cloud_adaptation() -> None:

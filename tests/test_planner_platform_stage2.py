@@ -58,13 +58,12 @@ def test_planner_context_is_immutable_and_validated(tmp_path) -> None:
         PlannerContext(**{**context.__dict__, "execution_target": "both"})
 
 
-def test_registry_contains_all_92_tools_with_complete_policy() -> None:
+def test_registry_contains_all_81_tools_with_complete_policy() -> None:
     registry = build_tool_registry(FakeTools())
 
-    assert len(registry.list()) == 93
+    assert len(registry.list()) == 81
     assert registry.get("validate").policy.effect == EffectType.READ
     assert registry.get("apply_week_plan").policy.confirmation == ConfirmationPolicy.PREVIEW_REQUIRED
-    assert registry.get("apple_calendar_status").policy.cloud_status == CloudStatus.DISABLED
     assert all(spec.request_model and spec.response_model for spec in registry.list())
 
 
@@ -73,7 +72,7 @@ def test_registry_binds_all_tools_to_real_local_adapter_without_io(tmp_path) -> 
 
     registry = build_tool_registry(tools)
 
-    assert len(registry.list()) == 93
+    assert len(registry.list()) == 81
 
 
 def test_registry_rejects_unknown_invalid_and_cloud_disabled_calls() -> None:
@@ -85,8 +84,6 @@ def test_registry_rejects_unknown_invalid_and_cloud_disabled_calls() -> None:
         registry.invoke("add_task", {"task": "Read"})
     with pytest.raises(ToolInputError, match="Unexpected fields"):
         registry.invoke("validate", {"user_id": "untrusted"})
-    with pytest.raises(ToolDisabledInCloudError):
-        registry.invoke("apple_calendar_status", {}, cloud_mode=True)
 
 
 def test_registry_adapts_series_alias_without_duplicate_public_handler() -> None:
