@@ -30,6 +30,26 @@ def test_manifest_is_deterministic_and_matches_checked_in_file() -> None:
     assert checked_in["tool_count"] == 93
 
 
+def test_every_manifest_parameter_resolves_at_cloud_boot() -> None:
+    # The cloud MCP server builds a handler for every tool at startup and maps
+    # each parameter's annotation string through planner_api.mcp._ANNOTATIONS.
+    # An annotation missing from that table (e.g. a bare "list" instead of
+    # "list[str]") raises KeyError and takes the whole /mcp endpoint down at
+    # boot. Exercise that exact resolution here so it fails in CI, not in prod.
+    from planner_api.mcp import _parameter
+
+    for tool in build_manifest()["tools"]:
+        for parameter in tool["parameters"]:
+            try:
+                _parameter(parameter)
+            except Exception as error:  # pragma: no cover - failure path
+                raise AssertionError(
+                    f"{tool['name']}.{parameter['name']} has annotation "
+                    f"{parameter.get('annotation')!r} that the cloud MCP boot "
+                    f"cannot resolve: {error}"
+                ) from error
+
+
 def test_manifest_marks_local_apple_tools_cloud_disabled() -> None:
     tools = {tool["name"]: tool for tool in build_manifest()["tools"]}
 
