@@ -304,6 +304,46 @@ class TaskService:
             },
         )
 
+    def today_checklist(self) -> dict[str, Any]:
+        """One flat list of today's tasks, each flagged done or not, for a
+        tick-box view. A task belongs to today if it is scheduled today, due
+        today, or was completed today; done tasks sort to the bottom."""
+        today = _local_today(self.timezone)
+        completed_task_ids = {
+            str(row.get("task_id"))
+            for row in self.repository.list_rows("task_completions")
+            if _parse_date(row.get("completed_on")) == today and row.get("task_id")
+        }
+        items: list[dict[str, Any]] = []
+        for row in self.repository.list_rows("planner_tasks"):
+            due = _parse_date(row.get("due_date"))
+            planned = _parse_date(row.get("scheduled_date"))
+            is_done = row["status"] == "done" or str(row["id"]) in completed_task_ids
+            belongs = planned == today or due == today or str(row["id"]) in completed_task_ids
+            if not belongs:
+                continue
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "done": is_done,
+                    "due_date": row.get("due_date"),
+                    "priority": row.get("priority"),
+                }
+            )
+        items.sort(key=lambda item: (item["done"], str(item.get("due_date") or "9999"), item["title"]))
+        done_count = len([item for item in items if item["done"]])
+        return _envelope(
+            True,
+            f"{done_count} of {len(items)} done today",
+            {
+                "date": today.isoformat(),
+                "items": items,
+                "done_count": done_count,
+                "total_count": len(items),
+            },
+        )
+
     def list_tasks(self, *, status: str | None = None, project_id: str | None = None) -> dict[str, Any]:
         filters: dict[str, Any] = {}
         if status is not None:

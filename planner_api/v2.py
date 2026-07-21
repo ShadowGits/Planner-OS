@@ -56,6 +56,19 @@ def _configured_user_id() -> UUID:
     return UUID(raw)
 
 
+def _render_today(core: "PlannerCoreBundle") -> str:
+    """Render today's tasks as a tick-box checklist with a done/total header."""
+    data = core.tasks.today_checklist()["data"]
+    header = f"\U0001F4C5 Today · {data['done_count']}/{data['total_count']} done"
+    if not data["items"]:
+        return header + "\n\nNothing for today. Add a task or rest up."
+    lines = [header, ""]
+    for item in data["items"]:
+        mark = "✅" if item["done"] else "⬜"
+        lines.append(f"{item['title']} {mark}")
+    return "\n".join(lines)
+
+
 def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None:
     def _envelope(success: bool, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"success": success, "message": message, "data": data or {}, "errors": []}
@@ -125,25 +138,18 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             else:
                 reply = result["message"]
         elif action == "today":
-            today = core.tasks.today()["data"]
-            lines = [f"Today {today['date']}:"]
-            lines += [f"- {row['title']}" for row in (today["scheduled"] + today["due_today"])[:10]]
-            if today["overdue"]:
-                lines.append(f"Overdue: {len(today['overdue'])}")
-            if len(lines) == 1:
-                lines.append("Nothing scheduled.")
-            reply = "\n".join(lines)
+            reply = _render_today(core)
         else:
+            reply = _render_today(core)
             snapshot = core.metrics.snapshot()
-            lines = ["Status:"]
-            for project in snapshot["projects"]:
-                lines.append(
-                    f"- {project['name']}: {project['completion_pct']}% "
-                    f"({project['open_tasks']} open)"
-                )
-            totals = snapshot["totals"]
-            lines.append(f"Overdue: {totals['overdue_tasks']} | Done today: {totals['completed_today']}")
-            reply = "\n".join(lines)
+            if snapshot["projects"]:
+                lines = ["", "Projects:"]
+                for project in snapshot["projects"]:
+                    lines.append(
+                        f"- {project['name']}: {project['completion_pct']}% "
+                        f"({project['open_tasks']} open)"
+                    )
+                reply += "\n" + "\n".join(lines)
         telegram = TelegramClient.from_env()
         if telegram is not None:
             try:
