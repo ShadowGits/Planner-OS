@@ -556,7 +556,16 @@
   /* ---------- boot ---------- */
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    let reloadedForUpdate = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloadedForUpdate) return;
+      reloadedForUpdate = true;
+      location.reload();
+    });
+    navigator.serviceWorker
+      .register("sw.js")
+      .then((reg) => reg.update())
+      .catch(() => {});
   }
 
   setInterval(() => {
