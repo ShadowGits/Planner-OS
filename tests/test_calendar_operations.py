@@ -31,6 +31,30 @@ class GoogleCalendarOperationsTests(TestCase):
             self.assertTrue(repaired["success"])
             self.assertEqual(repaired["mapping"]["target_name"], "google_calendar")
 
+    def test_apply_delete_range_batches_many_events(self):
+        with TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            client = GoogleCalendarClient(service=FakeService())
+            events = []
+            for index in range(5):
+                owned = block(f"German {index}")
+                events.append({"id": f"owned-{index}", **client.event_from_block(owned)})
+            client.service.events_data = list(events)
+            operations = GoogleCalendarOperations(client, ExternalLinkStore(tmp / "links.json"), tmp / "previews")
+
+            preview = operations.preview_delete_range(date(2026, 7, 11), date(2026, 7, 11))
+            self.assertEqual(len(preview.events), 5)
+
+            result = operations.apply_delete_range(preview.preview_id)
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["deleted"], 5)
+            self.assertEqual(client.service.events_data, [])
+            # One batched HTTP request, not one delete round-trip per event, and
+            # no per-event ownership reads.
+            self.assertEqual(sum(1 for call in client.service.calls if call[0] == "batch"), 1)
+            self.assertEqual(sum(1 for call in client.service.calls if call[0] == "get"), 0)
+
     def test_preview_rejects_calendar_drift(self):
         with TemporaryDirectory() as directory:
             tmp = Path(directory)

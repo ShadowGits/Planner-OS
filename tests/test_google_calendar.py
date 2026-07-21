@@ -80,6 +80,28 @@ class FakeEvents:
         return FakeExecute({})
 
 
+class FakeBatch:
+    """Mimic googleapiclient's batch request: run each add on execute()."""
+
+    def __init__(self, service, callback) -> None:
+        self.service = service
+        self.callback = callback
+        self.requests = []
+
+    def add(self, request, request_id=None):
+        self.requests.append((request_id, request))
+
+    def execute(self):
+        self.service.calls.append(("batch", {"size": len(self.requests)}))
+        for request_id, request in self.requests:
+            try:
+                response = request.execute()
+            except Exception as exc:  # noqa: BLE001 - mirror real batch callback
+                self.callback(request_id, None, exc)
+            else:
+                self.callback(request_id, response, None)
+
+
 class FakeService:
     def __init__(self, events_data=None) -> None:
         self.events_data = events_data or []
@@ -90,6 +112,9 @@ class FakeService:
 
     def events(self):
         return FakeEvents(self)
+
+    def new_batch_http_request(self, callback):
+        return FakeBatch(self, callback)
 
     def event_start(self, event):
         return datetime.fromisoformat(event.get("start", {}).get("dateTime", "1900-01-01T00:00:00+00:00"))

@@ -209,6 +209,41 @@ class GoogleCalendarClient:
             raise GoogleCalendarError("Refusing to delete an event not owned by Planner OS")
         self.delete_event(event_id)
 
+    def batch_delete_events(self, event_ids: list[str], *, chunk_size: int = 50) -> dict[str, Any]:
+        """Delete many owned events using Google's batch HTTP endpoint.
+
+        Ownership is the caller's responsibility — range delete verifies it by
+        re-listing Planner OS-owned events before applying, so we skip the
+        per-event ownership read here. Events that are already gone (HTTP
+        404/410) count as deleted, so re-running after a timeout is safe.
+        Returns ``{"deleted": [event_id, ...], "errors": {event_id: message}}``.
+        """
+
+        service = self.authenticate()
+        deleted: list[str] = []
+        errors: dict[str, str] = {}
+
+        def _handle(request_id: str, _response: Any, exception: Exception | None) -> None:
+            if exception is None:
+                deleted.append(request_id)
+                return
+            status = getattr(getattr(exception, "resp", None), "status", None)
+            if status in (404, 410):  # already gone — treat as deleted
+                deleted.append(request_id)
+            else:
+                errors[request_id] = str(exception)
+
+        for offset in range(0, len(event_ids), chunk_size):
+            chunk = event_ids[offset : offset + chunk_size]
+            batch = service.new_batch_http_request(callback=_handle)
+            for event_id in chunk:
+                batch.add(
+                    service.events().delete(calendarId=self.calendar_id, eventId=event_id),
+                    request_id=event_id,
+                )
+            batch.execute()
+        return {"deleted": deleted, "errors": errors}
+
     def delete_event_scope(self, event_id: str, delete_scope: str) -> None:
         """Delete a Planner OS event, recurring series, or this-and-future instances."""
 
