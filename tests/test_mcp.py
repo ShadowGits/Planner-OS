@@ -97,6 +97,7 @@ class PlannerMCPToolsTests(TestCase):
                     "add_dated_tasks",
                     "update_dated_task",
                     "delete_dated_task",
+                    "delete_dated_tasks",
                     "list_dated_tasks",
                     "import_plan",
                     "calendar_sync_today",

@@ -595,6 +595,72 @@ class PlannerMCPTools:
     def delete_dated_task(self, task_id: str) -> dict[str, Any]:
         return self._writer_result(self._writer().delete_dated_task(task_id), "Dated task deleted")
 
+    def delete_dated_tasks(self, task_ids: list[str]) -> dict[str, Any]:
+        """Delete many dated tasks in one backup and remove their calendar events."""
+
+        result = self._writer().delete_dated_tasks(task_ids)
+        payload = self._writer_result(result, "Dated tasks deleted")
+        if not result.success:
+            return payload
+
+        deleted_ids = list((result.metadata or {}).get("deleted", []))
+        missing = list((result.metadata or {}).get("missing", []))
+        calendar_deleted, calendar_errors = self._delete_linked_calendar_events(deleted_ids)
+
+        data = payload.setdefault("data", {})
+        data["deleted_tasks"] = deleted_ids
+        data["missing_tasks"] = missing
+        data["calendar_events_deleted"] = calendar_deleted
+        if calendar_errors:
+            data["calendar_errors"] = calendar_errors
+        return payload
+
+    def _delete_linked_calendar_events(self, task_ids: list[str]) -> tuple[int, list[str]]:
+        """Best-effort removal of the Google events linked to deleted dated tasks.
+
+        Calendar problems never fail the workbook delete; they are reported so
+        the caller can see what was left behind.
+        """
+
+        if not task_ids:
+            return 0, []
+        try:
+            ops = self._calendar_operations()
+        except Exception as error:
+            return 0, [f"calendar unavailable: {error}"]
+
+        block_by_external: dict[str, str] = {}
+        for task_id in task_ids:
+            block_id = f"dated-{task_id}"
+            try:
+                link = ops.links.active_for(block_id)
+            except Exception as error:
+                return 0, [f"link lookup failed: {error}"]
+            if link and link.get("external_id"):
+                block_by_external[str(link["external_id"])] = block_id
+        if not block_by_external:
+            return 0, []
+
+        try:
+            outcome = ops.client.batch_delete_events(list(block_by_external))
+        except Exception as error:
+            return 0, [f"calendar delete failed: {error}"]
+
+        remover = getattr(ops.links, "remove", None)
+        for external_id in outcome["deleted"]:
+            block_id = block_by_external.get(external_id)
+            if not block_id:
+                continue
+            try:
+                if remover is not None:
+                    remover(block_id, "google_calendar")
+                else:
+                    ops.links.deactivate(block_id, "google_calendar")
+            except Exception:
+                pass
+        errors = [f"{external_id}: {message}" for external_id, message in outcome["errors"].items()]
+        return len(outcome["deleted"]), errors
+
     def list_dated_tasks(self, task_date: str) -> dict[str, Any]:
         try:
             target = date.fromisoformat(task_date)

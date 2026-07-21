@@ -494,6 +494,55 @@ class Writer:
             constraints_considered=("exact dated task", "backup before mutation"),
         )
 
+    def delete_dated_tasks(self, task_ids: list[str]) -> WriterResult:
+        """Delete many exact-date task rows in a single backup."""
+
+        operation = "delete_dated_task_batch"
+        if not task_ids:
+            return self._failure(operation, "Dated task batch", ["At least one task id is required"])
+
+        # Index every dated task once instead of scanning the workbook per id.
+        tasks_by_id: dict[str, DatedTask] = {}
+        for month in self.engine.list_months():
+            for task in self.engine.list_dated_tasks(month):
+                tasks_by_id[task.id] = task
+
+        found: list[DatedTask] = []
+        missing: list[str] = []
+        seen_rows: set[tuple[str, int]] = set()
+        for task_id in task_ids:
+            task = tasks_by_id.get(task_id)
+            if task is None:
+                missing.append(task_id)
+                continue
+            row_key = (task.sheet_name, task.row_number)
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+            found.append(task)
+
+        if not found:
+            return self._failure(
+                operation,
+                "Dated task batch",
+                [f"No dated tasks found for: {', '.join(missing)}"],
+                metadata={"deleted": [], "missing": missing},
+            )
+
+        updates: list[CellUpdate] = []
+        for task in found:
+            updates.extend(self._clear_updates_for_item(task))
+
+        return self._with_backup(
+            operation=operation,
+            item_name="Dated task batch",
+            action=lambda: self.engine._write_cells_without_backup(updates),
+            updated_fields=("date", "title", "time_block", "category", "status", "notes"),
+            reason="Delete exact-date tasks in bulk through Semantic Writer",
+            constraints_considered=("exact dated tasks", "single backup before mutation"),
+            metadata={"deleted": [task.id for task in found], "missing": missing},
+        )
+
     def list_dated_tasks(
         self,
         task_date: date,

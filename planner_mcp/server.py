@@ -460,6 +460,13 @@ def delete_dated_task(task_id: str) -> dict:
 
 
 @mcp.tool()
+def delete_dated_tasks(task_ids: list) -> dict:
+    """Delete many workbook-backed exact-date tasks and their calendar events."""
+
+    return planner_tools.delete_dated_tasks(task_ids)
+
+
+@mcp.tool()
 def list_dated_tasks(date: str) -> dict:
     """List workbook tasks assigned to one exact date."""
 

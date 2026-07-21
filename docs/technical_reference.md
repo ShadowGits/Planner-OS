@@ -231,6 +231,7 @@ Day replanning currently supports today only. Bounded-session requests include
 | `add_dated_tasks` | `tasks` | Creates multiple exact-date workbook tasks with permanent IDs in a single operation. |
 | `update_dated_task` | `task_id`, `changes: object` | Updates an exact-date task by permanent ID; date moves retain identity. |
 | `delete_dated_task` | `task_id` | Deletes one exact-date task by permanent ID with backup. |
+| `delete_dated_tasks` | `task_ids` | Deletes many exact-date tasks in one backup and removes their linked calendar events. |
 | `list_dated_tasks` | `date` | Lists tasks stored for exactly one date. Read-only. |
 
 Optional dated-task fields are `preferred_daypart`, `start_time`, `end_time`,
