@@ -261,7 +261,7 @@ body {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  touch-action: pan-y;
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   transition: box-shadow 0.2s, transform 0.2s, opacity 0.3s;
