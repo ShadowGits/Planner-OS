@@ -22,9 +22,15 @@ class ExcelPlannerStore(WriterMixin, ReaderMixin, LayoutMixin):
         self.planner_path = Path(planner_path)
         self.backup_dir = Path(backup_dir)
         self._sheet_layout_cache: dict[str, SheetLayout] = {}
+        self._read_cache: Workbook | None = None
+        self._read_cache_key: tuple[int, int] | None = None
 
     def load_workbook(self) -> Workbook:
-        """Load the planner workbook with formatting preserved."""
+        """Load a fresh, mutable copy of the planner workbook for writing.
+
+        Writes always get their own workbook, never the shared read cache, so a
+        mutation in progress can never corrupt cached read state.
+        """
 
         if not self.planner_path.exists():
             raise FileNotFoundError(f"Planner not found: {self.planner_path}")
@@ -32,21 +38,45 @@ class ExcelPlannerStore(WriterMixin, ReaderMixin, LayoutMixin):
         return openpyxl_load_workbook(self.planner_path, data_only=False)
 
     def load_workbook_read_only(self) -> Workbook:
-        """Load the planner workbook for read-only parsing."""
+        """Return a parsed workbook for reads, parsing the file at most once.
+
+        A single tool call reads the workbook many times (months, dated tasks,
+        month plans...), and each read used to re-open and re-parse the whole
+        .xlsx from disk — the dominant source of latency. We parse once and
+        reuse the result until the file actually changes on disk or a write
+        invalidates the cache.
+
+        A normal (non-streaming) workbook is cached on purpose: repeated random
+        cell reads stay cheap, and openpyxl's Workbook.close() is a no-op for
+        normal workbooks, so the readers' existing close() calls leave the cache
+        intact. Reads never mutate the workbook, so sharing one instance across
+        reads is safe.
+        """
 
         if not self.planner_path.exists():
             raise FileNotFoundError(f"Planner not found: {self.planner_path}")
 
-        return openpyxl_load_workbook(
-            self.planner_path,
-            read_only=True,
-            data_only=False,
-        )
+        stat = self.planner_path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+        if self._read_cache is not None and self._read_cache_key == key:
+            return self._read_cache
+
+        workbook = openpyxl_load_workbook(self.planner_path, data_only=False)
+        self._read_cache = workbook
+        self._read_cache_key = key
+        return workbook
+
+    def _invalidate_read_cache(self) -> None:
+        """Drop the cached read workbook after the file changes underneath it."""
+
+        self._read_cache = None
+        self._read_cache_key = None
 
     def save_workbook(self, workbook: Workbook) -> None:
         """Save a workbook back to the planner path."""
 
         workbook.save(self.planner_path)
+        self._invalidate_read_cache()
 
     def create_backup(self) -> Path:
         """Create a collision-safe timestamped copy of the planner workbook."""
@@ -71,6 +101,7 @@ class ExcelPlannerStore(WriterMixin, ReaderMixin, LayoutMixin):
         """Restore the planner workbook from a backup copy."""
 
         copy2(Path(backup_path), self.planner_path)
+        self._invalidate_read_cache()
 
     def read_cell(self, sheet: str, cell: str) -> Any:
         """Read a value from a worksheet cell."""
