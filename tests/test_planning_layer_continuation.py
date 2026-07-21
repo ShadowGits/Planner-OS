@@ -101,6 +101,32 @@ class DatedTaskTests(TestCase):
             self.assertEqual(len(writer.list_dated_tasks(date(2026, 7, 10))), 1)
             self.assertEqual(len(writer.list_dated_tasks(date(2026, 7, 11))), 1)
 
+    def test_batch_add_ids_are_distinct_and_addressable(self) -> None:
+        with TemporaryDirectory() as directory:
+            _, _, writer, _, _ = services(Path(directory))
+            result = writer.add_dated_tasks([
+                {"date": TARGET, "title": "Task A", "estimated_minutes": 30},
+                {"date": TARGET, "title": "Task B", "estimated_minutes": 30},
+                {"date": TARGET, "title": "Task C", "estimated_minutes": 30},
+            ])
+            self.assertTrue(result.success, result.errors)
+
+            tasks = writer.list_dated_tasks(TARGET)
+            ids = {task.id for task in tasks}
+            # Every task in one batch must get its own findable id, or later
+            # updates/deletes that address a task by id would break.
+            self.assertEqual(len(ids), 3)
+            self.assertEqual({task.title for task in tasks}, {"Task A", "Task B", "Task C"})
+
+            by_title = {task.title: task for task in tasks}
+            moved = writer.update_dated_task(by_title["Task B"].id, title="Task B2")
+            self.assertTrue(moved.success, moved.errors)
+            deleted = writer.delete_dated_task(by_title["Task C"].id)
+            self.assertTrue(deleted.success, deleted.errors)
+
+            remaining = {task.title for task in writer.list_dated_tasks(TARGET)}
+            self.assertEqual(remaining, {"Task A", "Task B2"})
+
     def test_overwrite_preserves_manual_dated_task(self) -> None:
         with TemporaryDirectory() as directory:
             _, _, writer, _, _ = services(Path(directory))

@@ -185,12 +185,28 @@ class Writer:
         payloads: list[dict[str, Any]] = []
         skipped: list[str] = []
         target_weeks = {int(task["week"]) for task in tasks}
+        # Parse the month once. The batch does not mutate the workbook until the
+        # end, so checking existence per task by re-reading the file just parses
+        # the same workbook again and again.
+        month_plan = self.engine.get_month_plan(month)
+        tasks_by_week_name: dict[str, set[str]] = {}
+        for section in month_plan.week_sections:
+            tasks_by_week_name.setdefault(section.name.casefold(), set()).update(
+                existing.name.casefold() for existing in section.tasks
+            )
+
+        def _exists_in_week(week: int, task_name: str) -> bool:
+            key = f"WEEK {week}".casefold()
+            if key not in tasks_by_week_name:
+                raise ValueError(f"Unknown week {week} in month {month}")
+            return task_name.casefold() in tasks_by_week_name[key]
+
         for task in tasks:
             name = self._required_text(task.get("task"), "task")
             week = int(task["week"])
             if not name:
                 return self._failure(operation, "Approved plan", ["task is required"])
-            if self._task_exists_in_week(month, week, name):
+            if _exists_in_week(week, name):
                 if not overwrite_existing:
                     skipped.append(name)
                     continue
@@ -213,7 +229,6 @@ class Writer:
         names = [payload["task"] for payload in payloads]
         clear_updates: list[CellUpdate] = []
         if overwrite_existing:
-            month_plan = self.engine.get_month_plan(month)
             for week_number in target_weeks:
                 if week_number < 1 or week_number > len(month_plan.week_sections):
                     return self._failure(
@@ -314,6 +329,9 @@ class Writer:
             return self._failure(operation, "Dated task batch", ["At least one dated task is required"])
         payloads_by_month: dict[str, list[dict[str, Any]]] = {}
         titles: list[str] = []
+        # Parse each month's existing tasks once instead of re-reading the whole
+        # workbook from disk for every task in the batch.
+        existing_by_month: dict[str, list[DatedTask]] = {}
         try:
             for item in tasks:
                 task_date = item.get("date")
@@ -335,10 +353,13 @@ class Writer:
                     task_id=item.get("id") or item.get("task_id") or self._new_dated_task_id(),
                 )
                 month = task_date.strftime("%b %Y")
+                if month not in existing_by_month:
+                    existing_by_month[month] = self.engine.list_dated_tasks(month)
                 duplicates = [
                     existing
-                    for existing in self.engine.list_dated_tasks(month, task_date)
-                    if existing.title.casefold() == payload["title"].casefold()
+                    for existing in existing_by_month[month]
+                    if existing.date == task_date
+                    and existing.title.casefold() == payload["title"].casefold()
                 ]
                 if duplicates and not (
                     overwrite_generated
@@ -360,7 +381,7 @@ class Writer:
             seen_rows: set[tuple[str, int]] = set()
             for month, payloads in payloads_by_month.items():
                 target_dates = {payload["date"] for payload in payloads}
-                for existing in self.engine.list_dated_tasks(month):
+                for existing in existing_by_month.get(month) or self.engine.list_dated_tasks(month):
                     row_key = (existing.sheet_name, existing.row_number)
                     in_overwrite_range = (
                         overwrite_start is not None

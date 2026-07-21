@@ -106,15 +106,18 @@ class GoogleCalendarOperations:
         expected = {item["external_id"] for item in preview.events}
         if current != expected:
             raise ValueError("Calendar changed since preview; create a new preview")
-        deleted, errors = 0, []
-        for item in preview.events:
-            result = self.delete_event(item["external_id"])
-            if result["success"]:
-                deleted += 1
-            else:
-                errors.extend(result["errors"])
+        # The preview already carries each event's planner block id and only
+        # holds Planner OS-owned events, so we batch-delete straight from it
+        # instead of re-fetching every event one at a time.
+        block_by_external = {item["external_id"]: item.get("planner_block_id") for item in preview.events}
+        outcome = self.client.batch_delete_events(list(block_by_external))
+        for external_id in outcome["deleted"]:
+            block_id = block_by_external.get(external_id)
+            if block_id:
+                self.links.deactivate(block_id, "google_calendar")
+        errors = [f"{external_id}: {message}" for external_id, message in outcome["errors"].items()]
         self._mark_applied(preview_id)
-        return {"success": not errors, "deleted": deleted, "errors": errors}
+        return {"success": not errors, "deleted": len(outcome["deleted"]), "errors": errors}
 
     def reconcile_range(self, blocks: list[ScheduledBlock], start: date, end: date):
         return self.target.reconcile(blocks, start, end).to_dict()
