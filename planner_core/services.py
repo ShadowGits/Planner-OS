@@ -7,7 +7,7 @@ plan, how to phrase advice) stays with the AI client calling the MCP tools.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -43,6 +43,14 @@ def _parse_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value
     return date.fromisoformat(str(value)[:10])
+
+
+def _parse_time(value: Any) -> time | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, time):
+        return value
+    return time.fromisoformat(str(value))
 
 
 def _local_today(timezone: str) -> date:
@@ -160,6 +168,7 @@ class TaskService:
         milestone_id: str | None = None,
         due_date: str | None = None,
         scheduled_date: str | None = None,
+        start_time: str | None = None,
         priority: str = "medium",
         estimated_minutes: int | None = None,
         recurrence_key: str | None = None,
@@ -171,6 +180,7 @@ class TaskService:
             raise PlannerCoreError(f"Invalid priority: {priority}")
         _parse_date(due_date)
         _parse_date(scheduled_date)
+        _parse_time(start_time)
         row = self.repository.insert_row(
             "planner_tasks",
             {
@@ -179,6 +189,7 @@ class TaskService:
                 "milestone_id": milestone_id,
                 "due_date": due_date,
                 "scheduled_date": scheduled_date,
+                "start_time": start_time,
                 "priority": priority,
                 "estimated_minutes": estimated_minutes,
                 "recurrence_key": recurrence_key,
@@ -196,6 +207,7 @@ class TaskService:
             "priority",
             "due_date",
             "scheduled_date",
+            "start_time",
             "estimated_minutes",
             "recurrence_key",
             "notes",
@@ -206,6 +218,8 @@ class TaskService:
         status = payload.get("status")
         if status is not None and status not in TASK_STATUSES:
             raise PlannerCoreError(f"Invalid task status: {status}")
+        if "start_time" in payload:
+            _parse_time(payload["start_time"])
         row = self.repository.update_row("planner_tasks", task_id, payload)
         return _envelope(True, f"Task updated: {row['title']}", {"task": row})
 
@@ -338,6 +352,65 @@ class TaskService:
             f"{done_count} of {len(items)} done today",
             {
                 "date": today.isoformat(),
+                "items": items,
+                "done_count": done_count,
+                "total_count": len(items),
+            },
+        )
+
+    def reopen_task(self, task_id: str) -> dict[str, Any]:
+        """Un-tick a task: back to todo and drop its completion rows for today,
+        so checklists and metrics agree with the visible state."""
+        task = self.repository.get_row("planner_tasks", task_id)
+        if task is None:
+            raise PlannerCoreError(f"Task was not found: {task_id}")
+        row = self.repository.update_row(
+            "planner_tasks", task_id, {"status": "todo", "completed_at": None}
+        )
+        today = _local_today(self.timezone)
+        for completion in self.repository.list_rows("task_completions", {"task_id": task_id}):
+            if _parse_date(completion.get("completed_on")) == today:
+                self.repository.delete_row("task_completions", str(completion["id"]))
+        return _envelope(True, f"Reopened: {row['title']}", {"task": row})
+
+    def day_view(self, on_date: str | None = None) -> dict[str, Any]:
+        """Tasks belonging to one date, shaped for a timeline: tasks with a
+        start_time carry their slot, the rest form the unscheduled tray."""
+        target = _parse_date(on_date) or _local_today(self.timezone)
+        items: list[dict[str, Any]] = []
+        for row in self.repository.list_rows("planner_tasks"):
+            planned = _parse_date(row.get("scheduled_date"))
+            due = _parse_date(row.get("due_date"))
+            if planned != target and due != target:
+                continue
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "status": row["status"],
+                    "done": row["status"] in CLOSED_TASK_STATUSES,
+                    "start_time": row.get("start_time"),
+                    "estimated_minutes": row.get("estimated_minutes"),
+                    "priority": row.get("priority"),
+                    "due_date": row.get("due_date"),
+                    "scheduled_date": row.get("scheduled_date"),
+                    "notes": row.get("notes"),
+                    "project_id": row.get("project_id"),
+                }
+            )
+        items.sort(
+            key=lambda item: (
+                item["start_time"] is None,
+                str(item["start_time"] or ""),
+                item["title"],
+            )
+        )
+        done_count = len([item for item in items if item["done"]])
+        return _envelope(
+            True,
+            f"{done_count} of {len(items)} done on {target.isoformat()}",
+            {
+                "date": target.isoformat(),
                 "items": items,
                 "done_count": done_count,
                 "total_count": len(items),
