@@ -71,6 +71,45 @@ class EmptyScheduler:
         return DailyPlan(target_date, [], [])
 
 
+class BulkDeleteToolTests(TestCase):
+    def test_delete_dated_tasks_tool_removes_workbook_rows(self) -> None:
+        from planner_mcp import PlannerMCPConfig, PlannerMCPTools
+
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            planner_path = tmp_path / "planner.xlsx"
+            dated_workbook(planner_path)
+
+            tools = PlannerMCPTools(
+                PlannerMCPConfig(
+                    planner_path=planner_path,
+                    backup_dir=tmp_path / "backups",
+                    rules_path=Path(__file__).resolve().parents[1] / "config" / "rules.yaml",
+                    month="Jul 2026",
+                )
+            )
+            tools.add_dated_tasks([
+                {"date": TARGET.isoformat(), "title": "Task A", "estimated_minutes": 30},
+                {"date": TARGET.isoformat(), "title": "Task B", "estimated_minutes": 30},
+            ])
+            listed = tools.list_dated_tasks(TARGET.isoformat())["data"]["tasks"]
+            by_title = {task["title"]: task["id"] for task in listed}
+            target_ids = [by_title["Task A"], by_title["Task B"]]
+
+            result = tools.delete_dated_tasks(target_ids + ["dt_missing"])
+
+            self.assertTrue(result["success"])
+            self.assertEqual(set(result["data"]["deleted_tasks"]), set(target_ids))
+            self.assertEqual(result["data"]["missing_tasks"], ["dt_missing"])
+            # No calendar links exist, so the cascade is a clean no-op.
+            self.assertEqual(result["data"]["calendar_events_deleted"], 0)
+            self.assertNotIn("calendar_errors", result["data"])
+
+            remaining = {task["title"] for task in tools.list_dated_tasks(TARGET.isoformat())["data"]["tasks"]}
+            self.assertNotIn("Task A", remaining)
+            self.assertNotIn("Task B", remaining)
+
+
 class DatedTaskTests(TestCase):
     def test_add_list_update_delete_exact_date(self) -> None:
         with TemporaryDirectory() as directory:
@@ -126,6 +165,39 @@ class DatedTaskTests(TestCase):
 
             remaining = {task.title for task in writer.list_dated_tasks(TARGET)}
             self.assertEqual(remaining, {"Task A", "Task B2"})
+
+    def test_bulk_delete_removes_named_tasks_in_one_backup(self) -> None:
+        with TemporaryDirectory() as directory:
+            _, _, writer, _, _ = services(Path(directory))
+            writer.add_dated_tasks([
+                {"date": TARGET, "title": "Task A", "estimated_minutes": 30},
+                {"date": TARGET, "title": "Task B", "estimated_minutes": 30},
+                {"date": TARGET, "title": "Task C", "estimated_minutes": 30},
+            ])
+            by_title = {task.title: task for task in writer.list_dated_tasks(TARGET)}
+
+            result = writer.delete_dated_tasks([
+                by_title["Task A"].id,
+                by_title["Task C"].id,
+                "dt_does_not_exist",
+            ])
+
+            self.assertTrue(result.success, result.errors)
+            self.assertEqual(set(result.metadata["deleted"]),
+                             {by_title["Task A"].id, by_title["Task C"].id})
+            self.assertEqual(result.metadata["missing"], ["dt_does_not_exist"])
+            self.assertTrue(result.backup_path)  # single backup for the whole batch
+            self.assertEqual({task.title for task in writer.list_dated_tasks(TARGET)}, {"Task B"})
+
+    def test_bulk_delete_with_no_matches_fails_without_touching_workbook(self) -> None:
+        with TemporaryDirectory() as directory:
+            _, _, writer, _, _ = services(Path(directory))
+            writer.add_dated_task(TARGET, "Keep me", 30)
+
+            result = writer.delete_dated_tasks(["dt_nope"])
+
+            self.assertFalse(result.success)
+            self.assertEqual({task.title for task in writer.list_dated_tasks(TARGET)}, {"Keep me"})
 
     def test_overwrite_preserves_manual_dated_task(self) -> None:
         with TemporaryDirectory() as directory:

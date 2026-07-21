@@ -61,7 +61,7 @@ def test_planner_context_is_immutable_and_validated(tmp_path) -> None:
 def test_registry_contains_all_92_tools_with_complete_policy() -> None:
     registry = build_tool_registry(FakeTools())
 
-    assert len(registry.list()) == 92
+    assert len(registry.list()) == 93
     assert registry.get("validate").policy.effect == EffectType.READ
     assert registry.get("apply_week_plan").policy.confirmation == ConfirmationPolicy.PREVIEW_REQUIRED
     assert registry.get("apple_calendar_status").policy.cloud_status == CloudStatus.DISABLED
@@ -73,7 +73,7 @@ def test_registry_binds_all_tools_to_real_local_adapter_without_io(tmp_path) -> 
 
     registry = build_tool_registry(tools)
 
-    assert len(registry.list()) == 92
+    assert len(registry.list()) == 93
 
 
 def test_registry_rejects_unknown_invalid_and_cloud_disabled_calls() -> None:
