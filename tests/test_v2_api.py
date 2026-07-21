@@ -26,6 +26,7 @@ TABLE_DEFAULTS = {
         "milestone_id": None,
         "due_date": None,
         "scheduled_date": None,
+        "start_time": None,
         "estimated_minutes": None,
         "recurrence_key": None,
         "depends_on": None,

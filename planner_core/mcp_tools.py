@@ -92,12 +92,13 @@ def register_core_tools(server: Any) -> None:
         milestone_id: str | None = None,
         due_date: str | None = None,
         scheduled_date: str | None = None,
+        start_time: str | None = None,
         priority: str = "medium",
         estimated_minutes: int | None = None,
         recurrence_key: str | None = None,
         notes: str | None = None,
     ) -> dict:
-        """Create a task, optionally under a project/milestone, with due/scheduled YYYY-MM-DD dates and a recurrence_key for habit streaks."""
+        """Create a task, optionally under a project/milestone, with due/scheduled YYYY-MM-DD dates, an HH:MM start_time for the day timeline, and a recurrence_key for habit streaks."""
         tasks, _, _, _ = _core_for_current_user()
         return tasks.create_task(
             title,
@@ -105,6 +106,7 @@ def register_core_tools(server: Any) -> None:
             milestone_id=milestone_id,
             due_date=due_date,
             scheduled_date=scheduled_date,
+            start_time=start_time,
             priority=priority,
             estimated_minutes=estimated_minutes,
             recurrence_key=recurrence_key,
@@ -113,7 +115,7 @@ def register_core_tools(server: Any) -> None:
 
     @server.tool(name="core_update_task")
     async def core_update_task(task_id: str, updates: dict) -> dict:
-        """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, project_id, milestone_id, notes."""
+        """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes."""
         tasks, _, _, _ = _core_for_current_user()
         return tasks.update_task(task_id, updates)
 

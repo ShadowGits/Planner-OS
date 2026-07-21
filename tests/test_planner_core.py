@@ -28,6 +28,7 @@ TABLE_DEFAULTS = {
         "milestone_id": None,
         "due_date": None,
         "scheduled_date": None,
+        "start_time": None,
         "estimated_minutes": None,
         "recurrence_key": None,
         "depends_on": None,
@@ -222,7 +223,8 @@ def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
     today = _today().isoformat()
     tasks.create_task("Write SOP", scheduled_date=today, due_date=today)
 
-    morning = datetime(2026, 7, 21, 8, 0, tzinfo=ZoneInfo(TZ))
+    local_today = _today()
+    morning = datetime(local_today.year, local_today.month, local_today.day, 8, 0, tzinfo=ZoneInfo(TZ))
     due = reminders.due_reminders(morning)
     kinds = {item["kind"] for item in due}
     assert "morning_brief" in kinds and "deadline_alert" in kinds
@@ -231,7 +233,7 @@ def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
         reminders.record_sent(item["kind"], "telegram", {"message": item["message"]})
     assert reminders.due_reminders(morning) == []
 
-    evening = datetime(2026, 7, 21, 20, 0, tzinfo=ZoneInfo(TZ))
+    evening = datetime(local_today.year, local_today.month, local_today.day, 20, 0, tzinfo=ZoneInfo(TZ))
     nudge = reminders.due_reminders(evening)
     assert [item["kind"] for item in nudge] == ["evening_nudge"]
     assert "Write SOP" in nudge[0]["message"]
@@ -242,7 +244,8 @@ def test_evening_nudge_skipped_after_a_completion(services) -> None:
     created = tasks.create_task("Anything", scheduled_date=_today().isoformat())
     tasks.complete_task(created["data"]["task"]["id"])
 
-    evening = datetime(2026, 7, 21, 20, 0, tzinfo=ZoneInfo(TZ))
+    local_today = _today()
+    evening = datetime(local_today.year, local_today.month, local_today.day, 20, 0, tzinfo=ZoneInfo(TZ))
     assert [item["kind"] for item in reminders.due_reminders(evening)] == []
 
 
