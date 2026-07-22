@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from adapters.supabase import SupabaseCalendarConnectionRepository, SupabaseWorkbookObjectStore
+from adapters.supabase import SupabaseCalendarConnectionRepository
 from planner_api.config import load_local_environment
 from mcp.server.auth.provider import AuthorizationParams
 from planner_api.mcp import create_cloud_mcp
@@ -28,27 +25,14 @@ from planner_platform.auth import (
     SupabaseJWTVerifier,
     bearer_token,
 )
-from planner_platform.context import PlannerContext
-from planner_platform.function_manifest import build_manifest
-from planner_platform.policies import CloudStatus, policy_for
-from planner_platform.tool_registry import ToolRegistryError
 
 
 logger = logging.getLogger(__name__)
 
 
-class ToolCall(BaseModel):
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-
-class VersionedToolCall(ToolCall):
-    workspace_id: UUID
-
-
 class WorkspaceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     timezone: str = Field(default="UTC", min_length=1, max_length=100)
-    workbook_base64: str = Field(min_length=1)
 
 
 def envelope(
@@ -151,51 +135,6 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         tool_names = sorted(cloud_mcp._tool_manager._tools.keys())
         return envelope(True, "MCP server active", data={"tool_count": tool_count, "tools": tool_names})
 
-    @api.get("/api/tools")
-    @api.get("/api/v1/tools")
-    def list_tools(user=Depends(current_user)):
-        del user
-        tools = []
-        for record in build_manifest()["tools"]:
-            policy = policy_for(record)
-            tools.append(
-                {
-                    "name": record["name"],
-                    "description": record["description"],
-                    "parameters": record["parameters"],
-                    "effect": policy.effect.value,
-                    "confirmation": policy.confirmation.value,
-                    "available": policy.cloud_status == CloudStatus.CANDIDATE,
-                    "unavailable_reason": policy.cloud_reason if policy.cloud_status != CloudStatus.CANDIDATE else None,
-                }
-            )
-        return envelope(True, "Planner tools listed", data={"tools": tools, "count": len(tools)})
-
-    @api.get("/api/v1/tools/{tool_name}")
-    def get_tool(tool_name: str, user=Depends(current_user)):
-        del user
-        record = next((item for item in build_manifest()["tools"] if item["name"] == tool_name), None)
-        if record is None:
-            raise _api_error(404, "TOOL_NOT_REGISTERED", "Planner tool was not found")
-        policy = policy_for(record)
-        return envelope(
-            True,
-            "Planner tool described",
-            data={
-                "tool": {
-                    "name": record["name"],
-                    "description": record["description"],
-                    "parameters": record["parameters"],
-                    "effect": policy.effect.value,
-                    "confirmation": policy.confirmation.value,
-                    "available": policy.cloud_status == CloudStatus.CANDIDATE,
-                    "unavailable_reason": (
-                        policy.cloud_reason if policy.cloud_status != CloudStatus.CANDIDATE else None
-                    ),
-                }
-            },
-        )
-
     @api.get("/api/workspaces")
     def list_workspaces(user=Depends(current_user)):
         records = cloud.workspaces(user).list_owned(user.user_id)
@@ -204,24 +143,8 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     @api.post("/api/workspaces")
     def create_workspace(body: WorkspaceCreate, user=Depends(current_user)):
         try:
-            content = base64.b64decode(body.workbook_base64, validate=True)
-            if not content.startswith(b"PK"):
-                raise ValueError("Workbook must be an xlsx file")
             repository = cloud.workspaces(user)
             workspace = repository.create(user.user_id, name=body.name, timezone=body.timezone)
-            context = PlannerContext(
-                user_id=user.user_id,
-                workspace_id=workspace.id,
-                operation_id=uuid4(),
-                workbook_path=Path("upload.xlsx"),
-                timezone=workspace.timezone,
-                execution_target=workspace.active_execution_target,
-                source_revision=workspace.revision,
-            )
-            with TemporaryDirectory(prefix="planner-upload-") as directory:
-                source = Path(directory) / "upload.xlsx"
-                source.write_bytes(content)
-                SupabaseWorkbookObjectStore(cloud.user_client(user)).upload_current(context, source)
             workspace = repository.activate(user.user_id, workspace.id)
             return envelope(True, "Planner workspace created", data={"workspace": _workspace(workspace)})
         except Exception as error:
@@ -234,46 +157,6 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             return envelope(True, "Planner workspace activated", data={"workspace": _workspace(workspace)})
         except ValueError as error:
             raise _api_error(404, "WORKSPACE_NOT_FOUND", str(error)) from error
-
-    @api.get("/api/workspaces/{workspace_id}/workbook")
-    def download_workbook(workspace_id: UUID, user=Depends(current_user)):
-        try:
-            context = cloud.context(user, workspace_id)
-            content = cloud.user_client(user).storage_download(
-                "planner-workbooks",
-                f"{context.user_id}/{context.workspace_id}/current.xlsx",
-            )
-            return Response(
-                content=content,
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": 'attachment; filename="planner-os.xlsx"'},
-            )
-        except ValueError as error:
-            raise _api_error(404, "WORKSPACE_NOT_FOUND", "Planner workspace was not found") from error
-
-    @api.post("/api/workspaces/{workspace_id}/tools/{tool_name}")
-    def invoke_tool(
-        workspace_id: UUID,
-        tool_name: str,
-        body: ToolCall,
-        user=Depends(current_user),
-    ):
-        try:
-            reserved = {"user_id", "workspace_id", "operation_id", "workbook_path", "access_token"}
-            supplied = sorted(reserved.intersection(body.arguments))
-            if supplied:
-                raise ToolRegistryError(f"Authoritative request fields are not accepted: {supplied}")
-            return cloud.execute(user, workspace_id, tool_name, body.arguments)
-        except ToolRegistryError as error:
-            raise _api_error(400, getattr(error, "code", "TOOL_REQUEST_INVALID"), str(error)) from error
-        except ValueError as error:
-            raise _api_error(404, "WORKSPACE_OR_RESOURCE_NOT_FOUND", str(error)) from error
-        except Exception as error:
-            raise _api_error(409, "PLANNER_OPERATION_CONFLICT", "Planner operation could not be completed") from error
-
-    @api.post("/api/v1/tools/{tool_name}/invoke")
-    def invoke_versioned_tool(tool_name: str, body: VersionedToolCall, user=Depends(current_user)):
-        return invoke_tool(body.workspace_id, tool_name, ToolCall(arguments=body.arguments), user)
 
     @api.post("/api/workspaces/{workspace_id}/google-calendar/connect")
     def connect_google(workspace_id: UUID, user=Depends(current_user)):

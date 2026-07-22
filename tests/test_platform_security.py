@@ -22,7 +22,6 @@ from planner_platform.google_oauth import (
     GoogleOAuthService,
     SupabaseGoogleCalendarClientFactory,
 )
-from planner_platform.workbook_session import WorkbookSession
 
 
 class FakeGateway:
@@ -76,143 +75,6 @@ def test_supabase_jwt_rejects_invalid_or_non_user_tokens() -> None:
 
     with pytest.raises(AuthenticationError):
         verifier.verify("bad-token")
-
-
-class SessionWorkspaces:
-    def __init__(self, workspace):
-        self.workspace = workspace
-        self.calls = []
-
-    def get_owned(self, user_id, workspace_id):
-        self.calls.append(("get_owned", user_id, workspace_id))
-        return self.workspace if self.workspace.user_id == user_id and self.workspace.id == workspace_id else None
-
-    def get_active(self, user_id):
-        return self.workspace if self.workspace.user_id == user_id else None
-
-    def acquire_lock(self, context, ttl_seconds=60):
-        self.calls.append(("acquire", context.operation_id, ttl_seconds))
-        return self.workspace
-
-    def release_lock(self, context):
-        self.calls.append(("release", context.operation_id))
-        return True
-
-    def advance_revision(self, context, checksum):
-        self.calls.append(("advance", context.source_revision, checksum))
-        return self.workspace
-
-
-class SessionStorage:
-    def __init__(self, content=b"original-workbook"):
-        self.content = content
-        self.calls = []
-
-    def download_current(self, context, destination_dir):
-        path = destination_dir / "current.xlsx"
-        path.write_bytes(self.content)
-        self.calls.append(("download", context.user_id, context.workspace_id))
-        return path
-
-    def download_rules(self, context, destination_dir):
-        return None
-
-    def backup_current(self, context, checksum):
-        self.calls.append(("backup", checksum))
-        return "backup.xlsx"
-
-    def upload_current(self, context, source):
-        self.calls.append(("upload", source.read_bytes()))
-
-
-class SessionOperations:
-    def __init__(self):
-        self.calls = []
-
-    def record(self, context, *, tool_name, status, result=None):
-        self.calls.append((tool_name, status, result))
-
-
-class SessionTools:
-    def __init__(self, context, mutate):
-        self.context = context
-        self.mutate = mutate
-
-    def __getattr__(self, name):
-        def call(*args):
-            if self.mutate and name == "add_task":
-                self.context.workbook_path.write_bytes(b"changed-workbook")
-            return {"success": True, "tool": name, "args": list(args)}
-
-        return call
-
-
-class SessionToolsFactory:
-    def __init__(self, context, mutate):
-        self.context = context
-        self.mutate = mutate
-
-    def create(self, context):
-        assert context.user_id == self.context.user_id
-        return SessionTools(context, self.mutate)
-
-
-def _workspace(user_id, workspace_id):
-    return SimpleNamespace(
-        id=workspace_id,
-        user_id=user_id,
-        timezone="Asia/Kolkata",
-        active_execution_target="none",
-        revision=4,
-    )
-
-
-def _session(tmp_path, *, mutate):
-    user_id, workspace_id = uuid4(), uuid4()
-    workspace = _workspace(user_id, workspace_id)
-    workspaces = SessionWorkspaces(workspace)
-    storage = SessionStorage()
-    operations = SessionOperations()
-
-    def builder(root, context):
-        del root
-        return SessionToolsFactory(context, mutate)
-
-    return (
-        WorkbookSession(
-            user_id=user_id,
-            workspace_id=workspace_id,
-            workspaces=workspaces,
-            storage=storage,
-            operations=operations,
-            tools_factory_builder=builder,
-        ),
-        workspaces,
-        storage,
-        operations,
-    )
-
-
-def test_read_session_does_not_lock_backup_or_upload(tmp_path) -> None:
-    session, workspaces, storage, operations = _session(tmp_path, mutate=False)
-
-    result = session.execute("validate")
-
-    assert result["success"] is True
-    assert [call[0] for call in storage.calls] == ["download"]
-    assert not any(call[0] in {"acquire", "release", "advance"} for call in workspaces.calls)
-    assert [call[1] for call in operations.calls] == ["running", "succeeded"]
-
-
-def test_workbook_write_locks_backs_up_uploads_and_advances_revision(tmp_path) -> None:
-    session, workspaces, storage, operations = _session(tmp_path, mutate=True)
-
-    result = session.execute("add_task", {"task": "Read", "week": 1})
-
-    assert result["source_revision"] == 5
-    assert [call[0] for call in storage.calls] == ["download", "backup", "upload"]
-    assert [call[0] for call in workspaces.calls] == ["get_owned", "acquire", "advance", "release"]
-    assert operations.calls[-1][1] == "succeeded"
 
 
 def test_credential_cipher_is_tenant_bound_and_authenticated(tmp_path) -> None:
@@ -342,7 +204,6 @@ class FakeRuntime:
     def __init__(self, user_id, workspace_id):
         self.user_id = user_id
         self.workspace_id = workspace_id
-        self.execute_calls = []
 
     def workspaces(self, user):
         assert user.user_id == self.user_id
@@ -356,47 +217,17 @@ class FakeRuntime:
         )
         return SimpleNamespace(list_owned=lambda _: [record])
 
-    def execute(self, user, workspace_id, tool_name, arguments):
-        self.execute_calls.append((user.user_id, workspace_id, tool_name, arguments))
-        return {"success": True, "message": "done", "data": {}}
 
-
-def test_api_requires_bearer_auth_and_never_accepts_client_user_id() -> None:
+def test_api_requires_bearer_auth_for_workspace_listing() -> None:
     user_id, workspace_id = uuid4(), uuid4()
     runtime = FakeRuntime(user_id, workspace_id)
     client = TestClient(create_app(runtime=runtime, verifier=FakeVerifier(user_id)))
 
     assert client.get("/api/workspaces").status_code == 401
-    response = client.post(
-        f"/api/workspaces/{workspace_id}/tools/validate",
-        headers={"Authorization": "Bearer valid-token"},
-        json={"arguments": {}},
-    )
-    injected = client.post(
-        f"/api/workspaces/{workspace_id}/tools/validate",
-        headers={"Authorization": "Bearer valid-token"},
-        json={"arguments": {"user_id": str(uuid4())}},
-    )
+    response = client.get("/api/workspaces", headers={"Authorization": "Bearer valid-token"})
 
     assert response.status_code == 200
-    assert runtime.execute_calls[0][0] == user_id
-    assert injected.status_code == 400
-    assert injected.json()["errors"] == ["TOOL_REGISTRY_ERROR"]
-    assert len(runtime.execute_calls) == 1
-
-
-def test_api_tool_catalog_matches_92_tool_manifest_and_disables_apple_cloud_tools() -> None:
-    user_id, workspace_id = uuid4(), uuid4()
-    client = TestClient(create_app(runtime=FakeRuntime(user_id, workspace_id), verifier=FakeVerifier(user_id)))
-
-    response = client.get("/api/tools", headers={"Authorization": "Bearer valid-token"})
-    tools = response.json()["data"]["tools"]
-
-    assert response.status_code == 200
-    assert len(tools) == 81
-    assert next(item for item in tools if item["name"] == "validate")["available"] is True
-    schema = client.get("/openapi.json").json()
-    assert f"/api/workspaces/{{workspace_id}}/tools/{{tool_name}}" in schema["paths"]
+    assert response.json()["data"]["workspaces"][0]["id"] == str(workspace_id)
 
 
 def test_stage_5_migration_limits_oauth_state_consumer_to_service_role() -> None:

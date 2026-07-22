@@ -19,14 +19,11 @@ MCP_USER_ID   – UUID of the Planner OS owner whose workspace Claude should use
 
 from __future__ import annotations
 
-import ast
 import hashlib
-import inspect
 import os
 import secrets
 import time
 from typing import Any
-from uuid import UUID
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -39,22 +36,6 @@ from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from planner_platform.function_manifest import build_manifest
-from planner_platform.policies import CloudStatus, policy_for
-
-
-_ANNOTATIONS = {
-    None: Any,
-    "bool | None": bool | None,
-    "dict": dict,
-    "dict | None": dict | None,
-    "int": int,
-    "list[dict]": list[dict],
-    "list[str]": list[str],
-    "object": object,
-    "str": str,
-    "str | None": str | None,
-}
 
 ACCESS_TOKEN_TTL = 3600
 REFRESH_TOKEN_TTL = 86400 * 30
@@ -292,8 +273,8 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any, ApiKeyOAuthProvider]:
         "Planner OS",
         instructions=(
             "You are connected to Planner OS — a personal planning engine. "
-            "Use the available tools to read, plan, and modify the user's active workspace. "
-            "Preview destructive changes before applying them."
+            "Use the core tools to read, plan, and modify the user's tasks, "
+            "projects, and metrics in the active workspace."
         ),
         website_url=public_url,
         auth_server_provider=oauth_provider,
@@ -309,79 +290,8 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any, ApiKeyOAuthProvider]:
         host="0.0.0.0",
     )
 
-    for record in build_manifest()["tools"]:
-        policy = policy_for(record)
-        if policy.cloud_status != CloudStatus.CANDIDATE:
-            continue
-        handler = _tool_handler(runtime, record)
-        server.add_tool(
-            handler,
-            name=record["name"],
-            description=record["description"],
-            meta={
-                "effect": policy.effect.value,
-                "confirmation": policy.confirmation.value,
-            },
-        )
-
     from planner_core.mcp_tools import register_core_tools
 
     register_core_tools(server)
 
     return server, server.streamable_http_app(), oauth_provider
-
-
-def _tool_handler(runtime, record):
-    """Build a tool handler that runs as the authenticated user."""
-
-    async def invoke(**arguments):
-        from mcp.server.auth.middleware.auth_context import get_access_token
-
-        token = get_access_token()
-        if not token or not token.subject:
-            raise ValueError(
-                "Unauthorized: missing or invalid credentials. "
-                "Re-authorize the Planner OS MCP integration."
-            )
-
-        try:
-            user_id = UUID(token.subject)
-        except ValueError as e:
-            raise ValueError(f"Invalid user ID in auth context: {token.subject!r}") from e
-
-        from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
-        from adapters.supabase.workspaces import SupabaseWorkspaceRepository
-
-        service_client = SupabaseRestClient(SupabaseConfig.from_env())
-        workspace = SupabaseWorkspaceRepository(service_client).get_active(user_id)
-        if workspace is None:
-            raise ValueError(
-                "No active Planner OS workspace found. "
-                "Create and activate a workspace in the Planner OS web app first."
-            )
-
-        from planner_platform.auth import AuthenticatedUser
-
-        user = AuthenticatedUser(user_id=user_id, access_token=None)  # type: ignore
-        return runtime.execute(user, workspace.id, record["name"], arguments)
-
-    invoke.__name__ = str(record["name"])
-    invoke.__doc__ = str(record["description"])
-    invoke.__signature__ = inspect.Signature(
-        parameters=[_parameter(item) for item in record["parameters"]],
-        return_annotation=dict,
-    )
-    return invoke
-
-
-def _parameter(record: dict[str, Any]) -> inspect.Parameter:
-    default_text = record.get("default")
-    default = inspect.Parameter.empty
-    if default_text is not None:
-        default = None if default_text == "None" else ast.literal_eval(default_text)
-    return inspect.Parameter(
-        str(record["name"]),
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        default=default,
-        annotation=_ANNOTATIONS[record.get("annotation")],
-    )

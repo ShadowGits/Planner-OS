@@ -14,11 +14,8 @@ COPY planner_api/ ./planner_api/
 COPY planner_core/ ./planner_core/
 COPY planner_platform/ ./planner_platform/
 COPY planner_engine/ ./planner_engine/
-COPY planner_mcp/ ./planner_mcp/
 COPY planner_integrations/ ./planner_integrations/
 COPY adapters/ ./adapters/
-COPY config/ ./config/
-COPY docs/ ./docs/
 
 # Switch to non-root user
 USER planner
