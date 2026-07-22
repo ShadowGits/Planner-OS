@@ -407,66 +407,44 @@
     return el;
   }
 
-  /* Press-and-hold to lift a row, then drag vertically to a new time
-     (5-min snap). The page scrolls natively (rows are touch-action:pan-y),
-     so we never touch the scroll position ourselves — we only take over once
-     the hold has fired and the row is lifted. */
+  /* Reschedule by grabbing the icon (the .rail handle). Only the handle is
+     touch-action:none, so dragging it can never be mistaken for a scroll,
+     while the rest of the row scrolls natively. No long-press needed:
+     move the handle a few px and the row lifts and follows the finger. */
   function attachDrag(row, task, top0) {
-    let holdTimer = null;
+    const handle = row.querySelector(".rail");
     let lifted = false;
-    let moved = false; // finger travelled before the hold → it's a scroll
     let originY = 0;
     let originTop = 0;
     let pointerId = null;
     let badge = null;
     let newStart = null;
 
-    function cancelHold() {
-      if (holdTimer) {
-        clearTimeout(holdTimer);
-        holdTimer = null;
-      }
-    }
-
-    row.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(".ring")) return;
+    handle.addEventListener("pointerdown", (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
-      // Apple Pencil (and some styluses) emit hover events with no contact;
-      // those carry no pressed button, so ignore them entirely.
+      // Apple Pencil emits hover events with no contact; ignore them.
       if (e.pointerType === "pen" && e.buttons === 0) return;
       pointerId = e.pointerId;
       originY = e.clientY;
       originTop = parseFloat(row.style.top);
-      moved = false;
       lifted = false;
-      cancelHold();
-      holdTimer = setTimeout(() => {
-        holdTimer = null;
-        if (moved) return; // became a scroll before the hold completed
+    });
+
+    handle.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== pointerId) return;
+      if (!lifted) {
+        if (Math.abs(e.clientY - originY) < 5) return; // a tap, not a drag
         lifted = true;
         dragging = true;
         row.classList.add("lifted");
         try {
-          row.setPointerCapture(pointerId);
+          handle.setPointerCapture(pointerId);
         } catch (_) {}
-        if (navigator.vibrate) navigator.vibrate(15);
+        if (navigator.vibrate) navigator.vibrate(12);
         badge = document.createElement("div");
         badge.className = "drag-badge";
         row.appendChild(badge);
         updateBadge(originTop);
-      }, 260);
-    });
-
-    row.addEventListener("pointermove", (e) => {
-      if (e.pointerId !== pointerId) return; // ignore other/hover pointers
-      if (!lifted) {
-        // Any real travel before the hold means the user is scrolling;
-        // let the browser own that gesture — we do nothing.
-        if (Math.abs(e.clientY - originY) > 10) {
-          moved = true;
-          cancelHold();
-        }
-        return;
       }
       e.preventDefault();
       const top = Math.max(0, originTop + (e.clientY - originY));
@@ -481,14 +459,13 @@
     }
 
     async function finish(save) {
-      cancelHold();
       if (pointerId !== null) {
         try {
-          row.releasePointerCapture(pointerId);
+          handle.releasePointerCapture(pointerId);
         } catch (_) {}
         pointerId = null;
       }
-      if (!lifted) return; // a tap or a scroll → nothing to save
+      if (!lifted) return; // a plain tap → the row's click handler opens edit
       lifted = false;
       dragging = false;
       row.classList.remove("lifted");
@@ -512,8 +489,8 @@
       }
     }
 
-    row.addEventListener("pointerup", () => finish(true));
-    row.addEventListener("pointercancel", () => finish(false));
+    handle.addEventListener("pointerup", () => finish(true));
+    handle.addEventListener("pointercancel", () => finish(false));
   }
 
   function escapeHtml(s) {
