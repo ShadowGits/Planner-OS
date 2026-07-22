@@ -179,6 +179,22 @@ def test_today_buckets_scheduled_due_and_overdue(services) -> None:
     assert "Scheduled today" in [row["title"] for row in data["scheduled"]]
 
 
+def test_today_surfaces_past_scheduled_tasks_as_overdue(services) -> None:
+    """A timed block planned for a past day with no due date must still resurface
+    so replan can push it forward instead of silently losing it."""
+    tasks, _, _, _ = services
+    tasks.create_task("Yesterday's German", scheduled_date="2026-01-01", start_time="09:30")
+    # A task due today but scheduled in the past belongs in due_today, not overdue.
+    tasks.create_task("Due today, planned earlier", due_date=_today().isoformat(), scheduled_date="2026-01-02")
+
+    data = tasks.today()["data"]
+    overdue_titles = [row["title"] for row in data["overdue"]]
+
+    assert "Yesterday's German" in overdue_titles
+    assert "Due today, planned earlier" not in overdue_titles
+    assert "Due today, planned earlier" in [row["title"] for row in data["due_today"]]
+
+
 def test_today_checklist_flags_done_and_sorts_open_first(services) -> None:
     tasks, _, _, _ = services
     today = _today().isoformat()
