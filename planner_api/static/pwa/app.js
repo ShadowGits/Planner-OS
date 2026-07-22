@@ -21,6 +21,10 @@
     editing: null, // task id when the sheet is in edit mode
   };
 
+  let dragging = false; // a row is currently lifted for reschedule
+  let lastInteraction = 0; // ms of the last touch, to pause auto-refresh
+  window.addEventListener("pointerdown", () => (lastInteraction = Date.now()), true);
+
   /* ---------- date helpers ---------- */
 
   function startOfDay(d) {
@@ -155,11 +159,53 @@
     return res.json();
   }
 
-  async function loadDay() {
-    const out = await api("GET", `/v2/day?date=${iso(state.selected)}`);
-    state.items = out.data.items;
-    state.tz = out.data.timezone;
+  // A tiny per-day cache so swiping through the week is instant. Each entry
+  // holds that day's tasks; we still re-fetch in the background on show so the
+  // screen is never stale (see goToDate).
+  const dayCache = new Map(); // iso date -> { items, tz, at }
+  const PREFETCH_FRESH_MS = 30000;
+
+  async function fetchDay(ds) {
+    const out = await api("GET", `/v2/day?date=${ds}`);
+    const entry = { items: out.data.items, tz: out.data.timezone, at: Date.now() };
+    dayCache.set(ds, entry);
+    return entry;
+  }
+
+  function applyDay(entry) {
+    state.items = entry.items;
+    state.tz = entry.tz;
     render();
+  }
+
+  async function loadDay(opts = {}) {
+    const prevY = window.scrollY;
+    const ds = iso(state.selected);
+    const entry = await fetchDay(ds);
+    if (iso(state.selected) !== ds) return; // user moved on while fetching
+    applyDay(entry);
+    // keep the reader where they were on a background refresh; jump to the
+    // top when they deliberately switched to another day.
+    window.scrollTo(0, opts.keepScroll ? prevY : 0);
+    schedulePrefetch(state.selected);
+  }
+
+  // Warm the 3 days on each side of the selected day, on idle, so a swipe
+  // paints from cache with no wait.
+  let prefetchTimer = null;
+  function schedulePrefetch(center) {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = setTimeout(() => {
+      for (let off = -3; off <= 3; off++) {
+        if (!off) continue;
+        const d = new Date(center);
+        d.setDate(d.getDate() + off);
+        const ds = iso(d);
+        const c = dayCache.get(ds);
+        if (c && Date.now() - c.at < PREFETCH_FRESH_MS) continue;
+        fetchDay(ds).catch(() => {});
+      }
+    }, 350);
   }
 
   /* ---------- key gate ---------- */
@@ -212,10 +258,7 @@
       if (sameDay(d, state.selected)) pill.classList.add("selected");
       pill.innerHTML = `<span class="dow">${d.toLocaleDateString([], { weekday: "narrow" })}</span>
         <span class="num">${d.getDate()}</span><span class="dot"></span>`;
-      pill.addEventListener("click", () => {
-        state.selected = startOfDay(d);
-        loadDay().catch(showError);
-      });
+      pill.addEventListener("click", () => goToDate(d));
       strip.appendChild(pill);
     }
   }
@@ -226,8 +269,30 @@
   function shiftDays(n) {
     const d = new Date(state.selected);
     d.setDate(d.getDate() + n);
+    goToDate(d);
+  }
+
+  // switch day: repaint the header + week strip and jump to the top at once,
+  // so the change feels instant. If we already have the day cached, paint it
+  // immediately and refresh it quietly in the background; otherwise fetch.
+  function goToDate(d) {
     state.selected = startOfDay(d);
-    loadDay().catch(showError);
+    renderHeader();
+    renderWeek();
+    window.scrollTo(0, 0);
+    const ds = iso(state.selected);
+    const cached = dayCache.get(ds);
+    if (cached) {
+      applyDay(cached);
+      fetchDay(ds)
+        .then((fresh) => {
+          if (iso(state.selected) === ds) applyDay(fresh);
+        })
+        .catch(() => {});
+      schedulePrefetch(state.selected);
+    } else {
+      loadDay().catch(showError);
+    }
   }
 
   /* ---------- timeline (proportional) ---------- */
@@ -342,53 +407,64 @@
     return el;
   }
 
-  /* press-and-hold to lift, drag vertically to a new time (5-min snap).
-     Cards are touch-action:none so the browser never steals the gesture;
-     a quick pre-hold vertical move scrolls the page by hand instead. */
+  /* Press-and-hold to lift a row, then drag vertically to a new time
+     (5-min snap). The page scrolls natively (rows are touch-action:pan-y),
+     so we never touch the scroll position ourselves — we only take over once
+     the hold has fired and the row is lifted. */
   function attachDrag(row, task, top0) {
     let holdTimer = null;
     let lifted = false;
-    let scrolling = false;
+    let moved = false; // finger travelled before the hold → it's a scroll
     let originY = 0;
     let originTop = 0;
-    let lastY = 0;
     let pointerId = null;
     let badge = null;
     let newStart = null;
 
+    function cancelHold() {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    }
+
     row.addEventListener("pointerdown", (e) => {
       if (e.target.closest(".ring")) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
-      originY = e.clientY;
-      lastY = e.clientY;
-      originTop = parseFloat(row.style.top);
+      // Apple Pencil (and some styluses) emit hover events with no contact;
+      // those carry no pressed button, so ignore them entirely.
+      if (e.pointerType === "pen" && e.buttons === 0) return;
       pointerId = e.pointerId;
-      scrolling = false;
-      try {
-        row.setPointerCapture(e.pointerId);
-      } catch (_) {}
+      originY = e.clientY;
+      originTop = parseFloat(row.style.top);
+      moved = false;
+      lifted = false;
+      cancelHold();
       holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (moved) return; // became a scroll before the hold completed
         lifted = true;
+        dragging = true;
         row.classList.add("lifted");
+        try {
+          row.setPointerCapture(pointerId);
+        } catch (_) {}
         if (navigator.vibrate) navigator.vibrate(15);
         badge = document.createElement("div");
         badge.className = "drag-badge";
         row.appendChild(badge);
-        updateBadge(parseFloat(row.style.top));
-      }, 240);
+        updateBadge(originTop);
+      }, 260);
     });
 
     row.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== pointerId) return; // ignore other/hover pointers
       if (!lifted) {
-        const dy = e.clientY - originY;
-        if (!scrolling && Math.abs(dy) > 8) {
-          scrolling = true;
-          clearTimeout(holdTimer);
-          holdTimer = null;
-        }
-        if (scrolling) {
-          window.scrollBy(0, lastY - e.clientY);
-          lastY = e.clientY;
+        // Any real travel before the hold means the user is scrolling;
+        // let the browser own that gesture — we do nothing.
+        if (Math.abs(e.clientY - originY) > 10) {
+          moved = true;
+          cancelHold();
         }
         return;
       }
@@ -405,17 +481,16 @@
     }
 
     async function finish(save) {
-      clearTimeout(holdTimer);
-      holdTimer = null;
-      scrolling = false;
+      cancelHold();
       if (pointerId !== null) {
         try {
           row.releasePointerCapture(pointerId);
         } catch (_) {}
         pointerId = null;
       }
-      if (!lifted) return; // a tap → the click handler opens edit
+      if (!lifted) return; // a tap or a scroll → nothing to save
       lifted = false;
+      dragging = false;
       row.classList.remove("lifted");
       row._suppressClick = true;
       if (badge) {
@@ -649,14 +724,42 @@
     navigator.serviceWorker.register("sw.js").then((reg) => reg.update()).catch(() => {});
   }
 
+  // Swipe left/right anywhere on the day to step to the next/previous date.
+  (function enableDateSwipe() {
+    const surface = document.querySelector("main");
+    let sx = 0, sy = 0, tracking = false;
+    surface.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1 || dragging) {
+        tracking = false;
+        return;
+      }
+      sx = e.touches[0].clientX;
+      sy = e.touches[0].clientY;
+      tracking = true;
+    }, { passive: true });
+    surface.addEventListener("touchend", (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      // clearly horizontal and long enough → change the day
+      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+        shiftDays(dx < 0 ? 1 : -1); // swipe left = next day
+      }
+    }, { passive: true });
+  })();
+
   setInterval(() => {
+    if (dragging) return; // never repaint mid-drag
+    if (Date.now() - lastInteraction < 4000) return; // let a gesture settle
     if (!document.hidden && key() && $("sheet").classList.contains("hidden")) {
-      loadDay().catch(() => {});
+      loadDay({ keepScroll: true }).catch(() => {});
     }
   }, 60000);
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && key()) loadDay().catch(showError);
+    if (!document.hidden && key()) loadDay({ keepScroll: true }).catch(showError);
   });
 
   if (!key()) {

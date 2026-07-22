@@ -144,10 +144,11 @@ body {
   grid-template-columns: 46px 60px 1fr 30px;
   align-items: start;
   padding: 0 16px 0 0;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
 }
+.row.lifted { touch-action: none; }
 .row.lifted {
   z-index: 20;
   background: var(--bg);
@@ -207,6 +208,7 @@ body {
   grid-template-columns: 46px 60px 1fr 30px;
   align-items: center;
   padding: 0 16px 0 0;
+  touch-action: pan-y;
 }
 .gap .rail { grid-column: 2; }
 .gap .gap-body {
