@@ -299,7 +299,13 @@ class TaskService:
                 scheduled.append(row)
             if due_on == today:
                 due.append(row)
-            elif due_on is not None and due_on < today:
+            # Overdue: a due date governs when it exists; otherwise a task planned
+            # for a past day but never finished is stale and must resurface too, so
+            # replan can push untimed-deadline blocks forward instead of losing them.
+            if due_on is not None:
+                if due_on < today:
+                    overdue.append(row)
+            elif planned is not None and planned < today:
                 overdue.append(row)
         completions = [
             row
@@ -313,7 +319,10 @@ class TaskService:
                 "date": today.isoformat(),
                 "scheduled": scheduled,
                 "due_today": due,
-                "overdue": sorted(overdue, key=lambda row: str(row.get("due_date"))),
+                "overdue": sorted(
+                    overdue,
+                    key=lambda row: str(row.get("due_date") or row.get("scheduled_date") or ""),
+                ),
                 "completed_today": completions,
             },
         )
