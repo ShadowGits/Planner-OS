@@ -159,15 +159,53 @@
     return res.json();
   }
 
+  // A tiny per-day cache so swiping through the week is instant. Each entry
+  // holds that day's tasks; we still re-fetch in the background on show so the
+  // screen is never stale (see goToDate).
+  const dayCache = new Map(); // iso date -> { items, tz, at }
+  const PREFETCH_FRESH_MS = 30000;
+
+  async function fetchDay(ds) {
+    const out = await api("GET", `/v2/day?date=${ds}`);
+    const entry = { items: out.data.items, tz: out.data.timezone, at: Date.now() };
+    dayCache.set(ds, entry);
+    return entry;
+  }
+
+  function applyDay(entry) {
+    state.items = entry.items;
+    state.tz = entry.tz;
+    render();
+  }
+
   async function loadDay(opts = {}) {
     const prevY = window.scrollY;
-    const out = await api("GET", `/v2/day?date=${iso(state.selected)}`);
-    state.items = out.data.items;
-    state.tz = out.data.timezone;
-    render();
+    const ds = iso(state.selected);
+    const entry = await fetchDay(ds);
+    if (iso(state.selected) !== ds) return; // user moved on while fetching
+    applyDay(entry);
     // keep the reader where they were on a background refresh; jump to the
     // top when they deliberately switched to another day.
     window.scrollTo(0, opts.keepScroll ? prevY : 0);
+    schedulePrefetch(state.selected);
+  }
+
+  // Warm the 3 days on each side of the selected day, on idle, so a swipe
+  // paints from cache with no wait.
+  let prefetchTimer = null;
+  function schedulePrefetch(center) {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = setTimeout(() => {
+      for (let off = -3; off <= 3; off++) {
+        if (!off) continue;
+        const d = new Date(center);
+        d.setDate(d.getDate() + off);
+        const ds = iso(d);
+        const c = dayCache.get(ds);
+        if (c && Date.now() - c.at < PREFETCH_FRESH_MS) continue;
+        fetchDay(ds).catch(() => {});
+      }
+    }, 350);
   }
 
   /* ---------- key gate ---------- */
@@ -235,13 +273,26 @@
   }
 
   // switch day: repaint the header + week strip and jump to the top at once,
-  // so the change feels instant even before the new tasks arrive.
+  // so the change feels instant. If we already have the day cached, paint it
+  // immediately and refresh it quietly in the background; otherwise fetch.
   function goToDate(d) {
     state.selected = startOfDay(d);
     renderHeader();
     renderWeek();
     window.scrollTo(0, 0);
-    loadDay().catch(showError);
+    const ds = iso(state.selected);
+    const cached = dayCache.get(ds);
+    if (cached) {
+      applyDay(cached);
+      fetchDay(ds)
+        .then((fresh) => {
+          if (iso(state.selected) === ds) applyDay(fresh);
+        })
+        .catch(() => {});
+      schedulePrefetch(state.selected);
+    } else {
+      loadDay().catch(showError);
+    }
   }
 
   /* ---------- timeline (proportional) ---------- */
