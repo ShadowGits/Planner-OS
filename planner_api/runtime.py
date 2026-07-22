@@ -5,15 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from adapters.cloud import CloudPlannerToolsFactory
 from adapters.supabase import (
     SupabaseCalendarConnectionRepository,
     SupabaseExternalLinkRepository,
     SupabaseOAuthStateRepository,
-    SupabaseOperationRepository,
-    SupabasePreviewRepository,
     SupabaseRestClient,
-    SupabaseWorkbookObjectStore,
     SupabaseWorkspaceRepository,
 )
 from adapters.supabase.client import SupabaseConfig
@@ -24,7 +20,6 @@ from planner_platform.google_oauth import (
     GoogleOAuthService,
     SupabaseGoogleCalendarClientFactory,
 )
-from planner_platform.workbook_session import WorkbookSession
 
 
 class CloudRuntime:
@@ -52,34 +47,6 @@ class CloudRuntime:
             execution_target=workspace.active_execution_target,
             source_revision=workspace.revision,
         )
-
-    def execute(self, user, workspace_id, tool_name, arguments):
-        client = self.user_client(user)
-        workspaces = SupabaseWorkspaceRepository(client)
-        connections = SupabaseCalendarConnectionRepository(client)
-        external_links = SupabaseExternalLinkRepository(client)
-        google_factory = SupabaseGoogleCalendarClientFactory(
-            connections,
-            self.cipher,
-            external_links,
-        )
-
-        def tools_factory_builder(root, context):
-            return CloudPlannerToolsFactory(
-                state_root=root / "state",
-                google_client_factory=google_factory,
-                external_links_factory=external_links.bind,
-            )
-
-        return WorkbookSession(
-            user_id=user.user_id,
-            workspace_id=workspace_id,
-            workspaces=workspaces,
-            storage=SupabaseWorkbookObjectStore(client),
-            operations=SupabaseOperationRepository(client),
-            tools_factory_builder=tools_factory_builder,
-            previews=SupabasePreviewRepository(client),
-        ).execute(tool_name, arguments)
 
     def google_client_factory(self) -> SupabaseGoogleCalendarClientFactory:
         """Service-role Google Calendar client factory for unattended jobs
