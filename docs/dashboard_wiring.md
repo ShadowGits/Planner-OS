@@ -38,40 +38,36 @@ just `GROUP BY` over rows you already have.
 `MetricsService.snapshot()` already computes projects, deadlines, streaks, and
 totals. Reuse it instead of re-deriving "% done" in a second codebase.
 
-**Caveat (read this):** the current `GET /v2/metrics` route is gated behind
-OAuth login (`Depends(current_user)`), which a headless Streamlit app can't
-satisfy with a simple key. Two ways to resolve it:
+**Why not `/v2/metrics`:** that route is gated behind OAuth login
+(`Depends(current_user)`), which a headless Streamlit app can't satisfy with a
+simple key. So there is a dedicated, key-guarded route for the dashboard:
 
-1. **Add a key-guarded dashboard route** (small backend change, ~15 lines) that
-   mirrors the PWA's `X-App-Key` auth. Suggested shape:
+**`GET /v2/dashboard/metrics`** (in `planner_api/dashboard.py`) — same
+`X-App-Key` trust model as the PWA. It returns the full computed snapshot plus
+the flat map:
 
-   ```python
-   # planner_api/dashboard.py  (same X-App-Key pattern as planner_api/day.py)
-   @api.get("/v2/dashboard/metrics")
-   def dashboard_metrics(x_app_key: str | None = Header(default=None)):
-       _authorize(x_app_key)                 # reuse the PWA_ACCESS_KEY check
-       core = build_core(cloud.service_client, _configured_user_id())
-       return _envelope(True, "metrics",
-                        {"snapshot": core.metrics.snapshot(),
-                         "flat": core.metrics.flat_snapshot()})
-   ```
+```json
+{ "data": { "snapshot": { "totals": {...}, "projects": [...],
+                          "upcoming_deadlines": [...], "streaks": {...} },
+            "flat": { "german_units_left": "12", ... } } }
+```
 
-   Then Streamlit just does:
+Auth: set `DASHBOARD_ACCESS_KEY` on Cloud Run (or leave it unset to fall back to
+`PWA_ACCESS_KEY`). Send it as the `X-App-Key` header.
 
-   ```python
-   import streamlit as st, requests
-   BASE = "https://planner-os-api-645411441153.us-central1.run.app"
-   r = requests.get(f"{BASE}/v2/dashboard/metrics",
-                    headers={"X-App-Key": st.secrets["APP_KEY"]}, timeout=10)
-   data = r.json()["data"]["snapshot"]
-   st.metric("Open tasks", data["totals"]["open_tasks"])
-   st.metric("Completed today", data["totals"]["completed_today"])
-   for p in data["projects"]:
-       st.progress(p["completion_pct"] / 100, text=f'{p["name"]} · {p["completion_pct"]}%')
-   ```
+Streamlit side:
 
-2. **Or skip the endpoint** and go straight to Postgres (Option B) for
-   everything. Simpler to stand up; you re-implement the aggregation in SQL.
+```python
+import streamlit as st, requests
+BASE = "https://planner-os-api-645411441153.us-central1.run.app"
+r = requests.get(f"{BASE}/v2/dashboard/metrics",
+                 headers={"X-App-Key": st.secrets["APP_KEY"]}, timeout=10)
+data = r.json()["data"]["snapshot"]
+st.metric("Open tasks", data["totals"]["open_tasks"])
+st.metric("Completed today", data["totals"]["completed_today"])
+for p in data["projects"]:
+    st.progress(p["completion_pct"] / 100, text=f'{p["name"]} · {p["completion_pct"]}%')
+```
 
 ### Option B — connect Streamlit straight to Supabase Postgres (for custom charts)
 
