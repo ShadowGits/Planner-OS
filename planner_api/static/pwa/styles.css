@@ -161,21 +161,7 @@ body {
   font-size: 11px; font-weight: 600; color: var(--ink-3);
   margin-top: 3px;
 }
-/* the icon column is the drag handle: it never scrolls (touch-action:none),
-   so grabbing it moves the event while the rest of the row scrolls natively. */
-.row .rail {
-  grid-column: 2; display: grid; place-items: start center;
-  touch-action: none; cursor: grab;
-}
-.row.lifted .rail { cursor: grabbing; }
-/* a small grip hint under the icon so the handle is discoverable */
-.row .rail .icon::after {
-  content: ""; position: absolute; bottom: -9px; left: 50%;
-  transform: translateX(-50%);
-  width: 16px; height: 3px; border-radius: 2px;
-  background: var(--ink-3); opacity: 0.45;
-}
-.row.done .rail .icon::after { opacity: 0.2; }
+.row .rail { grid-column: 2; display: grid; place-items: start center; }
 
 .icon {
   position: relative; z-index: 2;
