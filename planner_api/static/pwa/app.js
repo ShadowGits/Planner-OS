@@ -407,12 +407,14 @@
     return el;
   }
 
-  /* Reschedule by grabbing the icon (the .rail handle). Only the handle is
-     touch-action:none, so dragging it can never be mistaken for a scroll,
-     while the rest of the row scrolls natively. No long-press needed:
-     move the handle a few px and the row lifts and follows the finger. */
+  /* Press and hold anywhere on a task (~230ms), then drag up/down to a new
+     time (5-min snap). Rows scroll natively (touch-action:pan-y) until the
+     hold fires; from then on a global non-passive touchmove blocker (see
+     boot) stops the page scrolling while `dragging` is true, so the finger
+     moves the event instead of the page. A quick move before the hold is a
+     normal scroll and is left to the browser. */
   function attachDrag(row, task, top0) {
-    const handle = row.querySelector(".rail");
+    let holdTimer = null;
     let lifted = false;
     let originY = 0;
     let originTop = 0;
@@ -420,7 +422,15 @@
     let badge = null;
     let newStart = null;
 
-    handle.addEventListener("pointerdown", (e) => {
+    function cancelHold() {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    }
+
+    row.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".ring")) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
       // Apple Pencil emits hover events with no contact; ignore them.
       if (e.pointerType === "pen" && e.buttons === 0) return;
@@ -428,23 +438,29 @@
       originY = e.clientY;
       originTop = parseFloat(row.style.top);
       lifted = false;
-    });
-
-    handle.addEventListener("pointermove", (e) => {
-      if (e.pointerId !== pointerId) return;
-      if (!lifted) {
-        if (Math.abs(e.clientY - originY) < 5) return; // a tap, not a drag
+      cancelHold();
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
         lifted = true;
-        dragging = true;
+        dragging = true; // the global touchmove blocker now stops scrolling
         row.classList.add("lifted");
         try {
-          handle.setPointerCapture(pointerId);
+          row.setPointerCapture(pointerId);
         } catch (_) {}
-        if (navigator.vibrate) navigator.vibrate(12);
+        if (navigator.vibrate) navigator.vibrate(14);
         badge = document.createElement("div");
         badge.className = "drag-badge";
         row.appendChild(badge);
         updateBadge(originTop);
+      }, 230);
+    });
+
+    row.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== pointerId) return;
+      if (!lifted) {
+        // moved before the hold fired → it's a scroll; let the browser have it
+        if (Math.abs(e.clientY - originY) > 10) cancelHold();
+        return;
       }
       e.preventDefault();
       const top = Math.max(0, originTop + (e.clientY - originY));
@@ -459,13 +475,14 @@
     }
 
     async function finish(save) {
+      cancelHold();
       if (pointerId !== null) {
         try {
-          handle.releasePointerCapture(pointerId);
+          row.releasePointerCapture(pointerId);
         } catch (_) {}
         pointerId = null;
       }
-      if (!lifted) return; // a plain tap → the row's click handler opens edit
+      if (!lifted) return; // a tap or scroll → the click handler opens edit
       lifted = false;
       dragging = false;
       row.classList.remove("lifted");
@@ -489,8 +506,8 @@
       }
     }
 
-    handle.addEventListener("pointerup", () => finish(true));
-    handle.addEventListener("pointercancel", () => finish(false));
+    row.addEventListener("pointerup", () => finish(true));
+    row.addEventListener("pointercancel", () => finish(false));
   }
 
   function escapeHtml(s) {
@@ -700,6 +717,17 @@
     });
     navigator.serviceWorker.register("sw.js").then((reg) => reg.update()).catch(() => {});
   }
+
+  // While a task is lifted for reschedule, block the page from scrolling.
+  // This must be a NON-passive listener or iOS ignores preventDefault — it is
+  // what lets a hold-then-drag move the event instead of scrolling the page.
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (dragging) e.preventDefault();
+    },
+    { passive: false }
+  );
 
   // Swipe left/right anywhere on the day to step to the next/previous date.
   (function enableDateSwipe() {
