@@ -7,6 +7,7 @@ plan, how to phrase advice) stays with the AI client calling the MCP tools.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -55,6 +56,18 @@ def _parse_time(value: Any) -> time | None:
 
 def _local_today(timezone: str) -> date:
     return datetime.now(ZoneInfo(timezone)).date()
+
+
+def _is_overdue(task: Mapping[str, Any], today: date) -> bool:
+    """A task is overdue if its deadline has passed, or — when it has no
+    deadline — if it was planned for a past day and never finished. A due date
+    always governs when present so a task due today is never called overdue.
+    Shared by TaskService.today and MetricsService so both agree."""
+    due = _parse_date(task.get("due_date"))
+    if due is not None:
+        return due < today
+    planned = _parse_date(task.get("scheduled_date"))
+    return planned is not None and planned < today
 
 
 class ProjectService:
@@ -299,13 +312,7 @@ class TaskService:
                 scheduled.append(row)
             if due_on == today:
                 due.append(row)
-            # Overdue: a due date governs when it exists; otherwise a task planned
-            # for a past day but never finished is stale and must resurface too, so
-            # replan can push untimed-deadline blocks forward instead of losing them.
-            if due_on is not None:
-                if due_on < today:
-                    overdue.append(row)
-            elif planned is not None and planned < today:
+            if _is_overdue(row, today):
                 overdue.append(row)
         completions = [
             row
@@ -457,11 +464,7 @@ class MetricsService:
         deadlines = self._upcoming_deadlines(milestones, tasks, today)
         streaks = self._streaks(completions, today)
         open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]
-        overdue = [
-            task
-            for task in open_tasks
-            if (due := _parse_date(task.get("due_date"))) is not None and due < today
-        ]
+        overdue = [task for task in open_tasks if _is_overdue(task, today)]
         completed_today = [row for row in completions if _parse_date(row.get("completed_on")) == today]
         return {
             "generated_on": today.isoformat(),

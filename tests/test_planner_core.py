@@ -234,6 +234,16 @@ def test_metrics_snapshot_and_dashboard_flat_shape(services) -> None:
     assert flat["german_target_date"] == "2026-08-22"
 
 
+def test_metrics_counts_past_scheduled_as_overdue(services) -> None:
+    """core_metrics must agree with core_today: an open task planned for a past
+    day with no due date is overdue, but one due today (planned earlier) is not."""
+    tasks, _, metrics, _ = services
+    tasks.create_task("Yesterday's German", scheduled_date="2026-01-01", start_time="09:30")
+    tasks.create_task("Due today, planned earlier", due_date=_today().isoformat(), scheduled_date="2026-01-02")
+
+    assert metrics.snapshot()["totals"]["overdue_tasks"] == 1
+
+
 def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
     tasks, _, _, reminders = services
     today = _today().isoformat()
