@@ -81,6 +81,15 @@ class CloudRuntime:
             previews=SupabasePreviewRepository(client),
         ).execute(tool_name, arguments)
 
+    def google_client_factory(self) -> SupabaseGoogleCalendarClientFactory:
+        """Service-role Google Calendar client factory for unattended jobs
+        (the Postgres→Calendar sync cron), built on the service client."""
+        return SupabaseGoogleCalendarClientFactory(
+            SupabaseCalendarConnectionRepository(self.service_client),
+            self.cipher,
+            SupabaseExternalLinkRepository(self.service_client),
+        )
+
     def google_oauth_for_user(self, user: AuthenticatedUser) -> GoogleOAuthService:
         client = self.user_client(user)
         return GoogleOAuthService(
