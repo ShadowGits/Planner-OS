@@ -113,6 +113,12 @@ def register_core_tools(server: Any) -> None:
             notes=notes,
         )
 
+    @server.tool(name="core_create_tasks_batch")
+    async def core_create_tasks_batch(items: list[dict]) -> dict:
+        """Create many tasks in one call. Each item takes the same fields as core_create_task: title (required), project_id, milestone_id, due_date, scheduled_date, start_time (HH:MM), priority, estimated_minutes, recurrence_key, notes. All items are validated before any task is created."""
+        tasks, _, _, _ = _core_for_current_user()
+        return tasks.create_tasks_batch(items)
+
     @server.tool(name="core_update_task")
     async def core_update_task(task_id: str, updates: dict) -> dict:
         """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes."""

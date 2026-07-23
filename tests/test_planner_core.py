@@ -120,6 +120,27 @@ def test_project_milestone_task_lifecycle_and_tree(services) -> None:
     assert tree[0]["done_tasks"] == 1 and tree[0]["open_tasks"] == 0
 
 
+def test_create_tasks_batch_creates_all_and_validates_before_writing(services) -> None:
+    tasks, _, _, _ = services
+
+    result = tasks.create_tasks_batch(
+        [
+            {"title": "Book visa slot", "due_date": "2026-08-01", "priority": "high"},
+            {"title": "German lesson", "scheduled_date": "2026-07-24", "start_time": "18:00"},
+        ]
+    )
+    assert result["message"] == "Created 2 tasks"
+    titles = [task["title"] for task in result["data"]["tasks"]]
+    assert titles == ["Book visa slot", "German lesson"]
+
+    with pytest.raises(PlannerCoreError, match="Task 2"):
+        tasks.create_tasks_batch([{"title": "Fine"}, {"title": "Bad", "priority": "urgent"}])
+    all_titles = [row["title"] for row in tasks.list_tasks()["data"]["tasks"]]
+    assert "Fine" not in all_titles
+    with pytest.raises(PlannerCoreError):
+        tasks.create_tasks_batch([])
+
+
 def test_invalid_inputs_are_rejected(services) -> None:
     tasks, projects, _, _ = services
 
@@ -299,6 +320,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_complete_task",
         "core_create_project",
         "core_create_task",
+        "core_create_tasks_batch",
         "core_delete_task",
         "core_list_projects",
         "core_list_tasks",
