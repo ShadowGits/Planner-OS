@@ -133,6 +133,63 @@
     return RINGS[hash(title) % RINGS.length];
   }
 
+  /* ---------- overlap layout ---------- */
+
+  function computeOverlapLayout(timed) {
+    const layout = new Map();
+    if (!timed.length) return layout;
+
+    const ivs = timed.map((t) => ({
+      id: t.id,
+      start: timeToMin(t.start_time),
+      end: timeToMin(t.start_time) + (t.estimated_minutes || 30),
+    }));
+
+    const colEnds = [];
+    for (const iv of ivs) {
+      let placed = false;
+      for (let c = 0; c < colEnds.length; c++) {
+        if (iv.start >= colEnds[c]) {
+          colEnds[c] = iv.end;
+          layout.set(iv.id, { col: c, totalCols: 0 });
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        layout.set(iv.id, { col: colEnds.length, totalCols: 0 });
+        colEnds.push(iv.end);
+      }
+    }
+
+    for (const iv of ivs) {
+      const e = layout.get(iv.id);
+      let max = e.col + 1;
+      for (const other of ivs) {
+        if (other.id !== iv.id && iv.start < other.end && other.start < iv.end) {
+          max = Math.max(max, layout.get(other.id).col + 1);
+        }
+      }
+      e.totalCols = max;
+    }
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const iv of ivs) {
+        for (const other of ivs) {
+          if (other.id !== iv.id && iv.start < other.end && other.start < iv.end) {
+            const m = Math.max(layout.get(iv.id).totalCols, layout.get(other.id).totalCols);
+            if (layout.get(iv.id).totalCols < m) { layout.get(iv.id).totalCols = m; changed = true; }
+            if (layout.get(other.id).totalCols < m) { layout.get(other.id).totalCols = m; changed = true; }
+          }
+        }
+      }
+    }
+
+    return layout;
+  }
+
   /* ---------- api ---------- */
 
   function key() {
@@ -305,6 +362,7 @@
       .filter((t) => t.start_time)
       .sort((a, b) => timeToMin(a.start_time) - timeToMin(b.start_time));
     const inbox = state.items.filter((t) => !t.start_time);
+    const overlapLayout = computeOverlapLayout(timed);
 
     renderInbox(inbox);
 
@@ -347,7 +405,7 @@
     }
 
     for (let i = 0; i < timed.length; i++) {
-      list.appendChild(taskRow(timed[i], top0));
+      list.appendChild(taskRow(timed[i], top0, overlapLayout.get(timed[i].id)));
       const nextStart = i + 1 < timed.length ? mins[i + 1] : null;
       if (nextStart !== null && nextStart - ends[i] >= GAP_MIN) {
         list.appendChild(gapRow(ends[i], nextStart, top0));
@@ -355,20 +413,35 @@
     }
   }
 
-  function taskRow(task, top0) {
+  function taskRow(task, top0, layout) {
     const start = timeToMin(task.start_time);
     const dur = task.estimated_minutes || 30;
     const row = document.createElement("div");
-    row.className = "row" + (task.done ? " done" : "");
+    const isOverlap = layout && layout.totalCols > 1;
+    row.className = "row" + (task.done ? " done" : "") + (isOverlap ? " overlap" : "");
     row.style.top = `${(start - top0) * PX_PER_MIN}px`;
     row.style.height = `${Math.max(MIN_ROW_PX, dur * PX_PER_MIN)}px`;
     row.style.setProperty("--ring", ringFor(task.title));
+    row.style.setProperty("--task-bg", pastelFor(task.title));
+
+    if (isOverlap) {
+      const contentStart = 60;
+      const gap = 3;
+      const col = layout.col;
+      const total = layout.totalCols;
+      row.style.left = `calc(${contentStart}px + (100% - ${contentStart}px - 8px) * ${col} / ${total} + ${col * gap}px)`;
+      row.style.width = `calc((100% - ${contentStart}px - 8px) / ${total} - ${gap}px)`;
+      row.style.right = "auto";
+    }
 
     const recur = task.recurrence_key ? " ↻" : "";
+    const timeLabel = isOverlap
+      ? `${fmtClock(start)} – ${fmtClock(start + dur)}${recur}`
+      : `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}`;
     row.innerHTML = `
       <div class="rail"><div class="icon" style="background:${pastelFor(task.title)}">${emojiFor(task.title)}</div></div>
       <div class="body">
-        <div class="meta">${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}</div>
+        <div class="meta">${timeLabel}</div>
         <div class="title">${escapeHtml(task.title)}</div>
       </div>
       <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
