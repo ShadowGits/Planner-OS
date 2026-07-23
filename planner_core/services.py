@@ -211,6 +211,35 @@ class TaskService:
         )
         return _envelope(True, f"Task created: {row['title']}", {"task": row})
 
+    def create_tasks_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        if not items:
+            raise PlannerCoreError("At least one task is required")
+        for index, item in enumerate(items, start=1):
+            if not str(item.get("title") or "").strip():
+                raise PlannerCoreError(f"Task {index}: title is required")
+            priority = item.get("priority") or "medium"
+            if priority not in PRIORITIES:
+                raise PlannerCoreError(f"Task {index}: invalid priority: {priority}")
+            _parse_date(item.get("due_date"))
+            _parse_date(item.get("scheduled_date"))
+            _parse_time(item.get("start_time"))
+        created = [
+            self.create_task(
+                str(item["title"]),
+                project_id=item.get("project_id"),
+                milestone_id=item.get("milestone_id"),
+                due_date=item.get("due_date"),
+                scheduled_date=item.get("scheduled_date"),
+                start_time=item.get("start_time"),
+                priority=item.get("priority") or "medium",
+                estimated_minutes=item.get("estimated_minutes"),
+                recurrence_key=item.get("recurrence_key"),
+                notes=item.get("notes"),
+            )["data"]["task"]
+            for item in items
+        ]
+        return _envelope(True, f"Created {len(created)} tasks", {"tasks": created})
+
     def update_task(self, task_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "title",
