@@ -41,11 +41,6 @@ class DayTaskPatch(BaseModel):
 class MonthlyGoalPatch(BaseModel):
     description: str
 
-class MonthlyGoalCreate(BaseModel):
-    project_id: str
-    month: str
-    description: str
-
 
 def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def _envelope(success: bool, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -104,18 +99,6 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(
                 status_code=400, detail={"code": "GOAL_UPDATE_INVALID", "message": str(error)}
-            ) from error
-        return _envelope(True, result["message"], result["data"])
-
-    @api.post("/v2/goals/monthly")
-    def add_monthly_goal(body: MonthlyGoalCreate, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
-        core = _core()
-        try:
-            result = core.goals.add_monthly_goal(body.project_id, body.month, body.description)
-        except (PlannerCoreError, ValueError) as error:
-            raise HTTPException(
-                status_code=400, detail={"code": "GOAL_CREATE_INVALID", "message": str(error)}
             ) from error
         return _envelope(True, result["message"], result["data"])
 
