@@ -80,7 +80,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         async with cloud_mcp.session_manager.run():
             yield
 
-    api = FastAPI(title="Planner OS API", version="3.0-stage9", docs_url="/api/docs", lifespan=lifespan)
+    api = FastAPI(
+        title="Planner OS API",
+        version="3.0-stage9",
+        docs_url="/api/docs",
+        lifespan=lifespan,
+        servers=[{"url": os.environ.get("PLANNER_API_URL", "https://planner-os-api-2pikvfrvbq-uc.a.run.app")}],
+    )
     origins = [item.strip() for item in os.environ.get("PLANNER_WEB_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
     api.add_middleware(
         CORSMiddleware,
@@ -107,14 +113,29 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             content=envelope(False, "Request validation failed", errors=["REQUEST_VALIDATION_FAILED"]),
         )
 
-    def current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
+    def current_user(authorization: str | None = Header(default=None, include_in_schema=False)) -> AuthenticatedUser:
         try:
             token = bearer_token(authorization)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
+        import secrets
+        import json
+
+        # Support single-tenant MCP_API_KEY
         mcp_key = os.environ.get("MCP_API_KEY")
-        if mcp_key and token == mcp_key:
+        if mcp_key and secrets.compare_digest(token, mcp_key):
             return AuthenticatedUser(user_id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")), access_token=None)
+            
+        # Support multi-tenant MCP_ACCOUNTS mapping
+        accounts_json = os.environ.get("MCP_ACCOUNTS")
+        if accounts_json:
+            try:
+                accounts = json.loads(accounts_json)
+                for key, user_id in accounts.items():
+                    if secrets.compare_digest(token, key):
+                        return AuthenticatedUser(user_id=UUID(user_id), access_token=None)
+            except json.JSONDecodeError:
+                pass
         try:
             return token_verifier.verify(token)
         except AuthenticationError as error:
