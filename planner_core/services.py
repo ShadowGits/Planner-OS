@@ -571,12 +571,19 @@ class MetricsService:
 
     def snapshot(self) -> dict[str, Any]:
         today = _local_today(self.timezone)
+        current_month = today.replace(day=1).isoformat()
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
         tasks = self.repository.list_rows("planner_tasks")
         completions = self.repository.list_rows("task_completions")
+        monthly_goals = self.repository.list_rows("monthly_goals", {"month": current_month})
 
-        project_metrics = [self._project_metrics(project, milestones, tasks, today) for project in projects]
+        goals_by_project = {str(mg["project_id"]): mg for mg in monthly_goals}
+        project_metrics = []
+        for project in projects:
+            pm = self._project_metrics(project, milestones, tasks, today)
+            pm["monthly_goal"] = goals_by_project.get(str(project["id"]))
+            project_metrics.append(pm)
         deadlines = self._upcoming_deadlines(milestones, tasks, today)
         streaks = self._streaks(completions, today)
         open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]
