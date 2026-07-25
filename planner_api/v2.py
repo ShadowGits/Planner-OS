@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from adapters.supabase import SupabaseWorkspaceRepository
 from planner_core.repository import PlannerCoreRepository
-from planner_core.services import MetricsService, ProjectService, ReminderService, TaskService
+from planner_core.services import GoalService, MetricsService, ProjectService, ReminderService, TaskService
 from planner_core.telegram import TelegramClient, TelegramError, parse_command, sender_chat_id
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ class PlannerCoreBundle:
         self.projects = ProjectService(repository)
         self.metrics = MetricsService(repository, timezone)
         self.reminders = ReminderService(repository, self.metrics, self.tasks, timezone)
+        self.goals = GoalService(repository)
 
 
 def build_core(service_client: Any, user_id: UUID) -> PlannerCoreBundle:

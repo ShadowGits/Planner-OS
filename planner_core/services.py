@@ -168,6 +168,56 @@ class ProjectService:
         return _envelope(True, f"{len(tree)} projects", {"projects": tree})
 
 
+class GoalService:
+    def __init__(self, repository: PlannerCoreRepository) -> None:
+        self.repository = repository
+
+    def add_monthly_goal(self, project_id: str, month: str, description: str) -> dict[str, Any]:
+        """Add or update a monthly goal (upsert by project/month). Month should be YYYY-MM-DD (typically the 1st)."""
+        _parse_date(month)
+        # Upsert emulation: try find existing
+        existing = self.repository.list_rows("monthly_goals", {"project_id": project_id, "month": month})
+        if existing:
+            row = self.repository.update_row("monthly_goals", str(existing[0]["id"]), {"description": description.strip()})
+        else:
+            row = self.repository.insert_row(
+                "monthly_goals",
+                {"project_id": project_id, "month": month, "description": description.strip()}
+            )
+        return _envelope(True, "Monthly goal saved", {"monthly_goal": row})
+
+    def update_monthly_goal(self, goal_id: str, description: str) -> dict[str, Any]:
+        row = self.repository.update_row("monthly_goals", goal_id, {"description": description.strip()})
+        return _envelope(True, "Monthly goal updated", {"monthly_goal": row})
+
+    def add_weekly_goal(self, project_id: str, week_start: str, description: str) -> dict[str, Any]:
+        """Add or update a weekly goal (upsert by project/week)."""
+        _parse_date(week_start)
+        existing = self.repository.list_rows("weekly_goals", {"project_id": project_id, "week_start": week_start})
+        if existing:
+            row = self.repository.update_row("weekly_goals", str(existing[0]["id"]), {"description": description.strip()})
+        else:
+            row = self.repository.insert_row(
+                "weekly_goals",
+                {"project_id": project_id, "week_start": week_start, "description": description.strip()}
+            )
+        return _envelope(True, "Weekly goal saved", {"weekly_goal": row})
+
+    def week_view(self, week_start: date) -> dict[str, Any]:
+        """Return monthly and weekly goals that intersect this week."""
+        month_starts = {week_start.replace(day=1), (week_start + timedelta(days=6)).replace(day=1)}
+        monthly_goals = []
+        for ms in month_starts:
+            monthly_goals.extend(self.repository.list_rows("monthly_goals", {"month": ms.isoformat()}))
+        
+        weekly_goals = self.repository.list_rows("weekly_goals", {"week_start": week_start.isoformat()})
+        
+        return {
+            "monthly_goals": monthly_goals,
+            "weekly_goals": weekly_goals
+        }
+
+
 class TaskService:
     def __init__(self, repository: PlannerCoreRepository, timezone: str = "UTC") -> None:
         self.repository = repository
@@ -462,6 +512,43 @@ class TaskService:
             },
         )
 
+    def week_view(self, on_date: str | None = None) -> dict[str, Any]:
+        """Tasks belonging to a week (Mon-Sun) containing on_date."""
+        target = _parse_date(on_date) or _local_today(self.timezone)
+        monday = target - timedelta(days=target.weekday())
+        week_dates = {monday + timedelta(days=i) for i in range(7)}
+        
+        items: list[dict[str, Any]] = []
+        for row in self.repository.list_rows("planner_tasks"):
+            planned = _parse_date(row.get("scheduled_date"))
+            due = _parse_date(row.get("due_date"))
+            if planned not in week_dates and due not in week_dates:
+                continue
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "status": row["status"],
+                    "done": row["status"] in CLOSED_TASK_STATUSES,
+                    "start_time": row.get("start_time"),
+                    "estimated_minutes": row.get("estimated_minutes"),
+                    "priority": row.get("priority"),
+                    "due_date": row.get("due_date"),
+                    "scheduled_date": row.get("scheduled_date"),
+                    "notes": row.get("notes"),
+                    "project_id": row.get("project_id"),
+                }
+            )
+        items.sort(
+            key=lambda item: (
+                str(item.get("scheduled_date") or item.get("due_date") or "9999"),
+                item["start_time"] is None,
+                str(item["start_time"] or ""),
+                item["title"],
+            )
+        )
+        return _envelope(True, "Week view", {"week_start": monday.isoformat(), "items": items})
+
     def list_tasks(self, *, status: str | None = None, project_id: str | None = None) -> dict[str, Any]:
         filters: dict[str, Any] = {}
         if status is not None:
@@ -484,12 +571,19 @@ class MetricsService:
 
     def snapshot(self) -> dict[str, Any]:
         today = _local_today(self.timezone)
+        current_month = today.replace(day=1).isoformat()
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
         tasks = self.repository.list_rows("planner_tasks")
         completions = self.repository.list_rows("task_completions")
+        monthly_goals = self.repository.list_rows("monthly_goals", {"month": current_month})
 
-        project_metrics = [self._project_metrics(project, milestones, tasks, today) for project in projects]
+        goals_by_project = {str(mg["project_id"]): mg for mg in monthly_goals}
+        project_metrics = []
+        for project in projects:
+            pm = self._project_metrics(project, milestones, tasks, today)
+            pm["monthly_goal"] = goals_by_project.get(str(project["id"]))
+            project_metrics.append(pm)
         deadlines = self._upcoming_deadlines(milestones, tasks, today)
         streaks = self._streaks(completions, today)
         open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]

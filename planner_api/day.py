@@ -38,6 +38,10 @@ class DayTaskPatch(BaseModel):
     title: str | None = None
 
 
+class MonthlyGoalPatch(BaseModel):
+    description: str
+
+
 def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def _envelope(success: bool, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"success": success, "message": message, "data": data or {}, "errors": []}
@@ -62,6 +66,41 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         core = _core()
         data = core.tasks.day_view(on_date)["data"]
         return _envelope(True, "Day view", {**data, "timezone": core.timezone})
+
+    @api.get("/v2/week")
+    def get_week(
+        on_date: str | None = Query(default=None, alias="date"),
+        x_app_key: str | None = Header(default=None),
+    ):
+        _authorize(x_app_key)
+        core = _core()
+        # core.tasks.week_view returns weekly tasks
+        task_data = core.tasks.week_view(on_date)["data"]
+        week_start_iso = task_data["week_start"]
+        
+        # core.goals.week_view returns goals for that week
+        from datetime import date
+        week_start_date = date.fromisoformat(week_start_iso)
+        goal_data = core.goals.week_view(week_start_date)
+        
+        return _envelope(True, "Week view", {
+            **task_data,
+            "monthly_goals": goal_data["monthly_goals"],
+            "weekly_goals": goal_data["weekly_goals"],
+            "timezone": core.timezone
+        })
+
+    @api.patch("/v2/goals/monthly/{goal_id}")
+    def patch_monthly_goal(goal_id: str, body: MonthlyGoalPatch, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.goals.update_monthly_goal(goal_id, body.description)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "GOAL_UPDATE_INVALID", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
 
     @api.post("/v2/day/tasks", status_code=201)
     def add_day_task(body: DayTaskCreate, x_app_key: str | None = Header(default=None)):
