@@ -620,7 +620,7 @@ class MetricsService:
             "completed_today": str(data["totals"]["completed_today"]),
         }
         for project in data["projects"]:
-            key = _slug(project["track"] or project["name"])
+            key = _slug(project["name"])
             flat[f"{key}_units_total"] = str(project["total_tasks"])
             flat[f"{key}_units_left"] = str(project["open_tasks"])
             if project["target_date"]:
