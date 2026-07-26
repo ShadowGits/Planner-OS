@@ -16,6 +16,7 @@ def _core_for_current_user():
 
     from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
     from adapters.supabase.workspaces import SupabaseWorkspaceRepository
+    from planner_core.repository import PlannerCoreRepository
     from planner_core.services import GoalService, MetricsService, ProjectService, ReminderService, TaskService
 
     token = get_access_token()
