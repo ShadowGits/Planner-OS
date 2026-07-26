@@ -113,7 +113,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             content=envelope(False, "Request validation failed", errors=["REQUEST_VALIDATION_FAILED"]),
         )
 
-    def current_user(authorization: str | None = Header(default=None, include_in_schema=False)) -> AuthenticatedUser:
+    async def current_user(authorization: str | None = Header(default=None, include_in_schema=False)) -> AuthenticatedUser:
         try:
             token = bearer_token(authorization)
         except AuthenticationError as error:
@@ -136,6 +136,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
                         return AuthenticatedUser(user_id=UUID(user_id), access_token=None)
             except json.JSONDecodeError:
                 pass
+
+        # Support dynamically issued MCP OAuth tokens (used by ChatGPT Actions)
+        if oauth_provider is not None:
+            mcp_token = await oauth_provider.load_access_token(token)
+            if mcp_token is not None and mcp_token.subject is not None:
+                return AuthenticatedUser(user_id=UUID(mcp_token.subject), access_token=None)
+
         try:
             return token_verifier.verify(token)
         except AuthenticationError as error:
