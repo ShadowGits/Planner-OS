@@ -190,6 +190,10 @@ class GoalService:
         row = self.repository.update_row("monthly_goals", goal_id, {"description": description.strip()})
         return _envelope(True, "Monthly goal updated", {"monthly_goal": row})
 
+    def delete_monthly_goal(self, goal_id: str) -> dict[str, Any]:
+        self.repository.delete_row("monthly_goals", goal_id)
+        return _envelope(True, "Monthly goal deleted", None)
+
     def add_weekly_goal(self, project_id: str, week_start: str, description: str) -> dict[str, Any]:
         """Add or update a weekly goal (upsert by project/week)."""
         _parse_date(week_start)
@@ -576,13 +580,27 @@ class MetricsService:
         milestones = self.repository.list_rows("milestones")
         tasks = self.repository.list_rows("planner_tasks")
         completions = self.repository.list_rows("task_completions")
-        monthly_goals = self.repository.list_rows("monthly_goals", {"month": current_month})
+        monthly_goals = self.repository.list_rows("monthly_goals")
 
-        goals_by_project = {str(mg["project_id"]): mg for mg in monthly_goals}
+        from collections import defaultdict
+        goals_by_project = defaultdict(list)
+        for mg in monthly_goals:
+            goals_by_project[str(mg["project_id"])].append(mg)
+
+        # Sort goals by month ascending for each project
+        for pid in goals_by_project:
+            goals_by_project[pid].sort(key=lambda x: x["month"])
+
         project_metrics = []
         for project in projects:
             pm = self._project_metrics(project, milestones, tasks, today)
-            pm["monthly_goal"] = goals_by_project.get(str(project["id"]))
+            
+            p_goals = goals_by_project.get(str(project["id"]), [])
+            # For backward compatibility, get current month's goal
+            curr_goal = next((g for g in p_goals if g["month"] == current_month), None)
+            
+            pm["monthly_goal"] = curr_goal
+            pm["monthly_goals"] = p_goals
             project_metrics.append(pm)
         deadlines = self._upcoming_deadlines(milestones, tasks, today)
         streaks = self._streaks(completions, today)

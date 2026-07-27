@@ -38,6 +38,12 @@ class DayTaskPatch(BaseModel):
     title: str | None = None
 
 
+class MonthlyGoalCreate(BaseModel):
+    project_id: str
+    month: str
+    description: str = Field(min_length=1)
+
+
 class MonthlyGoalPatch(BaseModel):
     description: str
 
@@ -90,6 +96,18 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             "timezone": core.timezone
         })
 
+    @api.post("/v2/goals/monthly", status_code=201)
+    def create_monthly_goal(body: MonthlyGoalCreate, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.goals.add_monthly_goal(body.project_id, body.month, body.description)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "GOAL_CREATE_INVALID", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
     @api.patch("/v2/goals/monthly/{goal_id}")
     def patch_monthly_goal(goal_id: str, body: MonthlyGoalPatch, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
@@ -101,6 +119,18 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 status_code=400, detail={"code": "GOAL_UPDATE_INVALID", "message": str(error)}
             ) from error
         return _envelope(True, result["message"], result["data"])
+
+    @api.delete("/v2/goals/monthly/{goal_id}")
+    def delete_monthly_goal(goal_id: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.goals.delete_monthly_goal(goal_id)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "GOAL_DELETE_INVALID", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result.get("data"))
 
     @api.post("/v2/day/tasks", status_code=201)
     def add_day_task(body: DayTaskCreate, x_app_key: str | None = Header(default=None)):
