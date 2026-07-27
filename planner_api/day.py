@@ -120,6 +120,18 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.delete("/v2/goals/monthly/{goal_id}")
+    def delete_monthly_goal(goal_id: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.goals.delete_monthly_goal(goal_id)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "GOAL_DELETE_INVALID", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result.get("data"))
+
     @api.post("/v2/day/tasks", status_code=201)
     def add_day_task(body: DayTaskCreate, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
