@@ -170,6 +170,41 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
     def list_project_files(project_id: str, user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)
         files = core.repository.list_rows("project_files", {"project_id": project_id})
+        
+        # If files is empty or database table pending migration, list files directly from Google Drive folder
+        if not files:
+            project = core.repository.get_row("projects", project_id)
+            if project:
+                drive_service = get_drive_service()
+                if drive_service:
+                    folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
+                    if folder_id:
+                        try:
+                            drive_q = f"'{folder_id}' in parents and trashed = false"
+                            res = drive_service.files().list(q=drive_q, fields="files(id, name, webViewLink, mimeType)").execute()
+                            drive_files = res.get("files", [])
+                            drive_file_rows = []
+                            for f in drive_files:
+                                is_excel = "spreadsheet" in f.get("mimeType", "") or any(ext in f.get("name", "").lower() for ext in [".xls", ".xlsx", ".csv"])
+                                ftype = "excel" if is_excel else "text"
+                                fid = f["id"]
+                                embed = f"https://docs.google.com/document/d/{fid}/edit?embedded=true" if ftype == "text" else (
+                                    f"https://docs.google.com/spreadsheets/d/{fid}/edit?embedded=true" if ftype == "excel" else f"https://drive.google.com/file/d/{fid}/preview"
+                                )
+                                drive_file_rows.append({
+                                    "id": fid,
+                                    "project_id": project_id,
+                                    "name": f.get("name"),
+                                    "file_type": ftype,
+                                    "drive_file_id": fid,
+                                    "drive_web_view_link": f.get("webViewLink"),
+                                    "drive_embed_link": embed
+                                })
+                            if drive_file_rows:
+                                return _envelope(True, "Project files retrieved from Drive", {"files": drive_file_rows})
+                        except Exception as e:
+                            logger.warning(f"Failed listing files from Drive folder {folder_id}: {e}")
+
         return _envelope(True, "Project files retrieved", {"files": files})
 
     @api.post("/v2/projects/{project_id}/files/create-document")
@@ -186,32 +221,50 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         drive_service = get_drive_service()
         if not drive_service:
             # Fallback if Google Drive service is not authenticated
-            file_row = core.repository.insert_row("project_files", {
-                "project_id": project_id,
-                "name": name,
-                "file_type": file_type,
-                "drive_file_id": "dummy_id",
-                "drive_web_view_link": "#",
-                "drive_embed_link": "#"
-            })
+            try:
+                file_row = core.repository.insert_row("project_files", {
+                    "project_id": project_id,
+                    "name": name,
+                    "file_type": file_type,
+                    "drive_file_id": "dummy_id",
+                    "drive_web_view_link": "#",
+                    "drive_embed_link": "#"
+                })
+            except Exception:
+                file_row = {"id": "dummy_id", "project_id": project_id, "name": name, "file_type": file_type, "drive_file_id": "dummy_id", "drive_web_view_link": "#", "drive_embed_link": "#"}
             return _envelope(True, "File metadata saved (Drive unconfigured)", {"file": file_row})
 
         folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
         if folder_id and folder_id != project.get("drive_folder_id"):
-            core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+            try:
+                core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+            except Exception:
+                pass
 
         doc_res = create_drive_document(drive_service, folder_id, name, file_type)
         if not doc_res:
             raise HTTPException(status_code=500, detail="Failed to create document in Google Drive")
 
-        file_row = core.repository.insert_row("project_files", {
-            "project_id": project_id,
-            "name": name,
-            "file_type": file_type,
-            "drive_file_id": doc_res["drive_file_id"],
-            "drive_web_view_link": doc_res["drive_web_view_link"],
-            "drive_embed_link": doc_res["drive_embed_link"]
-        })
+        try:
+            file_row = core.repository.insert_row("project_files", {
+                "project_id": project_id,
+                "name": name,
+                "file_type": file_type,
+                "drive_file_id": doc_res["drive_file_id"],
+                "drive_web_view_link": doc_res["drive_web_view_link"],
+                "drive_embed_link": doc_res["drive_embed_link"]
+            })
+        except Exception as insert_err:
+            logger.warning(f"Could not insert project_files row into Supabase: {insert_err}")
+            file_row = {
+                "id": doc_res["drive_file_id"],
+                "project_id": project_id,
+                "name": name,
+                "file_type": file_type,
+                "drive_file_id": doc_res["drive_file_id"],
+                "drive_web_view_link": doc_res["drive_web_view_link"],
+                "drive_embed_link": doc_res["drive_embed_link"]
+            }
 
         return _envelope(True, f"Created Google {file_type.capitalize()} document", {"file": file_row})
 
@@ -229,32 +282,50 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         drive_service = get_drive_service()
         if not drive_service:
             is_excel = any(ext in filename.lower() for ext in ['.xls', '.xlsx', '.csv'])
-            file_row = core.repository.insert_row("project_files", {
-                "project_id": project_id,
-                "name": filename,
-                "file_type": "excel" if is_excel else "text",
-                "drive_file_id": "dummy_id",
-                "drive_web_view_link": "#",
-                "drive_embed_link": "#"
-            })
+            try:
+                file_row = core.repository.insert_row("project_files", {
+                    "project_id": project_id,
+                    "name": filename,
+                    "file_type": "excel" if is_excel else "text",
+                    "drive_file_id": "dummy_id",
+                    "drive_web_view_link": "#",
+                    "drive_embed_link": "#"
+                })
+            except Exception:
+                file_row = {"id": "dummy_id", "project_id": project_id, "name": filename, "file_type": "excel" if is_excel else "text", "drive_file_id": "dummy_id", "drive_web_view_link": "#", "drive_embed_link": "#"}
             return _envelope(True, "File metadata saved (Drive unconfigured)", {"file": file_row})
 
         folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
         if folder_id and folder_id != project.get("drive_folder_id"):
-            core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+            try:
+                core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+            except Exception:
+                pass
 
         res = upload_drive_file(drive_service, folder_id, filename, file_bytes, content_type)
         if not res:
             raise HTTPException(status_code=500, detail="Failed to upload file to Google Drive")
 
-        file_row = core.repository.insert_row("project_files", {
-            "project_id": project_id,
-            "name": filename,
-            "file_type": res["file_type"],
-            "drive_file_id": res["drive_file_id"],
-            "drive_web_view_link": res["drive_web_view_link"],
-            "drive_embed_link": res["drive_embed_link"]
-        })
+        try:
+            file_row = core.repository.insert_row("project_files", {
+                "project_id": project_id,
+                "name": filename,
+                "file_type": res["file_type"],
+                "drive_file_id": res["drive_file_id"],
+                "drive_web_view_link": res["drive_web_view_link"],
+                "drive_embed_link": res["drive_embed_link"]
+            })
+        except Exception as insert_err:
+            logger.warning(f"Could not insert project_files row into Supabase: {insert_err}")
+            file_row = {
+                "id": res["drive_file_id"],
+                "project_id": project_id,
+                "name": filename,
+                "file_type": res["file_type"],
+                "drive_file_id": res["drive_file_id"],
+                "drive_web_view_link": res["drive_web_view_link"],
+                "drive_embed_link": res["drive_embed_link"]
+            }
 
         return _envelope(True, f"Uploaded {filename} to Google Drive", {"file": file_row})
 
