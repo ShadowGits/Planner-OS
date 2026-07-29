@@ -40,9 +40,8 @@ def get_drive_service() -> Any | None:
 
 
 def get_or_create_project_folder(service: Any, project_name: str, existing_folder_id: str | None = None) -> str | None:
-    """Ensure a Google Drive folder exists for the project."""
-    if not existing_folder_id and project_name.strip().lower() == "germany":
-        existing_folder_id = "11BSxfqTZmGOEDONsfpfuKtNHtR9dEFZi"
+    """Ensure a Google Drive subfolder exists for the project under the root Germany/Deutschland-Dash folder ID."""
+    ROOT_GERMANY_FOLDER_ID = "11BSxfqTZmGOEDONsfpfuKtNHtR9dEFZi"
 
     if existing_folder_id:
         try:
@@ -50,25 +49,12 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
             if not folder.get("trashed", False):
                 return existing_folder_id
         except Exception:
-            logger.info(f"Folder ID {existing_folder_id} invalid or trashed; creating a new one.")
+            logger.info(f"Folder ID {existing_folder_id} invalid or trashed; creating a new subfolder.")
 
     try:
-        # 1. Ensure root 'Planner OS Projects' folder exists
-        root_query = "mimeType = 'application/vnd.google-apps.folder' and name = 'Planner OS Projects' and trashed = false"
-        results = service.files().list(q=root_query, fields="files(id, name)").execute()
-        root_files = results.get("files", [])
-        
-        if root_files:
-            parent_id = root_files[0]["id"]
-        else:
-            root_metadata = {
-                "name": "Planner OS Projects",
-                "mimeType": "application/vnd.google-apps.folder",
-            }
-            root_folder = service.files().create(body=root_metadata, fields="id").execute()
-            parent_id = root_folder["id"]
+        parent_id = ROOT_GERMANY_FOLDER_ID
 
-        # 2. Check or create project subfolder
+        # Check if a subfolder with this project name already exists inside the root folder
         sub_query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{project_name}' and '{parent_id}' in parents and trashed = false"
         sub_results = service.files().list(q=sub_query, fields="files(id, name)").execute()
         sub_files = sub_results.get("files", [])
@@ -95,7 +81,7 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
         return folder["id"]
 
     except Exception as e:
-        logger.error(f"Error creating project folder: {e}")
+        logger.error(f"Error creating project subfolder: {e}")
         return None
 
 
