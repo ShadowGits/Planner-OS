@@ -219,3 +219,33 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         core = build_core(cloud.service_client, user.user_id)
         core.repository.delete_row("project_files", file_id)
         return _envelope(True, "File deleted")
+
+    @api.get("/v2/study/topics")
+    def get_study_topics(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        topics = core.repository.list_rows("study_topics")
+        return _envelope(True, "Study topics retrieved", {"topics": topics})
+
+    @api.get("/v2/study/logs")
+    def get_study_logs(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        logs = core.repository.list_rows("study_logs")
+        return _envelope(True, "Study logs retrieved", {"logs": logs})
+
+    @api.get("/v2/books")
+    def get_books(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        books = core.repository.list_rows("books")
+        return _envelope(True, "Books retrieved", {"books": books})
+
+    @api.get("/v2/germany/documents")
+    def get_germany_documents(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        documents = core.repository.list_rows("germany_documents")
+        return _envelope(True, "Germany documents retrieved", {"documents": documents})
+
+    @api.get("/v2/finance/goals")
+    def get_finance_goals(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        goals = core.repository.list_rows("finance_goals")
+        return _envelope(True, "Finance goals retrieved", {"goals": goals})
