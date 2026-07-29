@@ -152,3 +152,53 @@ def create_drive_document(
     except Exception as e:
         logger.error(f"Failed to create Drive document: {e}")
         return None
+
+
+def upload_drive_file(
+    service: Any,
+    folder_id: str,
+    file_name: str,
+    file_bytes: bytes,
+    content_type: str = "application/octet-stream"
+) -> dict[str, Any] | None:
+    """Upload a local document or spreadsheet file to Google Drive folder."""
+    from io import BytesIO
+    from googleapiclient.http import MediaIoBaseUpload
+
+    file_metadata = {
+        "name": file_name,
+        "parents": [folder_id]
+    }
+    media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=content_type, resumable=True)
+
+    try:
+        uploaded_file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id, name, webViewLink, mimeType"
+        ).execute()
+
+        file_id = uploaded_file["id"]
+
+        try:
+            service.permissions().create(
+                fileId=file_id,
+                body={"type": "anyone", "role": "writer"}
+            ).execute()
+        except Exception as perm_err:
+            logger.warning(f"Could not set file permissions: {perm_err}")
+
+        is_excel = any(ext in file_name.lower() for ext in ['.xls', '.xlsx', '.csv'])
+        file_type = "excel" if is_excel else "text"
+        embed_link = f"https://drive.google.com/file/d/{file_id}/preview"
+
+        return {
+            "drive_file_id": file_id,
+            "name": uploaded_file.get("name", file_name),
+            "file_type": file_type,
+            "drive_web_view_link": uploaded_file.get("webViewLink"),
+            "drive_embed_link": embed_link
+        }
+    except Exception as e:
+        logger.error(f"Failed to upload Drive file: {e}")
+        return None

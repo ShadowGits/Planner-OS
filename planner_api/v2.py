@@ -13,7 +13,7 @@ import secrets
 from typing import Any, Callable
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 
 from adapters.supabase import SupabaseWorkspaceRepository
 from planner_core.repository import PlannerCoreRepository
@@ -24,6 +24,7 @@ from planner_integrations.google_drive import (
     create_drive_document,
     get_drive_service,
     get_or_create_project_folder,
+    upload_drive_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,49 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         })
 
         return _envelope(True, f"Created Google {file_type.capitalize()} document", {"file": file_row})
+
+    @api.post("/v2/projects/{project_id}/files/upload")
+    async def upload_project_file(project_id: str, file: UploadFile = File(...), user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        project = core.repository.get_row("projects", project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        file_bytes = await file.read()
+        filename = file.filename or "uploaded_file"
+        content_type = file.content_type or "application/octet-stream"
+
+        drive_service = get_drive_service()
+        if not drive_service:
+            is_excel = any(ext in filename.lower() for ext in ['.xls', '.xlsx', '.csv'])
+            file_row = core.repository.insert_row("project_files", {
+                "project_id": project_id,
+                "name": filename,
+                "file_type": "excel" if is_excel else "text",
+                "drive_file_id": "dummy_id",
+                "drive_web_view_link": "#",
+                "drive_embed_link": "#"
+            })
+            return _envelope(True, "File metadata saved (Drive unconfigured)", {"file": file_row})
+
+        folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
+        if folder_id and folder_id != project.get("drive_folder_id"):
+            core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+
+        res = upload_drive_file(drive_service, folder_id, filename, file_bytes, content_type)
+        if not res:
+            raise HTTPException(status_code=500, detail="Failed to upload file to Google Drive")
+
+        file_row = core.repository.insert_row("project_files", {
+            "project_id": project_id,
+            "name": filename,
+            "file_type": res["file_type"],
+            "drive_file_id": res["drive_file_id"],
+            "drive_web_view_link": res["drive_web_view_link"],
+            "drive_embed_link": res["drive_embed_link"]
+        })
+
+        return _envelope(True, f"Uploaded {filename} to Google Drive", {"file": file_row})
 
     @api.delete("/v2/projects/{project_id}/files/{file_id}")
     def delete_project_file(project_id: str, file_id: str, user=Depends(current_user)):
