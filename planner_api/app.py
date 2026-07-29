@@ -113,13 +113,22 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             content=envelope(False, "Request validation failed", errors=["REQUEST_VALIDATION_FAILED"]),
         )
 
-    async def current_user(authorization: str | None = Header(default=None, include_in_schema=False)) -> AuthenticatedUser:
+    async def current_user(
+        authorization: str | None = Header(default=None, include_in_schema=False),
+        x_app_key: str | None = Header(default=None, include_in_schema=False)
+    ) -> AuthenticatedUser:
+        import secrets
+        import json
+
+        # Support X-App-Key header (used by dashboard and PWA)
+        app_key_expected = os.environ.get("DASHBOARD_ACCESS_KEY") or os.environ.get("PWA_ACCESS_KEY", "")
+        if app_key_expected and x_app_key and secrets.compare_digest(x_app_key, app_key_expected):
+            return AuthenticatedUser(user_id=UUID(os.environ.get("MCP_USER_ID", "00000000-0000-0000-0000-000000000000")), access_token=None)
+
         try:
             token = bearer_token(authorization)
         except AuthenticationError as error:
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
-        import secrets
-        import json
 
         # Support single-tenant MCP_API_KEY
         mcp_key = os.environ.get("MCP_API_KEY")
