@@ -33,7 +33,13 @@ from mcp.server.auth.provider import (
     RefreshToken,
 )
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    try:
+        from mcp.server import FastMCP
+    except ImportError:
+        FastMCP = None
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 
