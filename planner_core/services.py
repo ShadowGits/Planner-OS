@@ -581,11 +581,16 @@ class MetricsService:
         tasks = self.repository.list_rows("planner_tasks")
         completions = self.repository.list_rows("task_completions")
         monthly_goals = self.repository.list_rows("monthly_goals")
+        project_files = self.repository.list_rows("project_files")
 
         from collections import defaultdict
         goals_by_project = defaultdict(list)
         for mg in monthly_goals:
             goals_by_project[str(mg["project_id"])].append(mg)
+
+        files_by_project = defaultdict(list)
+        for pf in project_files:
+            files_by_project[str(pf["project_id"])].append(pf)
 
         # Sort goals by month ascending for each project
         for pid in goals_by_project:
@@ -596,11 +601,12 @@ class MetricsService:
             pm = self._project_metrics(project, milestones, tasks, today)
             
             p_goals = goals_by_project.get(str(project["id"]), [])
-            # For backward compatibility, get current month's goal
+            p_files = files_by_project.get(str(project["id"]), [])
             curr_goal = next((g for g in p_goals if g["month"] == current_month), None)
             
             pm["monthly_goal"] = curr_goal
             pm["monthly_goals"] = p_goals
+            pm["files"] = p_files
             project_metrics.append(pm)
         deadlines = self._upcoming_deadlines(milestones, tasks, today)
         streaks = self._streaks(completions, today)

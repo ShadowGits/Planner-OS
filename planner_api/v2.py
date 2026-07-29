@@ -20,6 +20,12 @@ from planner_core.repository import PlannerCoreRepository
 from planner_core.services import GoalService, MetricsService, ProjectService, ReminderService, TaskService
 from planner_core.telegram import TelegramClient, TelegramError, parse_command, sender_chat_id
 
+from planner_integrations.google_drive import (
+    create_drive_document,
+    get_drive_service,
+    get_or_create_project_folder,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -158,3 +164,58 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             except TelegramError as error:
                 logger.error("Telegram reply failed: %s", error)
         return _envelope(True, "Handled", {"action": action})
+
+    @api.get("/v2/projects/{project_id}/files")
+    def list_project_files(project_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        files = core.repository.list_rows("project_files", {"project_id": project_id})
+        return _envelope(True, "Project files retrieved", {"files": files})
+
+    @api.post("/v2/projects/{project_id}/files/create-document")
+    async def create_project_document(project_id: str, request: Request, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        body = await request.json()
+        name = body.get("name", "Untitled Document")
+        file_type = body.get("file_type", "text")
+
+        project = core.repository.get_row("projects", project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        drive_service = get_drive_service()
+        if not drive_service:
+            # Fallback if Google Drive service is not authenticated
+            file_row = core.repository.insert_row("project_files", {
+                "project_id": project_id,
+                "name": name,
+                "file_type": file_type,
+                "drive_file_id": "dummy_id",
+                "drive_web_view_link": "#",
+                "drive_embed_link": "#"
+            })
+            return _envelope(True, "File metadata saved (Drive unconfigured)", {"file": file_row})
+
+        folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
+        if folder_id and folder_id != project.get("drive_folder_id"):
+            core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+
+        doc_res = create_drive_document(drive_service, folder_id, name, file_type)
+        if not doc_res:
+            raise HTTPException(status_code=500, detail="Failed to create document in Google Drive")
+
+        file_row = core.repository.insert_row("project_files", {
+            "project_id": project_id,
+            "name": name,
+            "file_type": file_type,
+            "drive_file_id": doc_res["drive_file_id"],
+            "drive_web_view_link": doc_res["drive_web_view_link"],
+            "drive_embed_link": doc_res["drive_embed_link"]
+        })
+
+        return _envelope(True, f"Created Google {file_type.capitalize()} document", {"file": file_row})
+
+    @api.delete("/v2/projects/{project_id}/files/{file_id}")
+    def delete_project_file(project_id: str, file_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        core.repository.delete_row("project_files", file_id)
+        return _envelope(True, "File deleted")
