@@ -422,7 +422,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                         service.files().delete(fileId=f["id"]).execute()
                         deleted_ids.append(f["id"])
                     except Exception as e:
-                        logger.warning(f"Failed to delete duplicate folder {name} ({f[id]}): {e}")
+                        logger.warning(f"Failed to delete duplicate folder {name} ({f['id']}): {e}")
                 else:
                     seen.add(name)
 
