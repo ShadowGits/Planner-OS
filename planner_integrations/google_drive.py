@@ -13,7 +13,7 @@ from googleapiclient.discovery import build
 logger = logging.getLogger(__name__)
 
 SCOPES = [
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive",
 ]
 
 
@@ -51,37 +51,19 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None, works
             conn = connections.get(ctx.user_id, ctx.workspace_id)
             if conn and conn.status == "active":
                 data = json.loads(cipher.decrypt(conn.encrypted_credentials, context=ctx))
-                granted = set((data.get("scopes") or "").split()) if isinstance(data.get("scopes"), str) else set(data.get("scopes") or [])
-                has_drive_scope = any(s for s in granted if "drive" in s and "drive.appdata" not in s)
-                if not has_drive_scope:
-                    logger.info("User OAuth token lacks Drive scopes, falling back to service account")
-                else:
-                    creds = Credentials.from_authorized_user_info(data, SCOPES)
-                    if creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
-                    svc = build("drive", "v3", credentials=creds)
-                    svc.files().list(pageSize=1, fields="files(id)").execute()
-                    return svc
+                creds = Credentials.from_authorized_user_info(data, SCOPES)
+                if creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                svc = build("drive", "v3", credentials=creds)
+                svc.files().list(pageSize=1, fields="files(id)").execute()
+                return svc
         except Exception as e:
             logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
-
-    creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
-    creds_file = os.environ.get("GCP_SERVICE_ACCOUNT_FILE")
-
-    try:
-        if creds_json:
-            info = json.loads(creds_json)
-            creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-        elif creds_file and os.path.exists(creds_file):
-            creds = service_account.Credentials.from_service_account_file(creds_file, scopes=SCOPES)
-        else:
-            logger.warning("No GCP_SERVICE_ACCOUNT_JSON or GCP_SERVICE_ACCOUNT_FILE found in environment.")
-            return None
-
-        return build("drive", "v3", credentials=creds)
-    except Exception as e:
-        logger.error(f"Failed to initialize Google Drive service: {e}")
-        return None
+            
+    # If we get here, either user didn't exist, no gateway, no connections, or OAuth failed.
+    # Return None so the application knows authentication failed (and can prompt user),
+    # rather than falling back to the Service Account which would use the wrong quota.
+    return None
 
 
 def get_or_create_project_folder(service: Any, project_name: str, existing_folder_id: str | None = None) -> str | None:
@@ -101,7 +83,7 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
 
         # Check if a subfolder with this project name already exists inside the root folder
         sub_query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{project_name}' and '{parent_id}' in parents and trashed = false"
-        sub_results = service.files().list(q=sub_query, fields="files(id, name)", orderBy="createdTime asc").execute()
+        sub_results = service.files().list(q=sub_query, fields="files(id, name)").execute()
         sub_files = sub_results.get("files", [])
 
         if sub_files:
