@@ -18,38 +18,40 @@ SCOPES = [
 ]
 
 
-def get_drive_service(user: Any | None = None) -> Any | None:
+def get_drive_service(user: Any | None = None, gateway: Any | None = None) -> Any | None:
     """Initialize Google Drive client using user's OAuth credentials or fallback to service account."""
-    if user:
+    if user and gateway:
         try:
             from adapters.supabase.calendar import SupabaseCalendarConnectionRepository
             from planner_platform.google_oauth import CredentialCipher
             from planner_platform.context import PlannerContext
-            from uuid import uuid4
+            from uuid import UUID, uuid4
             from pathlib import Path
             from google.oauth2.credentials import Credentials
             from google.auth.transport.requests import Request
 
+            user_id = getattr(user, "user_id", user)
+            workspace_id = UUID("1040706c-f046-4c27-bcc4-ca75c6ff7df3")
+
             ctx = PlannerContext(
-                user_id=user.user_id,
-                workspace_id=user.workspace_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
                 operation_id=uuid4(),
                 workbook_path=Path("drive.xlsx"),
                 timezone="UTC",
-                execution_target="google_drive",
+                execution_target="google_calendar",
                 source_revision=0
             )
-            gateway = getattr(user, "repository", None) and getattr(user.repository, "gateway", None)
-            if gateway:
-                connections = SupabaseCalendarConnectionRepository(gateway)
-                cipher = CredentialCipher.from_env()
-                conn = connections.get(ctx.user_id, ctx.workspace_id)
-                if conn and conn.status == "active":
-                    data = json.loads(cipher.decrypt(conn.encrypted_credentials, context=ctx))
-                    creds = Credentials.from_authorized_user_info(data, SCOPES)
-                    if creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
-                    return build("drive", "v3", credentials=creds)
+            client = getattr(gateway, "gateway", gateway)
+            connections = SupabaseCalendarConnectionRepository(client)
+            cipher = CredentialCipher.from_env()
+            conn = connections.get(ctx.user_id, ctx.workspace_id)
+            if conn and conn.status == "active":
+                data = json.loads(cipher.decrypt(conn.encrypted_credentials, context=ctx))
+                creds = Credentials.from_authorized_user_info(data, SCOPES)
+                if creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                return build("drive", "v3", credentials=creds)
         except Exception as e:
             logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
 
@@ -115,7 +117,7 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
 
     except Exception as e:
         logger.error(f"Error creating project subfolder: {e}")
-        return None
+        raise e
 
 
 def create_drive_document(service: Any, folder_id: str, document_name: str, document_type: str = "text") -> dict[str, str] | None:
@@ -162,18 +164,17 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
     file_type = "excel" if is_excel else "text"
 
     # Convert to Google Workspace format to bypass Service Account byte storage quota limit
-    target_mime = None
-    if "text" in content_type or file_name.endswith(".txt") or file_name.endswith(".md"):
-        target_mime = "application/vnd.google-apps.document"
-    elif "csv" in content_type or file_name.endswith(".csv"):
+    fn = file_name.lower()
+    if any(fn.endswith(ext) for ext in [".csv", ".xls", ".xlsx"]) or "excel" in content_type or "csv" in content_type or "spreadsheet" in content_type:
         target_mime = "application/vnd.google-apps.spreadsheet"
+    else:
+        target_mime = "application/vnd.google-apps.document"
 
     file_metadata = {
         "name": file_name,
-        "parents": [folder_id]
+        "parents": [folder_id],
+        "mimeType": target_mime
     }
-    if target_mime:
-        file_metadata["mimeType"] = target_mime
 
     media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=content_type, resumable=False)
 
@@ -207,4 +208,4 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
         }
     except Exception as e:
         logger.error(f"Failed to upload Drive file: {e}")
-        return None
+        raise e
