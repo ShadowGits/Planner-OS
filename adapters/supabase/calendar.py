@@ -138,10 +138,17 @@ class SupabaseOAuthStateRepository:
         return state
 
     def consume(self, state: str) -> OAuthState:
+        import logging
+        logger = logging.getLogger(__name__)
+        state_hash = self._hash(state)
+        logger.error(f"OAuth consume: state_hash={state_hash[:16]}..., state_len={len(state)}")
+        existing = self.service_client.select("oauth_states", filters={"state_hash": state_hash}, limit=1)
+        logger.error(f"OAuth consume: found {len(existing)} rows, consumed={existing[0].get('consumed_at') if existing else 'N/A'}, expires={existing[0].get('expires_at') if existing else 'N/A'}")
         result = self.service_client.rpc(
             "consume_google_oauth_state",
-            {"p_state_hash": self._hash(state)},
+            {"p_state_hash": state_hash},
         )
+        logger.error(f"OAuth consume: rpc result={result}")
         if not result:
             raise ValueError("Google OAuth state is invalid, expired, or already used")
         row = result[0] if isinstance(result, list) else result
