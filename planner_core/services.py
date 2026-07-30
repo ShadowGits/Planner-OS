@@ -209,7 +209,7 @@ class GoalService:
 
     def week_view(self, week_start: date) -> dict[str, Any]:
         """Return monthly and weekly goals that intersect this week."""
-        month_starts = {week_start.replace(day=1), (week_start + timedelta(days=6)).replace(day=1)}
+        month_starts = {week_start.replace(day=1)}
         monthly_goals = []
         for ms in month_starts:
             monthly_goals.extend(self.repository.list_rows("monthly_goals", {"month": ms.isoformat()}))
