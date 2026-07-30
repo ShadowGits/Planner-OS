@@ -93,7 +93,7 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         allow_origins=origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-App-Key"],
     )
 
     @api.exception_handler(HTTPException)
