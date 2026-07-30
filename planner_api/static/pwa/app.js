@@ -673,6 +673,7 @@
     $("sheet-delete").classList.add("hidden");
     $("new-title").value = "";
     $("new-title").disabled = false;
+    $("new-date").value = iso(state.selected);
     $("new-time").value = prefillMin != null ? minToTime(prefillMin) : "";
     setDuration(30);
     openSheetEl();
@@ -686,6 +687,7 @@
     $("sheet-delete").classList.remove("hidden");
     $("new-title").value = task.title;
     $("new-title").disabled = false;
+    $("new-date").value = task.scheduled_date || iso(state.selected);
     $("new-time").value = task.start_time ? task.start_time.slice(0, 5) : "";
     setDuration(task.estimated_minutes || 30);
     openSheetEl();
@@ -727,17 +729,19 @@
     const title = $("new-title").value.trim();
     if (!title) return;
     const time = $("new-time").value || null;
+    const dateVal = $("new-date").value || iso(state.selected);
     try {
       if (state.editing) {
         await api("PATCH", `/v2/day/tasks/${state.editing}`, {
           title,
+          scheduled_date: dateVal,
           start_time: time,
           estimated_minutes: sheetMinutes,
         });
       } else {
         await api("POST", "/v2/day/tasks", {
           title,
-          date: iso(state.selected),
+          date: dateVal,
           start_time: time,
           estimated_minutes: sheetMinutes,
         });
