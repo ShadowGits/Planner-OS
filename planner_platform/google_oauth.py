@@ -123,6 +123,8 @@ class GoogleOAuthService:
         return context
 
     def _google_flow(self, redirect_uri: str, state: str | None, code_verifier: str):
+        import os
+        os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
         from google_auth_oauthlib.flow import Flow
 
         flow = Flow.from_client_config(
