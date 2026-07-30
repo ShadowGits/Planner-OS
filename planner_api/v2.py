@@ -190,9 +190,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                                 is_excel = "spreadsheet" in f.get("mimeType", "") or any(ext in f.get("name", "").lower() for ext in [".xls", ".xlsx", ".csv"])
                                 ftype = "excel" if is_excel else "text"
                                 fid = f["id"]
-                                embed = f"https://docs.google.com/document/d/{fid}/edit?embedded=true" if ftype == "text" else (
-                                    f"https://docs.google.com/spreadsheets/d/{fid}/edit?embedded=true" if ftype == "excel" else f"https://drive.google.com/file/d/{fid}/preview"
-                                )
+                                embed = f"https://drive.google.com/file/d/{fid}/preview"
                                 drive_file_rows.append({
                                     "id": fid,
                                     "project_id": project_id,

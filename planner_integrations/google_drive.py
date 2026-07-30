@@ -163,17 +163,9 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
     is_excel = any(ext in file_name.lower() for ext in ['.xls', '.xlsx', '.csv'])
     file_type = "excel" if is_excel else "text"
 
-    # Convert to Google Workspace format to bypass Service Account byte storage quota limit
-    fn = file_name.lower()
-    if any(fn.endswith(ext) for ext in [".csv", ".xls", ".xlsx"]) or "excel" in content_type or "csv" in content_type or "spreadsheet" in content_type:
-        target_mime = "application/vnd.google-apps.spreadsheet"
-    else:
-        target_mime = "application/vnd.google-apps.document"
-
     file_metadata = {
         "name": file_name,
-        "parents": [folder_id],
-        "mimeType": target_mime
+        "parents": [folder_id]
     }
 
     media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=content_type, resumable=False)
@@ -195,9 +187,7 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
         except Exception as perm_err:
             logger.warning(f"Could not set file permissions: {perm_err}")
 
-        embed_link = f"https://docs.google.com/document/d/{file_id}/edit?embedded=true" if file_type == "text" else (
-            f"https://docs.google.com/spreadsheets/d/{file_id}/edit?embedded=true" if file_type == "excel" else f"https://drive.google.com/file/d/{file_id}/preview"
-        )
+        embed_link = f"https://drive.google.com/file/d/{file_id}/preview"
 
         return {
             "drive_file_id": file_id,
