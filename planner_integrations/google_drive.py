@@ -51,12 +51,17 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None, works
             conn = connections.get(ctx.user_id, ctx.workspace_id)
             if conn and conn.status == "active":
                 data = json.loads(cipher.decrypt(conn.encrypted_credentials, context=ctx))
-                creds = Credentials.from_authorized_user_info(data, SCOPES)
-                if creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                svc = build("drive", "v3", credentials=creds)
-                svc.files().list(pageSize=1, fields="files(id)").execute()
-                return svc
+                granted = set((data.get("scopes") or "").split()) if isinstance(data.get("scopes"), str) else set(data.get("scopes") or [])
+                has_drive_scope = any(s for s in granted if "drive" in s and "drive.appdata" not in s)
+                if not has_drive_scope:
+                    logger.info("User OAuth token lacks Drive scopes, falling back to service account")
+                else:
+                    creds = Credentials.from_authorized_user_info(data, SCOPES)
+                    if creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                    svc = build("drive", "v3", credentials=creds)
+                    svc.files().list(pageSize=1, fields="files(id)").execute()
+                    return svc
         except Exception as e:
             logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
 
