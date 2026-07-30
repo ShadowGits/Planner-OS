@@ -18,8 +18,41 @@ SCOPES = [
 ]
 
 
-def get_drive_service() -> Any | None:
-    """Initialize Google Drive service account client."""
+def get_drive_service(user: Any | None = None) -> Any | None:
+    """Initialize Google Drive client using user's OAuth credentials or fallback to service account."""
+    if user:
+        try:
+            from adapters.supabase.calendar import SupabaseCalendarConnectionRepository
+            from planner_platform.google_oauth import CredentialCipher
+            from planner_platform.context import PlannerContext
+            from uuid import uuid4
+            from pathlib import Path
+            from google.oauth2.credentials import Credentials
+            from google.auth.transport.requests import Request
+
+            ctx = PlannerContext(
+                user_id=user.user_id,
+                workspace_id=user.workspace_id,
+                operation_id=uuid4(),
+                workbook_path=Path("drive.xlsx"),
+                timezone="UTC",
+                execution_target="google_drive",
+                source_revision=0
+            )
+            gateway = getattr(user, "repository", None) and getattr(user.repository, "gateway", None)
+            if gateway:
+                connections = SupabaseCalendarConnectionRepository(gateway)
+                cipher = CredentialCipher.from_env()
+                conn = connections.get(ctx.user_id, ctx.workspace_id)
+                if conn and conn.status == "active":
+                    data = json.loads(cipher.decrypt(conn.encrypted_credentials, context=ctx))
+                    creds = Credentials.from_authorized_user_info(data, SCOPES)
+                    if creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                    return build("drive", "v3", credentials=creds)
+        except Exception as e:
+            logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
+
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
     creds_file = os.environ.get("GCP_SERVICE_ACCOUNT_FILE")
     
@@ -85,34 +118,20 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
         return None
 
 
-def create_drive_document(
-    service: Any, 
-    folder_id: str, 
-    title: str, 
-    file_type: str = "text"
-) -> dict[str, Any] | None:
-    """Create a Google Doc or Google Sheet inside the given folder."""
-    mime_type_map = {
-        "text": "application/vnd.google-apps.document",
-        "excel": "application/vnd.google-apps.spreadsheet"
-    }
-    mime_type = mime_type_map.get(file_type, "application/vnd.google-apps.document")
+def create_drive_document(service: Any, folder_id: str, document_name: str, document_type: str = "text") -> dict[str, str] | None:
+    """Create an empty Google Doc or Google Sheet in the specified folder."""
+    mime_type = "application/vnd.google-apps.spreadsheet" if document_type == "excel" else "application/vnd.google-apps.document"
     
     file_metadata = {
-        "name": title,
+        "name": document_name,
         "mimeType": mime_type,
         "parents": [folder_id]
     }
 
     try:
-        created_file = service.files().create(
-            body=file_metadata,
-            fields="id, name, webViewLink"
-        ).execute()
-
-        file_id = created_file["id"]
-
-        # Grant 'anyone with link' writer permission so embedded iframe can view/edit
+        file = service.files().create(body=file_metadata, fields="id, name, webViewLink").execute()
+        file_id = file["id"]
+        
         try:
             service.permissions().create(
                 fileId=file_id,
@@ -121,18 +140,12 @@ def create_drive_document(
         except Exception as perm_err:
             logger.warning(f"Could not set file permissions: {perm_err}")
 
-        # Construct embed link for iframe
-        if file_type == "text":
-            embed_link = f"https://docs.google.com/document/d/{file_id}/edit?embedded=true"
-        elif file_type == "excel":
-            embed_link = f"https://docs.google.com/spreadsheets/d/{file_id}/edit?embedded=true"
-        else:
-            embed_link = f"https://drive.google.com/file/d/{file_id}/preview"
+        embed_link = f"https://docs.google.com/document/d/{file_id}/edit?embedded=true" if document_type == "text" else f"https://docs.google.com/spreadsheets/d/{file_id}/edit?embedded=true"
 
         return {
             "drive_file_id": file_id,
-            "name": created_file.get("name", title),
-            "drive_web_view_link": created_file.get("webViewLink"),
+            "name": file.get("name", document_name),
+            "drive_web_view_link": file.get("webViewLink"),
             "drive_embed_link": embed_link
         }
     except Exception as e:
@@ -140,22 +153,29 @@ def create_drive_document(
         return None
 
 
-def upload_drive_file(
-    service: Any,
-    folder_id: str,
-    file_name: str,
-    file_bytes: bytes,
-    content_type: str = "application/octet-stream"
-) -> dict[str, Any] | None:
+def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: bytes, content_type: str = "application/octet-stream") -> dict[str, str] | None:
     """Upload a local document or spreadsheet file to Google Drive folder."""
     from io import BytesIO
     from googleapiclient.http import MediaIoBaseUpload
+
+    is_excel = any(ext in file_name.lower() for ext in ['.xls', '.xlsx', '.csv'])
+    file_type = "excel" if is_excel else "text"
+
+    # Convert to Google Workspace format to bypass Service Account byte storage quota limit
+    target_mime = None
+    if "text" in content_type or file_name.endswith(".txt") or file_name.endswith(".md"):
+        target_mime = "application/vnd.google-apps.document"
+    elif "csv" in content_type or file_name.endswith(".csv"):
+        target_mime = "application/vnd.google-apps.spreadsheet"
 
     file_metadata = {
         "name": file_name,
         "parents": [folder_id]
     }
-    media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=content_type, resumable=True)
+    if target_mime:
+        file_metadata["mimeType"] = target_mime
+
+    media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=content_type, resumable=False)
 
     try:
         uploaded_file = service.files().create(
@@ -174,9 +194,9 @@ def upload_drive_file(
         except Exception as perm_err:
             logger.warning(f"Could not set file permissions: {perm_err}")
 
-        is_excel = any(ext in file_name.lower() for ext in ['.xls', '.xlsx', '.csv'])
-        file_type = "excel" if is_excel else "text"
-        embed_link = f"https://drive.google.com/file/d/{file_id}/preview"
+        embed_link = f"https://docs.google.com/document/d/{file_id}/edit?embedded=true" if file_type == "text" else (
+            f"https://docs.google.com/spreadsheets/d/{file_id}/edit?embedded=true" if file_type == "excel" else f"https://drive.google.com/file/d/{file_id}/preview"
+        )
 
         return {
             "drive_file_id": file_id,
