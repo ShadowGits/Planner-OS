@@ -387,3 +387,45 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         core = build_core(cloud.service_client, user.user_id)
         goals = core.repository.list_rows("finance_goals")
         return _envelope(True, "Finance goals retrieved", {"goals": goals})
+
+    @api.post("/v2/admin/cleanup-duplicates")
+    async def cleanup_duplicate_folders(user=Depends(current_user)):
+        """Temporary endpoint to delete duplicate empty project folders generated during the scope bug."""
+        try:
+            import os, json
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+
+            creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+            creds_file = os.environ.get("GCP_SERVICE_ACCOUNT_FILE")
+            
+            if creds_json:
+                info = json.loads(creds_json)
+                creds = service_account.Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/drive"])
+            elif creds_file and os.path.exists(creds_file):
+                creds = service_account.Credentials.from_service_account_file(creds_file, scopes=["https://www.googleapis.com/auth/drive"])
+            else:
+                raise Exception("No Service Account credentials found to run cleanup.")
+
+            service = build("drive", "v3", credentials=creds)
+            ROOT = "11BSxfqTZmGOEDONsfpfuKtNHtR9dEFZi"
+            q = f"mimeType='application/vnd.google-apps.folder' and '{ROOT}' in parents and trashed=false"
+            res = service.files().list(q=q, fields="files(id, name, createdTime)", orderBy="createdTime asc").execute()
+            folders = res.get("files", [])
+
+            seen = set()
+            deleted_ids = []
+            for f in folders:
+                name = f["name"]
+                if name in seen:
+                    try:
+                        service.files().delete(fileId=f["id"]).execute()
+                        deleted_ids.append(f["id"])
+                    except Exception as e:
+                        logger.warning(f"Failed to delete duplicate folder {name} ({f[id]}): {e}")
+                else:
+                    seen.add(name)
+
+            return _envelope(True, f"Cleanup complete. Deleted {len(deleted_ids)} duplicate folders.", {"deleted": deleted_ids})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
