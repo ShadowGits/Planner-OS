@@ -1,8 +1,10 @@
-mcp>=1.0.0
+mcp[cli]>=1.2.0
+fastmcp>=0.1.0
 google-api-python-client>=2.0.0
 google-auth-httplib2>=0.2.0
 google-auth-oauthlib>=1.0.0
 cryptography>=42.0.0
 fastapi>=0.115.0
+python-multipart>=0.0.12
 PyJWT[crypto]>=2.10.0
 uvicorn>=0.34.0

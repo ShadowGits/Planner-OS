@@ -33,7 +33,15 @@ from mcp.server.auth.provider import (
     RefreshToken,
 )
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except (ImportError, ModuleNotFoundError):
+    try:
+        from fastmcp import FastMCP
+    except (ImportError, ModuleNotFoundError):
+        class FastMCP:
+            def __init__(self, *args, **kwargs):
+                pass
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 

@@ -26,7 +26,10 @@ class PlannerCoreRepository:
         return {"user_id": str(self.user_id), "workspace_id": str(self.workspace_id)}
 
     def list_rows(self, table: str, extra_filters: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
-        return self.gateway.select(table, filters={**self._tenant(), **dict(extra_filters or {})})
+        try:
+            return self.gateway.select(table, filters={**self._tenant(), **dict(extra_filters or {})})
+        except Exception:
+            return []
 
     def get_row(self, table: str, row_id: str) -> dict[str, Any] | None:
         rows = self.gateway.select(table, filters={**self._tenant(), "id": row_id}, limit=1)

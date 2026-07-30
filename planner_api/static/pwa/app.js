@@ -7,7 +7,7 @@
   "use strict";
 
   const SNAP_MIN = 5;
-  const GAP_MIN = 15;
+  const GAP_MIN = 45;
   const PX_PER_MIN = 1.8; // proportional: an hour is a real, scrollable hour
   const MIN_ROW_PX = 52;
   const KEY_STORE = "day-planner-key";

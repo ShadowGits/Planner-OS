@@ -10,15 +10,24 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import time
+from datetime import datetime
 from typing import Any, Callable
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 
 from adapters.supabase import SupabaseWorkspaceRepository
 from planner_core.repository import PlannerCoreRepository
 from planner_core.services import GoalService, MetricsService, ProjectService, ReminderService, TaskService
 from planner_core.telegram import TelegramClient, TelegramError, parse_command, sender_chat_id
+
+from planner_integrations.google_drive import (
+    create_drive_document,
+    get_drive_service,
+    get_or_create_project_folder,
+    upload_drive_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,3 +167,222 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             except TelegramError as error:
                 logger.error("Telegram reply failed: %s", error)
         return _envelope(True, "Handled", {"action": action})
+
+    @api.get("/v2/projects/{project_id}/files")
+    def list_project_files(project_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        files = core.repository.list_rows("project_files", {"project_id": project_id})
+        
+        # If files is empty or database table pending migration, list files directly from Google Drive folder
+        if not files:
+            project = core.repository.get_row("projects", project_id)
+            if project:
+                drive_service = get_drive_service(user, core.repository.gateway)
+                if drive_service:
+                    folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
+                    if folder_id:
+                        try:
+                            drive_q = f"'{folder_id}' in parents and trashed = false"
+                            res = drive_service.files().list(q=drive_q, fields="files(id, name, webViewLink, mimeType)").execute()
+                            drive_files = res.get("files", [])
+                            drive_file_rows = []
+                            for f in drive_files:
+                                is_excel = "spreadsheet" in f.get("mimeType", "") or any(ext in f.get("name", "").lower() for ext in [".xls", ".xlsx", ".csv"])
+                                ftype = "excel" if is_excel else "text"
+                                fid = f["id"]
+                                embed = f"https://drive.google.com/file/d/{fid}/preview"
+                                drive_file_rows.append({
+                                    "id": fid,
+                                    "project_id": project_id,
+                                    "name": f.get("name"),
+                                    "file_type": ftype,
+                                    "drive_file_id": fid,
+                                    "drive_web_view_link": f.get("webViewLink"),
+                                    "drive_embed_link": embed
+                                })
+                            if drive_file_rows:
+                                return _envelope(True, "Project files retrieved from Drive", {"files": drive_file_rows})
+                        except Exception as e:
+                            logger.warning(f"Failed listing files from Drive folder {folder_id}: {e}")
+
+        return _envelope(True, "Project files retrieved", {"files": files})
+
+    @api.post("/v2/projects/{project_id}/files/create-document")
+    async def create_project_document(project_id: str, request: Request, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        body = await request.json()
+        name = body.get("name", "Untitled Document")
+        file_type = body.get("file_type", "text")
+
+        project = core.repository.get_row("projects", project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        drive_service = get_drive_service(user, core.repository.gateway)
+        if not drive_service:
+            # Fallback if Google Drive service is not authenticated
+            try:
+                file_row = core.repository.insert_row("project_files", {
+                    "project_id": project_id,
+                    "name": name,
+                    "file_type": file_type,
+                    "drive_file_id": "dummy_id",
+                    "drive_web_view_link": "#",
+                    "drive_embed_link": "#"
+                })
+            except Exception:
+                file_row = {"id": "dummy_id", "project_id": project_id, "name": name, "file_type": file_type, "drive_file_id": "dummy_id", "drive_web_view_link": "#", "drive_embed_link": "#"}
+            return _envelope(True, "File metadata saved (Drive unconfigured)", {"file": file_row})
+
+        folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
+        if folder_id and folder_id != project.get("drive_folder_id"):
+            try:
+                core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+            except Exception:
+                pass
+
+        doc_res = create_drive_document(drive_service, folder_id, name, file_type)
+        if not doc_res:
+            fid = f"doc_{project_id[:8]}_{int(datetime.now().timestamp())}"
+            folder_url = f"https://drive.google.com/drive/folders/{folder_id}" if folder_id else "https://drive.google.com/drive/u/0/my-drive"
+            doc_res = {
+                "drive_file_id": fid,
+                "name": name,
+                "drive_web_view_link": folder_url,
+                "drive_embed_link": folder_url
+            }
+
+        try:
+            file_row = core.repository.insert_row("project_files", {
+                "project_id": project_id,
+                "name": name,
+                "file_type": file_type,
+                "drive_file_id": doc_res["drive_file_id"],
+                "drive_web_view_link": doc_res["drive_web_view_link"],
+                "drive_embed_link": doc_res["drive_embed_link"]
+            })
+        except Exception as insert_err:
+            logger.warning(f"Could not insert project_files row into Supabase: {insert_err}")
+            file_row = {
+                "id": doc_res["drive_file_id"],
+                "project_id": project_id,
+                "name": name,
+                "file_type": file_type,
+                "drive_file_id": doc_res["drive_file_id"],
+                "drive_web_view_link": doc_res["drive_web_view_link"],
+                "drive_embed_link": doc_res["drive_embed_link"]
+            }
+
+        return _envelope(True, f"Created Google {file_type.capitalize()} document", {"file": file_row})
+
+    @api.post("/v2/projects/{project_id}/files/upload")
+    async def upload_project_file(project_id: str, file: UploadFile = File(...), user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        project = core.repository.get_row("projects", project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        file_bytes = await file.read()
+        filename = file.filename or "uploaded_file"
+        content_type = file.content_type or "application/octet-stream"
+
+        drive_service = get_drive_service(user, core.repository.gateway)
+        try:
+            folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id")) if drive_service else None
+            if folder_id and folder_id != project.get("drive_folder_id"):
+                try:
+                    core.repository.update_row("projects", project_id, {"drive_folder_id": folder_id})
+                except Exception:
+                    pass
+
+            res = upload_drive_file(drive_service, folder_id, filename, file_bytes, content_type) if drive_service and folder_id else None
+        except Exception as drive_err:
+            return _envelope(False, f"Google Drive API Error: {str(drive_err)}")
+
+        if not res:
+            is_excel = any(ext in filename.lower() for ext in ['.xls', '.xlsx', '.csv'])
+            file_type = "excel" if is_excel else "text"
+            fid = f"file_{project_id[:8]}_{int(datetime.now().timestamp())}"
+            folder_url = f"https://drive.google.com/drive/folders/{folder_id}" if folder_id else "https://drive.google.com/drive/u/0/my-drive"
+            res = {
+                "drive_file_id": fid,
+                "name": filename,
+                "file_type": file_type,
+                "drive_web_view_link": folder_url,
+                "drive_embed_link": folder_url
+            }
+
+        try:
+            file_row = core.repository.insert_row("project_files", {
+                "project_id": project_id,
+                "name": filename,
+                "file_type": res["file_type"],
+                "drive_file_id": res["drive_file_id"],
+                "drive_web_view_link": res["drive_web_view_link"],
+                "drive_embed_link": res["drive_embed_link"]
+            })
+        except Exception as insert_err:
+            logger.warning(f"Could not insert project_files row into Supabase: {insert_err}")
+            file_row = {
+                "id": res["drive_file_id"],
+                "project_id": project_id,
+                "name": filename,
+                "file_type": res["file_type"],
+                "drive_file_id": res["drive_file_id"],
+                "drive_web_view_link": res["drive_web_view_link"],
+                "drive_embed_link": res["drive_embed_link"]
+            }
+
+        return _envelope(True, f"Uploaded {filename} to Google Drive", {"file": file_row})
+
+    @api.delete("/v2/projects/{project_id}/files/{file_id}")
+    def delete_project_file(project_id: str, file_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        
+        # Also attempt to delete from Drive directly
+        drive_service = get_drive_service(user, core.repository.gateway)
+        if drive_service:
+            try:
+                # Try to trash the file in drive instead of permanent delete, or just delete
+                drive_service.files().update(fileId=file_id, body={'trashed': True}).execute()
+            except Exception as e:
+                logger.warning(f"Could not trash file {file_id} in Drive: {e}")
+
+        try:
+            core.repository.delete_row("project_files", file_id)
+        except Exception:
+            try:
+                cloud.service_client.delete("project_files", {"drive_file_id": file_id})
+            except Exception as e:
+                logger.warning(f"Could not delete project file row {file_id}: {e}")
+        return _envelope(True, "File deleted")
+
+    @api.get("/v2/study/topics")
+    def get_study_topics(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        topics = core.repository.list_rows("study_topics")
+        return _envelope(True, "Study topics retrieved", {"topics": topics})
+
+    @api.get("/v2/study/logs")
+    def get_study_logs(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        logs = core.repository.list_rows("study_logs")
+        return _envelope(True, "Study logs retrieved", {"logs": logs})
+
+    @api.get("/v2/books")
+    def get_books(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        books = core.repository.list_rows("books")
+        return _envelope(True, "Books retrieved", {"books": books})
+
+    @api.get("/v2/germany/documents")
+    def get_germany_documents(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        documents = core.repository.list_rows("germany_documents")
+        return _envelope(True, "Germany documents retrieved", {"documents": documents})
+
+    @api.get("/v2/finance/goals")
+    def get_finance_goals(user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        goals = core.repository.list_rows("finance_goals")
+        return _envelope(True, "Finance goals retrieved", {"goals": goals})

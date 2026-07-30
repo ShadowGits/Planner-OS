@@ -8,7 +8,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 
-EXECUTION_TARGETS = frozenset({"google_calendar", "apple_calendar", "none"})
+EXECUTION_TARGETS = frozenset({"google_calendar", "apple_calendar", "google_drive", "none"})
 
 
 @dataclass(frozen=True)
