@@ -480,8 +480,12 @@ class TaskService:
         for row in self.repository.list_rows("planner_tasks"):
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
-            if planned != target and due != target:
-                continue
+            if planned:
+                if planned != target:
+                    continue
+            else:
+                if due != target:
+                    continue
             items.append(
                 {
                     "id": row["id"],
@@ -526,8 +530,12 @@ class TaskService:
         for row in self.repository.list_rows("planner_tasks"):
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
-            if planned not in week_dates and due not in week_dates:
-                continue
+            if planned:
+                if planned not in week_dates:
+                    continue
+            else:
+                if due not in week_dates:
+                    continue
             items.append(
                 {
                     "id": row["id"],
