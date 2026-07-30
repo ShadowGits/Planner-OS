@@ -58,7 +58,7 @@ class CloudRuntime:
         )
 
     def google_oauth_for_user(self, user: AuthenticatedUser) -> GoogleOAuthService:
-        client = self.user_client(user)
+        client = self.service_client if user.access_token is None else self.user_client(user)
         return GoogleOAuthService(
             SupabaseOAuthStateRepository(client, self.service_client),
             SupabaseCalendarConnectionRepository(client),
