@@ -64,7 +64,6 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None) -> An
 
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
     creds_file = os.environ.get("GCP_SERVICE_ACCOUNT_FILE")
-    delegate_to = os.environ.get("DRIVE_DELEGATE_EMAIL")
 
     try:
         if creds_json:
@@ -75,9 +74,6 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None) -> An
         else:
             logger.warning("No GCP_SERVICE_ACCOUNT_JSON or GCP_SERVICE_ACCOUNT_FILE found in environment.")
             return None
-
-        if delegate_to:
-            creds = creds.with_subject(delegate_to)
 
         return build("drive", "v3", credentials=creds)
     except Exception as e:

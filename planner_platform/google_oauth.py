@@ -18,7 +18,10 @@ from adapters.supabase.calendar import (
     SupabaseCalendarConnectionRepository,
     SupabaseOAuthStateRepository,
 )
-from planner_integrations.google_calendar import GoogleCalendarClient, SCOPES
+from planner_integrations.google_calendar import GoogleCalendarClient, SCOPES as CALENDAR_SCOPES
+from planner_integrations.google_drive import SCOPES as DRIVE_SCOPES
+
+SCOPES = list(set(CALENDAR_SCOPES) | set(DRIVE_SCOPES))
 from planner_platform.context import PlannerContext
 
 
