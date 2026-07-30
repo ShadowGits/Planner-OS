@@ -101,7 +101,7 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
 
         # Check if a subfolder with this project name already exists inside the root folder
         sub_query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{project_name}' and '{parent_id}' in parents and trashed = false"
-        sub_results = service.files().list(q=sub_query, fields="files(id, name)").execute()
+        sub_results = service.files().list(q=sub_query, fields="files(id, name)", orderBy="createdTime asc").execute()
         sub_files = sub_results.get("files", [])
 
         if sub_files:
