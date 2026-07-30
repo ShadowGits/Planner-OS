@@ -17,7 +17,7 @@ SCOPES = [
 ]
 
 
-def get_drive_service(user: Any | None = None, gateway: Any | None = None) -> Any | None:
+def get_drive_service(user: Any | None = None, gateway: Any | None = None, workspace_id: Any | None = None) -> Any | None:
     """Initialize Google Drive client using user's OAuth credentials or fallback to service account."""
     if user and gateway:
         try:
@@ -30,11 +30,15 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None) -> An
             from google.auth.transport.requests import Request
 
             user_id = getattr(user, "user_id", user)
-            workspace_id = UUID("1040706c-f046-4c27-bcc4-ca75c6ff7df3")
+            # Use provided workspace_id or fallback to hardcoded test UUID
+            if workspace_id:
+                active_workspace_id = UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
+            else:
+                active_workspace_id = UUID("1040706c-f046-4c27-bcc4-ca75c6ff7df3")
 
             ctx = PlannerContext(
                 user_id=user_id,
-                workspace_id=workspace_id,
+                workspace_id=active_workspace_id,
                 operation_id=uuid4(),
                 workbook_path=Path("drive.xlsx"),
                 timezone="UTC",

@@ -177,7 +177,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         if not files:
             project = core.repository.get_row("projects", project_id)
             if project:
-                drive_service = get_drive_service(user, core.repository.gateway)
+                drive_service = get_drive_service(user, core.repository.gateway, project.get("workspace_id"))
                 if drive_service:
                     folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
                     if folder_id:
@@ -218,7 +218,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        drive_service = get_drive_service(user, core.repository.gateway)
+        drive_service = get_drive_service(user, core.repository.gateway, project.get("workspace_id"))
         if not drive_service:
             # Fallback if Google Drive service is not authenticated
             try:
@@ -286,7 +286,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         filename = file.filename or "uploaded_file"
         content_type = file.content_type or "application/octet-stream"
 
-        drive_service = get_drive_service(user, core.repository.gateway)
+        drive_service = get_drive_service(user, core.repository.gateway, project.get("workspace_id"))
         try:
             folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id")) if drive_service else None
             if folder_id and folder_id != project.get("drive_folder_id"):
@@ -340,7 +340,9 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         core = build_core(cloud.service_client, user.user_id)
         
         # Also attempt to delete from Drive directly
-        drive_service = get_drive_service(user, core.repository.gateway)
+        project = core.repository.get_row("projects", project_id)
+        workspace_id = project.get("workspace_id") if project else None
+        drive_service = get_drive_service(user, core.repository.gateway, workspace_id)
         if drive_service:
             try:
                 # Try to trash the file in drive instead of permanent delete, or just delete
