@@ -10,13 +10,20 @@
 #     --name=planner-os-api-deploy
 
 steps:
-  # Step 1: Build the Docker image
+  # Step 0: Pull the latest image so we can use it as a cache (allow failure if it doesn't exist yet)
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/planner-os-api:latest || exit 0']
+
+  # Step 1: Build the Docker image using the cache
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '-t'
       - 'gcr.io/$PROJECT_ID/planner-os-api:$BUILD_ID'
       - '-t'
+      - 'gcr.io/$PROJECT_ID/planner-os-api:latest'
+      - '--cache-from'
       - 'gcr.io/$PROJECT_ID/planner-os-api:latest'
       - '.'
 
