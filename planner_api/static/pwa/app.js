@@ -376,8 +376,8 @@
 
     const mins = timed.map((t) => timeToMin(t.start_time));
     const ends = timed.map((t, i) => mins[i] + (t.estimated_minutes || 30));
-    let startH = timed.length ? Math.min(7, ...mins.map((m) => Math.floor(m / 60))) : 7;
-    let endH = timed.length ? Math.max(22, ...ends.map((m) => Math.ceil(m / 60) + 1)) : 22;
+    let startH = timed.length ? Math.min(0, ...mins.map((m) => Math.floor(m / 60))) : 0;
+    let endH = timed.length ? Math.max(26, ...ends.map((m) => Math.ceil(m / 60) + 1)) : 26;
     const top0 = startH * 60;
     list.style.height = `${(endH - startH) * 60 * PX_PER_MIN + 24}px`;
 
@@ -439,10 +439,12 @@
       ? `${fmtClock(start)} – ${fmtClock(start + dur)}${recur}`
       : `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}`;
     row.innerHTML = `
-      <div class="rail"><div class="icon" style="background:${pastelFor(task.title)}">${emojiFor(task.title)}</div></div>
-      <div class="body">
-        <div class="meta">${timeLabel}</div>
-        <div class="title">${escapeHtml(task.title)}</div>
+      <div class="rail" style="position: relative; flex-shrink: 0; width: 46px; display: flex; justify-content: center; z-index: 1;">
+        <div class="time-ring" style="width: 14px; height: 14px; border-radius: 50%; border: 3px solid ${ringFor(task.title)}; background: var(--bg); margin-top: 2px;"></div>
+      </div>
+      <div class="body" style="padding-left: 4px; padding-bottom: 8px;">
+        <div class="meta" style="color: var(--ink-2); font-size: 13px; margin-bottom: 2px;">${timeLabel}</div>
+        <div class="title" style="font-weight: 600; font-size: 15px;">${emojiFor(task.title)} ${escapeHtml(task.title)}</div>
       </div>
       <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
 
@@ -543,7 +545,7 @@
 
     function updateBadge(top) {
       const raw = top / PX_PER_MIN + top0;
-      newStart = Math.min(Math.max(Math.round(raw / SNAP_MIN) * SNAP_MIN, 0), 24 * 60 - 5);
+      newStart = Math.max(Math.round(raw / SNAP_MIN) * SNAP_MIN, 0);
       if (badge) badge.textContent = fmtClock(newStart);
     }
 
@@ -723,6 +725,14 @@
     const btn = e.target.closest("button");
     if (!btn) return;
     setDuration(Number(btn.dataset.min));
+    $("custom-dur").value = "";
+  });
+  
+  $("custom-dur").addEventListener("input", (e) => {
+    const val = parseInt(e.target.value);
+    if (!isNaN(val) && val > 0) {
+       setDuration(val);
+    }
   });
 
   $("sheet-save").addEventListener("click", async () => {

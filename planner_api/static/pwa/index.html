@@ -68,12 +68,19 @@
         <input id="new-time" type="time">
       </label>
       <label class="sheet-label">Length
-        <div id="dur-chips" class="chips">
-          <button data-min="15">15m</button>
-          <button data-min="30" class="on">30m</button>
-          <button data-min="45">45m</button>
-          <button data-min="60">1h</button>
-          <button data-min="90">1.5h</button>
+        <div class="dur-wrapper" style="display:flex; flex-direction:column; gap:12px;">
+          <div id="dur-chips" class="chips">
+            <button data-min="15">15m</button>
+            <button data-min="30" class="on">30m</button>
+            <button data-min="45">45m</button>
+            <button data-min="60">1h</button>
+            <button data-min="90">1.5h</button>
+            <button data-min="120">2h</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; font-size:14px; color:var(--ink-2);">
+            <span>Custom (min):</span>
+            <input id="custom-dur" type="number" min="5" step="5" placeholder="e.g. 180" style="width:80px; padding:6px 8px; border-radius:8px; border:1px solid var(--line); font-size:14px; background:var(--chip); color:var(--ink);" />
+          </div>
         </div>
       </label>
     </div>

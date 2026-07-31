@@ -151,16 +151,7 @@ body {
   -webkit-user-select: none;
   z-index: 0;
 }
-.row::before {
-  content: "";
-  position: absolute;
-  left: 56px; top: 0; bottom: 0; right: 0;
-  background: var(--task-bg, transparent);
-  border-radius: 14px;
-  border-left: 3px solid var(--ring, var(--ink-3));
-  z-index: -1;
-  pointer-events: none;
-}
+
 .row.done::before { opacity: 0.5; }
 .row.lifted { touch-action: none; }
 .row.lifted {
