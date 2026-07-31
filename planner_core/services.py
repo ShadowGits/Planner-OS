@@ -630,6 +630,7 @@ class MetricsService:
             "totals": {
                 "open_tasks": len(open_tasks),
                 "overdue_tasks": len(overdue),
+                "overdue_list": sorted(overdue, key=lambda x: x.get("target_date") or "9999-99-99"),
                 "completed_today": len(completed_today),
                 "completions_last_7_days": len(
                     [
