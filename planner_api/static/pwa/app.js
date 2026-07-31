@@ -439,14 +439,16 @@
       ? `${fmtClock(start)} – ${fmtClock(start + dur)}${recur}`
       : `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}`;
     row.innerHTML = `
-      <div class="rail" style="position: relative; flex-shrink: 0; width: 46px; display: flex; justify-content: center; z-index: 1;">
-        <div class="time-ring" style="width: 14px; height: 14px; border-radius: 50%; border: 3px solid ${ringFor(task.title)}; background: var(--bg); margin-top: 2px;"></div>
+      <div class="rail" style="position: relative; width: 100%; height: 100%; display: flex; justify-content: center; z-index: 1;">
+        <div class="time-shape" style="width: 42px; height: 100%; min-height: 42px; border-radius: 21px; background: ${pastelFor(task.title)}; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 11px;">
+          <div style="font-size: 20px; line-height: 1;">${emojiFor(task.title)}</div>
+        </div>
       </div>
-      <div class="body" style="padding-left: 4px; padding-bottom: 8px;">
-        <div class="meta" style="color: var(--ink-2); font-size: 13px; margin-bottom: 2px;">${timeLabel}</div>
-        <div class="title" style="font-weight: 600; font-size: 15px;">${emojiFor(task.title)} ${escapeHtml(task.title)}</div>
+      <div class="body" style="padding-left: 4px; padding-bottom: 8px; margin-top: 2px;">
+        <div class="meta" style="color: var(--ink-2); font-size: 12.5px; margin-bottom: 2px; font-weight: 500;">${timeLabel}</div>
+        <div class="title" style="font-weight: 650; font-size: 15.5px; color: var(--ink); text-decoration: ${task.done ? 'line-through' : 'none'}; opacity: ${task.done ? '0.5' : '1'};">${escapeHtml(task.title)}</div>
       </div>
-      <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
+      <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done" style="margin-top: 10px;"></button>`;
 
     row.querySelector(".ring").addEventListener("click", (e) => {
       e.stopPropagation();
