@@ -734,9 +734,11 @@
     }
   });
 
-  $("sheet-save").addEventListener("click", async () => {
+  $("sheet-save").addEventListener("click", async (e) => {
+    if (e.target.disabled) return;
     const title = $("new-title").value.trim();
     if (!title) return;
+    e.target.disabled = true;
     const time = $("new-time").value || null;
     const dateVal = $("new-date").value || iso(state.selected);
     try {
@@ -760,6 +762,8 @@
       await loadDay();
     } catch (e) {
       showError(e);
+    } finally {
+      $("sheet-save").disabled = false;
     }
   });
 
@@ -773,6 +777,8 @@
       await loadDay();
     } catch (e) {
       showError(e);
+    } finally {
+      $("sheet-save").disabled = false;
     }
   });
 
