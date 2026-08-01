@@ -191,3 +191,22 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
     except Exception as e:
         logger.error(f"Failed to upload Drive file: {e}")
         raise e
+
+
+def download_drive_file(service: Any, file_id: str) -> bytes | None:
+    """Download a file's raw content from Google Drive."""
+    from googleapiclient.http import MediaIoBaseDownload
+    from io import BytesIO
+
+    try:
+        request = service.files().get_media(fileId=file_id)
+        fh = BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+        return fh.getvalue()
+    except Exception as e:
+        logger.error(f"Failed to download Drive file {file_id}: {e}")
+        return None
+

@@ -358,6 +358,27 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                 logger.warning(f"Could not delete project file row {file_id}: {e}")
         return _envelope(True, "File deleted")
 
+
+    @api.get("/v2/projects/{project_id}/files/{file_id}/download")
+    def download_project_file(project_id: str, file_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id)
+        if not drive_service:
+            raise HTTPException(status_code=401, detail="Google Drive not authenticated")
+            
+        from planner_integrations.google_drive import download_drive_file
+        file_bytes = download_drive_file(drive_service, file_id)
+        if file_bytes is None:
+            raise HTTPException(status_code=404, detail="File not found or could not be downloaded")
+            
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(content=file_bytes)
+
+    @api.get("/v2/projects/{project_id}/tasks")
+    def get_project_tasks(project_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        tasks = core.repository.list_rows("planner_tasks", {"project_id": project_id})
+        return _envelope(True, "Project tasks retrieved", {"tasks": tasks})
     @api.get("/v2/study/topics")
     def get_study_topics(user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)
