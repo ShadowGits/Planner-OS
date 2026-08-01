@@ -437,7 +437,7 @@
     row.innerHTML = `
       <div class="rail" style="position: relative; width: 100%; height: 100%; display: flex; justify-content: center; z-index: 1;">
         <div class="time-shape" style="width: 42px; height: 100%; min-height: 42px; border-radius: 21px; background: ${pastelFor(task.title)}; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 4px var(--bg);">
-          <div style="font-size: 20px; line-height: 1;">${emojiFor(task.title)}</div>
+          <div class="icon" style="font-size: 20px; line-height: 1;">${emojiFor(task.title)}</div>
         </div>
       </div>
       <div class="body" style="padding-left: 4px; display: flex; flex-direction: column; justify-content: center; height: 100%; position: relative;">
