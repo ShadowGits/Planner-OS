@@ -165,20 +165,6 @@ body {
 }
 
 /* overlapping tasks: side-by-side compact columns */
-.row.overlap {
-  grid-template-columns: 40px 1fr 24px;
-  padding: 4px 6px;
-}
-.row.overlap::before { left: 0; }
-.row.overlap .rail { grid-column: 1; }
-.row.overlap .body { grid-column: 2; padding: 2px 4px 0 4px; }
-.row.overlap .ring { grid-column: 3; }
-.row.overlap .icon {
-  width: 36px; height: 36px; border-radius: 10px; font-size: 18px;
-}
-.row.overlap .title { font-size: 14px; }
-.row.overlap .meta { font-size: 11px; }
-
 .row .time {
   grid-column: 1; text-align: right; padding-right: 6px;
   font-size: 11px; font-weight: 600; color: var(--ink-3);
@@ -205,7 +191,7 @@ body {
 .row.done .icon { filter: grayscale(0.4); opacity: 0.7; }
 
 .ring {
-  grid-column: 4; margin-top: 6px;
+  grid-column: 4; align-self: center; margin: 0;
   width: 26px; height: 26px; border-radius: 50%;
   border: 2.5px solid var(--ring, var(--ink-3));
   background: transparent; cursor: pointer;

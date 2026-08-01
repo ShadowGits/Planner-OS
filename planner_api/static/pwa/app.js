@@ -445,9 +445,7 @@
         <div class="meta" style="color: var(--ink-2); font-size: 12.5px; margin-bottom: 2px; font-weight: 500;">${timeLabel}</div>
         <div class="title" style="font-weight: 650; font-size: 15.5px; color: var(--ink); text-decoration: ${task.done ? 'line-through' : 'none'}; opacity: ${task.done ? '0.5' : '1'};">${escapeHtml(task.title)}</div>
       </div>
-      <div style="display: flex; align-items: center; justify-content: center; height: 100%;">
-        <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>
-      </div>`;
+      <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
 
     row.querySelector(".ring").addEventListener("click", (e) => {
       e.stopPropagation();
