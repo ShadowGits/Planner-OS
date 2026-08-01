@@ -23,6 +23,7 @@ class SupabaseGateway(Protocol):
         filters: Mapping[str, Any],
         columns: str = "*",
         limit: int | None = None,
+        query_string: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def insert(self, table: str, payload: Mapping[str, Any]) -> list[dict[str, Any]]: ...
@@ -95,6 +96,7 @@ class SupabaseRestClient:
         filters: Mapping[str, Any],
         columns: str = "*",
         limit: int | None = None,
+        query_string: str | None = None,
     ) -> list[dict[str, Any]]:
         query: dict[str, str] = {"select": columns}
         for key, value in filters.items():
@@ -104,7 +106,10 @@ class SupabaseRestClient:
                 query[key] = f"eq.{value}"
         if limit is not None:
             query["limit"] = str(limit)
-        return self._json_request("GET", f"/rest/v1/{self._identifier(table)}?{urlencode(query)}")
+        url = f"/rest/v1/{self._identifier(table)}?{urlencode(query)}"
+        if query_string:
+            url += f"&{query_string}"
+        return self._json_request("GET", url)
 
     def insert(self, table: str, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         return self._json_request(

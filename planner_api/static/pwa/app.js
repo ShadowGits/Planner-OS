@@ -220,7 +220,7 @@
   // holds that day's tasks; we still re-fetch in the background on show so the
   // screen is never stale (see goToDate).
   const dayCache = new Map(); // iso date -> { items, tz, at }
-  const PREFETCH_FRESH_MS = 30000;
+  const PREFETCH_FRESH_MS = 3600000;
 
   async function fetchDay(ds) {
     const out = await api("GET", `/v2/day?date=${ds}`);
@@ -853,7 +853,7 @@
     if (!document.hidden && key() && $("sheet").classList.contains("hidden")) {
       loadDay({ keepScroll: true }).catch(() => {});
     }
-  }, 60000);
+  }, 3600000);
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && key()) loadDay({ keepScroll: true }).catch(showError);

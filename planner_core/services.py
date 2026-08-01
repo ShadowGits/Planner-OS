@@ -140,7 +140,7 @@ class ProjectService:
     def project_tree(self) -> dict[str, Any]:
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
-        tasks = self.repository.list_rows("planner_tasks")
+        tasks = self.repository.list_rows("planner_tasks", columns="id,project_id,status")
         by_project_milestones: dict[str, list[dict[str, Any]]] = {}
         for milestone in sorted(milestones, key=lambda row: (row.get("sort_order") or 0, str(row.get("target_date") or "9999"))):
             by_project_milestones.setdefault(str(milestone["project_id"]), []).append(milestone)
@@ -384,7 +384,9 @@ class TaskService:
 
     def today(self) -> dict[str, Any]:
         today = _local_today(self.timezone)
-        rows = self.repository.list_rows("planner_tasks")
+        today_str = today.isoformat()
+        qs = f"or=(scheduled_date.lte.{today_str},due_date.lte.{today_str})"
+        rows = self.repository.list_rows("planner_tasks", extra_filters={"status": list(OPEN_TASK_STATUSES)}, query_string=qs)
         scheduled, due, overdue = [], [], []
         for row in rows:
             if row["status"] in CLOSED_TASK_STATUSES:
@@ -428,7 +430,20 @@ class TaskService:
             if _parse_date(row.get("completed_on")) == today and row.get("task_id")
         }
         items: list[dict[str, Any]] = []
-        for row in self.repository.list_rows("planner_tasks"):
+        today_str = today.isoformat()
+        qs = f"or=(scheduled_date.eq.{today_str},due_date.eq.{today_str})"
+        rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        if completed_task_ids:
+            rows.extend(self.repository.list_rows("planner_tasks", {"id": list(completed_task_ids)}))
+        
+        seen = set()
+        unique_rows = []
+        for r in rows:
+            if str(r["id"]) not in seen:
+                seen.add(str(r["id"]))
+                unique_rows.append(r)
+        
+        for row in unique_rows:
             due = _parse_date(row.get("due_date"))
             planned = _parse_date(row.get("scheduled_date"))
             is_done = row["status"] == "done" or str(row["id"]) in completed_task_ids
@@ -477,7 +492,9 @@ class TaskService:
         start_time carry their slot, the rest form the unscheduled tray."""
         target = _parse_date(on_date) or _local_today(self.timezone)
         items: list[dict[str, Any]] = []
-        for row in self.repository.list_rows("planner_tasks"):
+        target_str = target.isoformat()
+        qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str})"
+        for row in self.repository.list_rows("planner_tasks", query_string=qs):
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             if planned:
@@ -527,7 +544,9 @@ class TaskService:
         week_dates = {monday + timedelta(days=i) for i in range(7)}
         
         items: list[dict[str, Any]] = []
-        for row in self.repository.list_rows("planner_tasks"):
+        monday_str = monday.isoformat()
+        qs = f"or=(scheduled_date.gte.{monday_str},due_date.gte.{monday_str})"
+        for row in self.repository.list_rows("planner_tasks", query_string=qs):
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             if planned:
@@ -586,8 +605,8 @@ class MetricsService:
         current_month = today.replace(day=1).isoformat()
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
-        tasks = self.repository.list_rows("planner_tasks")
-        completions = self.repository.list_rows("task_completions")
+        tasks = self.repository.list_rows("planner_tasks", columns="id,title,project_id,status,scheduled_date,due_date")
+        completions = self.repository.list_rows("task_completions", columns="id,task_id,completed_on,recurrence_key")
         monthly_goals = self.repository.list_rows("monthly_goals")
         project_files = self.repository.list_rows("project_files")
 

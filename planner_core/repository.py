@@ -25,9 +25,9 @@ class PlannerCoreRepository:
     def _tenant(self) -> dict[str, str]:
         return {"user_id": str(self.user_id), "workspace_id": str(self.workspace_id)}
 
-    def list_rows(self, table: str, extra_filters: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    def list_rows(self, table: str, extra_filters: Mapping[str, Any] | None = None, query_string: str | None = None, columns: str = "*") -> list[dict[str, Any]]:
         try:
-            return self.gateway.select(table, filters={**self._tenant(), **dict(extra_filters or {})})
+            return self.gateway.select(table, filters={**self._tenant(), **dict(extra_filters or {})}, query_string=query_string, columns=columns)
         except Exception:
             return []
 
