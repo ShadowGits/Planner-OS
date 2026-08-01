@@ -431,13 +431,12 @@
     const recur = task.recurrence_key ? " ↻" : "";
     const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}`;
     const overlapNotice = layout && layout.col > 0
-      ? `<div style="color: var(--wine); font-size: 11.5px; font-weight: 600; margin-bottom: 4px;">Tasks are overlapping</div>`
+      ? `<div style="color: var(--wine); font-size: 12px; font-weight: 600; margin-bottom: 6px; position: absolute; top: -16px;">Tasks are overlapping</div>`
       : "";
       
-    const boxShadow = layout && layout.col > 0 ? "box-shadow: 0 0 0 4px var(--bg);" : "";
     row.innerHTML = `
       <div class="rail" style="position: relative; width: 100%; height: 100%; display: flex; justify-content: center; z-index: 1;">
-        <div class="time-shape" style="width: 42px; height: 100%; min-height: 42px; border-radius: 21px; background: ${pastelFor(task.title)}; display: flex; align-items: center; justify-content: center; ${boxShadow}">
+        <div class="time-shape" style="width: 42px; height: 100%; min-height: 42px; border-radius: 21px; background: ${pastelFor(task.title)}; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 4px var(--bg);">
           <div style="font-size: 20px; line-height: 1;">${emojiFor(task.title)}</div>
         </div>
       </div>
