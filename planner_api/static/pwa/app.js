@@ -426,6 +426,9 @@
 
     if (isOverlap) {
       row.style.zIndex = layout.col;
+      if (layout.col > 0) {
+        row.style.marginLeft = `${layout.col * 8}px`;
+      }
     }
 
     const recur = task.recurrence_key ? " ↻" : "";
