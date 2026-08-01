@@ -55,7 +55,6 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None, works
                 if creds.expired and creds.refresh_token:
                     creds.refresh(Request())
                 svc = build("drive", "v3", credentials=creds)
-                svc.files().list(pageSize=1, fields="files(id)").execute()
                 return svc
         except Exception as e:
             logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
