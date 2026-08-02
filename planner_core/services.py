@@ -411,11 +411,10 @@ class TaskService:
                 due.append(row)
             if _is_overdue(row, today):
                 overdue.append(row)
-        completions = [
-            row
-            for row in self.repository.list_rows("task_completions")
-            if _parse_date(row.get("completed_on")) == today
-        ]
+        completions = self.repository.list_rows(
+            "task_completions",
+            extra_filters={"completed_on": today_str},
+        )
         return _envelope(
             True,
             f"{len(scheduled)} scheduled, {len(due)} due, {len(overdue)} overdue, {len(completions)} completed today",
@@ -438,8 +437,11 @@ class TaskService:
         today = _local_today(self.timezone)
         completed_task_ids = {
             str(row.get("task_id"))
-            for row in self.repository.list_rows("task_completions")
-            if _parse_date(row.get("completed_on")) == today and row.get("task_id")
+            for row in self.repository.list_rows(
+                "task_completions",
+                extra_filters={"completed_on": today.isoformat()},
+            )
+            if row.get("task_id")
         }
         items: list[dict[str, Any]] = []
         today_str = today.isoformat()
@@ -618,7 +620,12 @@ class MetricsService:
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
         tasks = self.repository.list_rows("planner_tasks", columns="id,title,project_id,status,scheduled_date,due_date")
-        completions = self.repository.list_rows("task_completions", columns="id,task_id,completed_on,recurrence_key")
+        cutoff = (today - timedelta(days=90)).isoformat()
+        completions = self.repository.list_rows(
+            "task_completions",
+            columns="id,task_id,completed_on,recurrence_key",
+            query_string=f"completed_on=gte.{cutoff}",
+        )
         monthly_goals = self.repository.list_rows("monthly_goals")
         project_files = self.repository.list_rows("project_files")
 
@@ -674,10 +681,11 @@ class MetricsService:
             },
         }
 
-    def flat_snapshot(self) -> dict[str, str]:
+    def flat_snapshot(self, data: dict[str, Any] | None = None) -> dict[str, str]:
         """Flat {metric: value} map in the shape the Deutschland-Dash
         Planner_Snapshot sheet consumes (<track>_units_total style keys)."""
-        data = self.snapshot()
+        if data is None:
+            data = self.snapshot()
         flat: dict[str, str] = {
             "open_tasks": str(data["totals"]["open_tasks"]),
             "overdue_tasks": str(data["totals"]["overdue_tasks"]),
@@ -812,8 +820,10 @@ class ReminderService:
         today = current.date()
         sent_today = {
             row["kind"]
-            for row in self.repository.list_rows("reminder_log")
-            if _parse_date(row.get("sent_on")) == today
+            for row in self.repository.list_rows(
+                "reminder_log",
+                extra_filters={"sent_on": today.isoformat()},
+            )
         }
         due: list[dict[str, Any]] = []
         if current.hour in self.MORNING_WINDOW and "morning_brief" not in sent_today:

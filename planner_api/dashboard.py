@@ -37,5 +37,5 @@ def register_dashboard_routes(api: FastAPI, cloud: Any) -> None:
         return _envelope(
             True,
             "Planner metrics",
-            {"snapshot": core.metrics.snapshot(), "flat": core.metrics.flat_snapshot()},
+            {"snapshot": (s := core.metrics.snapshot()), "flat": core.metrics.flat_snapshot(s)},
         )

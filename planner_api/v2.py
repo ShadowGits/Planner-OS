@@ -89,7 +89,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         return _envelope(
             True,
             "Planner metrics",
-            {"snapshot": core.metrics.snapshot(), "flat": core.metrics.flat_snapshot()},
+            {"snapshot": (s := core.metrics.snapshot()), "flat": core.metrics.flat_snapshot(s)},
         )
 
     @api.post("/v2/reminders/run")
