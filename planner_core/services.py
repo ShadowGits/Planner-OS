@@ -295,8 +295,6 @@ class TaskService:
                 "estimated_minutes": item.get("estimated_minutes") or 30,
                 "recurrence_key": item.get("recurrence_key"),
                 "notes": item.get("notes"),
-                "status": "not_started",
-                "done": False,
             })
             
         created = self.repository.insert_rows("planner_tasks", payloads)
