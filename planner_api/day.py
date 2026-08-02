@@ -215,4 +215,17 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.get("/v2/projects/{project_id}/{table_name}")
+    def get_project_table(project_id: str, table_name: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        allowed_tables = {"germany_tests", "colleges", "applications", "professors", "research_papers"}
+        if table_name not in allowed_tables:
+            raise HTTPException(status_code=400, detail=f"Invalid table: {table_name}")
+        try:
+            rows = core.repository.list_rows(table_name, {"project_id": project_id})
+            return _envelope(True, f"Fetched {table_name}", {table_name: rows})
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     api.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="day-planner")
