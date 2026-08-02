@@ -138,6 +138,12 @@ def register_core_tools(server: Any) -> None:
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.delete_task(task_id)
 
+    @server.tool(name="core_delete_tasks_batch")
+    async def core_delete_tasks_batch(task_ids: list[str]) -> dict:
+        """Batch delete multiple tasks permanently."""
+        tasks, _, _, _, _ = _core_for_current_user()
+        return tasks.delete_tasks_batch(task_ids)
+
     @server.tool(name="core_list_tasks")
     async def core_list_tasks(status: str | None = None, project_id: str | None = None) -> dict:
         """List tasks, optionally filtered by status or project, sorted by due date."""
