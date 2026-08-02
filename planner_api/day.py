@@ -30,6 +30,18 @@ class DayTaskCreate(BaseModel):
     notes: str | None = None
 
 
+class DayTaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    scheduled_date: str | None = None
+    start_time: str | None = None
+    estimated_minutes: int | None = Field(default=None, gt=0, le=24 * 60)
+    done: bool | None = None
+    notes: str | None = None
+
+class BatchDeleteRequest(BaseModel):
+    task_ids: list[str]
+
+
 class DayTaskPatch(BaseModel):
     done: bool | None = None
     start_time: str | None = None
@@ -188,6 +200,18 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(
                 status_code=404, detail={"code": "TASK_NOT_FOUND", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
+    @api.post("/v2/day/tasks/batch-delete")
+    def delete_tasks_batch_endpoint(req: BatchDeleteRequest, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.delete_tasks_batch(req.task_ids)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "BATCH_DELETE_FAILED", "message": str(error)}
             ) from error
         return _envelope(True, result["message"], result["data"])
 

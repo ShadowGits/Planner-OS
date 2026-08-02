@@ -102,6 +102,8 @@ class SupabaseRestClient:
         for key, value in filters.items():
             if isinstance(value, bool):
                 query[key] = f"eq.{'true' if value else 'false'}"
+            elif isinstance(value, list):
+                query[key] = f"in.({','.join(str(v) for v in value)})"
             else:
                 query[key] = f"eq.{value}"
         if limit is not None:
@@ -130,6 +132,8 @@ class SupabaseRestClient:
         for key, value in filters.items():
             if isinstance(value, bool):
                 query_parts[key] = f"eq.{'true' if value else 'false'}"
+            elif isinstance(value, list):
+                query_parts[key] = f"in.({','.join(str(v) for v in value)})"
             else:
                 query_parts[key] = f"eq.{value}"
         query = urlencode(query_parts)
@@ -147,6 +151,8 @@ class SupabaseRestClient:
         for key, value in filters.items():
             if isinstance(value, bool):
                 query_parts[key] = f"eq.{'true' if value else 'false'}"
+            elif isinstance(value, list):
+                query_parts[key] = f"in.({','.join(str(v) for v in value)})"
             else:
                 query_parts[key] = f"eq.{value}"
         self._json_request(

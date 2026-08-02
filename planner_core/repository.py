@@ -54,3 +54,6 @@ class PlannerCoreRepository:
 
     def delete_row(self, table: str, row_id: str) -> None:
         self.gateway.delete(table, filters={**self._tenant(), "id": row_id})
+
+    def delete_rows(self, table: str, extra_filters: Mapping[str, Any]) -> None:
+        self.gateway.delete(table, filters={**self._tenant(), **extra_filters})

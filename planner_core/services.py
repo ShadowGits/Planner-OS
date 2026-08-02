@@ -326,6 +326,12 @@ class TaskService:
         self.repository.delete_row("planner_tasks", task_id)
         return _envelope(True, f"Task deleted: {row['title']}", {"task": row})
 
+    def delete_tasks_batch(self, task_ids: list[str]) -> dict[str, Any]:
+        if not task_ids:
+            return _envelope(True, "No tasks to delete", {"deleted": []})
+        self.repository.delete_rows("planner_tasks", {"id": task_ids})
+        return _envelope(True, f"{len(task_ids)} tasks deleted", {"deleted": task_ids})
+
     def complete_task(self, task_id: str, *, source: str = "mcp", note: str | None = None) -> dict[str, Any]:
         task = self.repository.get_row("planner_tasks", task_id)
         if task is None:
