@@ -42,6 +42,16 @@ class PlannerCoreRepository:
             raise PlannerCoreError(f"Insert into {table} returned no row")
         return rows[0]
 
+    def insert_rows(self, table: str, payloads: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        cleaned_payloads = [
+            {**{k: v for k, v in p.items() if v is not None}, **self._tenant()}
+            for p in payloads
+        ]
+        rows = self.gateway.insert(table, cleaned_payloads)
+        if not rows:
+            raise PlannerCoreError(f"Insert into {table} returned no rows")
+        return rows
+
     def update_row(self, table: str, row_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         rows = self.gateway.update(
             table,

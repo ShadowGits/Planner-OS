@@ -113,7 +113,7 @@ class SupabaseRestClient:
             url += f"&{query_string}"
         return self._json_request("GET", url)
 
-    def insert(self, table: str, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    def insert(self, table: str, payload: Mapping[str, Any] | list[Mapping[str, Any]]) -> list[dict[str, Any]]:
         return self._json_request(
             "POST",
             f"/rest/v1/{self._identifier(table)}",
@@ -194,7 +194,7 @@ class SupabaseRestClient:
         self,
         method: str,
         path: str,
-        payload: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | list[Any] | None = None,
         *,
         prefer: str | None = None,
     ) -> Any:
