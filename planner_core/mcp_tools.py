@@ -179,3 +179,10 @@ def register_core_tools(server: Any) -> None:
         """Full metrics snapshot: per-project completion, upcoming deadlines, streaks, totals."""
         _, _, metrics, _, _ = _core_for_current_user()
         return {"success": True, "message": "Planner metrics", "data": metrics.snapshot()}
+
+    @server.tool(name="core_update_task_date_time_batch")
+    def core_update_task_date_time_batch(updates: list[dict]) -> str:
+        """Batch update scheduled dates and times for multiple tasks.
+        Updates should be a list of dicts, each with 'id' and optionally 'scheduled_date', 'due_date', 'start_time'."""
+        result = _core().tasks.update_task_date_time_batch(updates)
+        return json.dumps(result)
