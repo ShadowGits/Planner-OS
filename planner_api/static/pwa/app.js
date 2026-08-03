@@ -655,12 +655,15 @@
       if (candidate < slot.end) candidate = slot.end;
     }
     candidate = Math.min(candidate, 23 * 60);
-    try {
-      await api("PATCH", `/v2/day/tasks/${task.id}`, { start_time: minToTime(candidate) });
-      await loadDay();
-    } catch (e) {
-      showError(e);
-    }
+    // Instead of auto-saving, open the modal with the calculated candidate time prefilled
+    prefillMin = null;
+    $("new-id").value = task.id;
+    $("new-title").value = task.title;
+    $("new-date").value = task.scheduled_date || iso(state.selected);
+    $("new-time").value = minToTime(candidate);
+    $("new-est").value = task.estimated_minutes || "";
+    $("new-modal").classList.remove("hidden");
+    $("new-time").focus();
   }
 
   /* ---------- add / edit sheet ---------- */
