@@ -192,6 +192,26 @@ class ProjectService:
         self.repository.delete_row("project_qna", qna_id)
         return _envelope(True, "QnA deleted", None)
 
+    def list_project_widgets(self, project_id: str) -> dict[str, Any]:
+        widgets = self.repository.list_rows("project_widgets", {"project_id": project_id})
+        widgets_sorted = sorted(widgets, key=lambda w: w.get("order_index", 0))
+        return _envelope(True, f"Fetched {len(widgets_sorted)} widgets", {"widgets": widgets_sorted})
+
+    def add_project_widget(self, project_id: str, widget_type: str, title: str | None = None, file_id: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {
+            "project_id": project_id,
+            "widget_type": widget_type,
+            "title": title,
+            "file_id": file_id,
+            "config": config or {}
+        }
+        row = self.repository.insert_row("project_widgets", payload)
+        return _envelope(True, "Widget added", {"widget": row})
+
+    def delete_project_widget(self, widget_id: str) -> dict[str, Any]:
+        self.repository.delete_row("project_widgets", widget_id)
+        return _envelope(True, "Widget deleted", None)
+
 
 class GoalService:
     def __init__(self, repository: PlannerCoreRepository) -> None:
