@@ -186,3 +186,51 @@ def register_core_tools(server: Any) -> None:
         Updates should be a list of dicts, each with 'id' and optionally 'scheduled_date', 'due_date', 'start_time'."""
         result = _core().tasks.update_task_date_time_batch(updates)
         return json.dumps(result)
+
+    @server.tool(name="core_add_project_widget")
+    def core_add_project_widget(project_id: str, widget_type: str, title: str | None = None, file_id: str | None = None, config: dict | None = None) -> str:
+        """Add a widget (qna, csv, text) to a project dashboard."""
+        result = _core().projects.add_project_widget(project_id, widget_type, title, file_id, config)
+        return json.dumps(result)
+
+    @server.tool(name="core_update_project_widget")
+    def core_update_project_widget(widget_id: str, updates: dict) -> str:
+        """Update a project widget configuration."""
+        result = _core().projects.update_project_widget(widget_id, updates)
+        return json.dumps(result)
+
+    @server.tool(name="core_delete_project_widget")
+    def core_delete_project_widget(widget_id: str) -> str:
+        """Delete a project widget."""
+        result = _core().projects.delete_project_widget(widget_id)
+        return json.dumps(result)
+
+    @server.tool(name="core_list_project_widgets")
+    def core_list_project_widgets(project_id: str) -> str:
+        """List all widgets on a project dashboard."""
+        result = _core().projects.list_project_widgets(project_id)
+        return json.dumps(result)
+
+    @server.tool(name="core_add_project_qna")
+    def core_add_project_qna(project_id: str, question: str, answer: str | None = None, status: str = "open", notes: str | None = None) -> str:
+        """Add a QnA entry to a project."""
+        result = _core().projects.add_project_qna(project_id, question, answer, status, notes)
+        return json.dumps(result)
+
+    @server.tool(name="core_update_project_qna")
+    def core_update_project_qna(qna_id: str, updates: dict) -> str:
+        """Update a QnA entry."""
+        result = _core().projects.update_project_qna(qna_id, updates)
+        return json.dumps(result)
+
+    @server.tool(name="core_delete_project_qna")
+    def core_delete_project_qna(qna_id: str) -> str:
+        """Delete a QnA entry."""
+        result = _core().projects.delete_project_qna(qna_id)
+        return json.dumps(result)
+
+    @server.tool(name="core_delete_monthly_goal")
+    def core_delete_monthly_goal(goal_id: str) -> str:
+        """Delete a monthly goal."""
+        result = _core().goals.delete_monthly_goal(goal_id)
+        return json.dumps(result)
