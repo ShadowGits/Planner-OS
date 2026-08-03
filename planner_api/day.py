@@ -77,6 +77,12 @@ class ProjectWidgetCreate(BaseModel):
     file_id: str | None = None
     config: dict[str, Any] | None = None
 
+class ProjectWidgetPatch(BaseModel):
+    title: str | None = None
+    file_id: str | None = None
+    config: dict[str, Any] | None = None
+    order_index: int | None = None
+
 
 def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def _envelope(success: bool, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -255,6 +261,17 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 body.file_id, 
                 body.config
             )
+            return result
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @api.patch("/v2/widgets/{widget_id}")
+    def patch_project_widget(widget_id: str, body: ProjectWidgetPatch, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            updates = body.model_dump(exclude_unset=True) if hasattr(body, "model_dump") else body.dict(exclude_unset=True)
+            result = core.projects.update_project_widget(widget_id, updates)
             return result
         except PlannerCoreError as e:
             raise HTTPException(status_code=400, detail=str(e))

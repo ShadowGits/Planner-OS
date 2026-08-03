@@ -208,6 +208,14 @@ class ProjectService:
         row = self.repository.insert_row("project_widgets", payload)
         return _envelope(True, "Widget added", {"widget": row})
 
+    def update_project_widget(self, widget_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"title", "file_id", "config", "order_index"}
+        payload = {k: v for k, v in updates.items() if k in allowed}
+        if not payload:
+            raise PlannerCoreError("No valid fields to update")
+        row = self.repository.update_row("project_widgets", widget_id, payload)
+        return _envelope(True, "Widget updated", {"widget": row})
+
     def delete_project_widget(self, widget_id: str) -> dict[str, Any]:
         self.repository.delete_row("project_widgets", widget_id)
         return _envelope(True, "Widget deleted", None)
