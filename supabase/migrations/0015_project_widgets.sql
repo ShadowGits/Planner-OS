@@ -27,3 +27,7 @@ USING (auth.uid() = user_id);
 CREATE INDEX idx_project_widgets_project_id ON project_widgets(project_id);
 CREATE INDEX idx_project_widgets_user_id ON project_widgets(user_id);
 CREATE INDEX idx_project_widgets_workspace_id ON project_widgets(workspace_id);
+
+-- Explicit grants for the application and backend
+grant select, insert, update, delete on public.project_widgets to authenticated;
+grant all privileges on public.project_widgets to service_role;
