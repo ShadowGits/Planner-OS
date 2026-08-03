@@ -391,6 +391,28 @@ class TaskService:
         self.repository.delete_rows("planner_tasks", {"id": task_ids})
         return _envelope(True, f"{len(task_ids)} tasks deleted", {"deleted": task_ids})
 
+    def update_task_date_time_batch(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
+        if not updates:
+            return _envelope(True, "No tasks to update", {"updated": []})
+        
+        updated_tasks = []
+        for update in updates:
+            task_id = update.get("id")
+            if not task_id:
+                continue
+                
+            allowed = {"scheduled_date", "due_date", "start_time"}
+            payload = {k: v for k, v in update.items() if k in allowed}
+            
+            if payload:
+                try:
+                    row = self.repository.update_row("planner_tasks", task_id, payload)
+                    updated_tasks.append(row)
+                except Exception:
+                    pass
+                    
+        return _envelope(True, f"{len(updated_tasks)} tasks updated", {"updated": updated_tasks})
+
     def complete_task(self, task_id: str, *, source: str = "mcp", note: str | None = None) -> dict[str, Any]:
         task = self.repository.get_row("planner_tasks", task_id)
         if task is None:
