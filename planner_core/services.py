@@ -293,6 +293,8 @@ class TaskService:
         estimated_minutes: int | None = None,
         recurrence_key: str | None = None,
         notes: str | None = None,
+        parent_task_id: str | None = None,
+        depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
         if not title.strip():
             raise PlannerCoreError("Task title is required")
@@ -301,6 +303,17 @@ class TaskService:
         _parse_date(due_date)
         _parse_date(scheduled_date)
         _parse_time(start_time)
+        
+        # Enforce scheduled_date rule
+        if parent_task_id and scheduled_date:
+            parent = self.repository.get_row("planner_tasks", parent_task_id)
+            if parent:
+                parent_date = parent.get("scheduled_date")
+                if parent_date and parent_date != scheduled_date:
+                    raise PlannerCoreError(f"Cannot schedule child on {scheduled_date}; parent is on {parent_date}")
+                elif not parent_date:
+                    self.repository.update_row("planner_tasks", parent_task_id, {"scheduled_date": scheduled_date})
+                    
         row = self.repository.insert_row(
             "planner_tasks",
             {
@@ -314,6 +327,8 @@ class TaskService:
                 "estimated_minutes": estimated_minutes,
                 "recurrence_key": recurrence_key,
                 "notes": notes,
+                "parent_task_id": parent_task_id,
+                "depends_on": depends_on or [],
             },
         )
         return _envelope(True, f"Task created: {row['title']}", {"task": row})
@@ -574,6 +589,12 @@ class TaskService:
         for completion in self.repository.list_rows("task_completions", {"task_id": task_id}):
             if _parse_date(completion.get("completed_on")) == today:
                 self.repository.delete_row("task_completions", str(completion["id"]))
+                
+        # Auto-reopen parent if it was completed
+        pid = task.get("parent_task_id")
+        if pid:
+            self.repository.update_row("planner_tasks", pid, {"status": "todo", "completed_at": None})
+            
         return _envelope(True, f"Reopened: {row['title']}", {"task": row})
 
     def day_view(self, on_date: str | None = None) -> dict[str, Any]:
@@ -583,7 +604,14 @@ class TaskService:
         items: list[dict[str, Any]] = []
         target_str = target.isoformat()
         qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str})"
-        for row in self.repository.list_rows("planner_tasks", query_string=qs):
+        all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
+        
+        for row in all_rows:
+            # If this is a parent and it has children scheduled today, hide it!
+            if row["id"] in parent_ids:
+                continue
+                
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             if planned:
@@ -635,7 +663,14 @@ class TaskService:
         items: list[dict[str, Any]] = []
         monday_str = monday.isoformat()
         qs = f"or=(scheduled_date.gte.{monday_str},due_date.gte.{monday_str})"
-        for row in self.repository.list_rows("planner_tasks", query_string=qs):
+        all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
+        
+        for row in all_rows:
+            # If this is a parent and it has children scheduled today, hide it!
+            if row["id"] in parent_ids:
+                continue
+                
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             if planned:
@@ -694,7 +729,7 @@ class MetricsService:
         current_month = today.replace(day=1).isoformat()
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
-        tasks = self.repository.list_rows("planner_tasks", columns="id,title,project_id,status,scheduled_date,due_date")
+        tasks = self.repository.list_rows("planner_tasks", columns="id,title,project_id,status,scheduled_date,due_date", query_string="parent_task_id=is.null")
         cutoff = (today - timedelta(days=90)).isoformat()
         completions = self.repository.list_rows(
             "task_completions",
