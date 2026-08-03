@@ -328,7 +328,7 @@ class TaskService:
                 "recurrence_key": recurrence_key,
                 "notes": notes,
                 "parent_task_id": parent_task_id,
-                "depends_on": depends_on or [],
+                "depends_on": depends_on,
             },
         )
         return _envelope(True, f"Task created: {row['title']}", {"task": row})
@@ -364,7 +364,7 @@ class TaskService:
                 "recurrence_key": item.get("recurrence_key"),
                 "notes": item.get("notes"),
                 "parent_task_id": item.get("parent_task_id"),
-                "depends_on": item.get("depends_on") or [],
+                "depends_on": item.get("depends_on"),
             })
             
         created = self.repository.insert_rows("planner_tasks", payloads)
