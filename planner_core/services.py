@@ -381,6 +381,8 @@ class TaskService:
             "estimated_minutes",
             "recurrence_key",
             "notes",
+            "parent_task_id",
+            "depends_on",
         }
         payload = {key: value for key, value in updates.items() if key in allowed}
         if not payload:
