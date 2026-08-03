@@ -120,7 +120,7 @@ def register_core_tools(server: Any) -> None:
 
     @server.tool(name="core_create_tasks_batch")
     async def core_create_tasks_batch(items: list[dict]) -> dict:
-        """Create many tasks in one call. Each item takes the same fields as core_create_task: title (required), project_id, milestone_id, due_date, scheduled_date, start_time (HH:MM), priority, estimated_minutes, recurrence_key, notes. All items are validated before any task is created."""
+        """Create many tasks in one call. Each item takes the same fields as core_create_task: title (required), project_id, milestone_id, due_date, scheduled_date, start_time (HH:MM), priority, estimated_minutes, recurrence_key, notes, parent_task_id, depends_on. All items are validated before any task is created."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.create_tasks_batch(items)
 
