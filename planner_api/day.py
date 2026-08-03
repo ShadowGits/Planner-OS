@@ -233,6 +233,42 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.get("/v2/projects/{project_id}/widgets")
+    def get_project_widgets(project_id: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.projects.list_project_widgets(project_id)
+            return result
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @api.post("/v2/projects/{project_id}/widgets")
+    def create_project_widget(project_id: str, body: ProjectWidgetCreate, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.projects.add_project_widget(
+                project_id, 
+                body.widget_type, 
+                body.title, 
+                body.file_id, 
+                body.config
+            )
+            return result
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @api.delete("/v2/widgets/{widget_id}")
+    def delete_project_widget(widget_id: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.projects.delete_project_widget(widget_id)
+            return result
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     @api.get("/v2/projects/{project_id}/{table_name}")
     def get_project_table(project_id: str, table_name: str, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
@@ -276,40 +312,4 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             return _envelope(True, result["message"], result["data"])
         except PlannerCoreError as e:
             raise HTTPException(status_code=400, detail=str(e))
-    @api.get("/v2/projects/{project_id}/widgets")
-    def get_project_widgets(project_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
-        core = _core()
-        try:
-            result = core.projects.list_project_widgets(project_id)
-            return result
-        except PlannerCoreError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    @api.post("/v2/projects/{project_id}/widgets")
-    def create_project_widget(project_id: str, body: ProjectWidgetCreate, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
-        core = _core()
-        try:
-            result = core.projects.add_project_widget(
-                project_id, 
-                body.widget_type, 
-                body.title, 
-                body.file_id, 
-                body.config
-            )
-            return result
-        except PlannerCoreError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    @api.delete("/v2/widgets/{widget_id}")
-    def delete_project_widget(widget_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
-        core = _core()
-        try:
-            result = core.projects.delete_project_widget(widget_id)
-            return result
-        except PlannerCoreError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
     api.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="day-planner")
