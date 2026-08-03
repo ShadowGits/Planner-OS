@@ -85,7 +85,10 @@
       </label>
     </div>
     <button id="sheet-save" class="sheet-save">Add to day</button>
-    <button id="sheet-delete" class="sheet-delete hidden">Delete task</button>
+    <div style="display:flex; gap:8px;">
+      <button id="sheet-split" class="sheet-delete hidden" style="flex:1; background:var(--bg-2); color:var(--ink); border:1px solid var(--line);">Split Block</button>
+      <button id="sheet-delete" class="sheet-delete hidden" style="flex:1;">Delete task</button>
+    </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>

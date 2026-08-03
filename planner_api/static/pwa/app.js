@@ -429,7 +429,7 @@
     }
 
     const recur = task.recurrence_key ? " ↻" : "";
-    const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}`;
+    const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
     const overlapNotice = layout && layout.col > 0
       ? `<div style="color: var(--wine); font-size: 12px; font-weight: 600; margin-bottom: 6px; position: absolute; top: -16px;">Tasks are overlapping</div>`
       : "";
@@ -662,7 +662,8 @@
     $("new-date").value = task.scheduled_date || iso(state.selected);
     $("new-time").value = minToTime(candidate);
     $("new-est").value = task.estimated_minutes || "";
-    $("new-modal").classList.remove("hidden");
+    $("sheet").classList.remove("hidden");
+    $("sheet-backdrop").classList.remove("hidden");
     $("new-time").focus();
   }
 
@@ -675,6 +676,7 @@
     $("sheet-title").textContent = "New task";
     $("sheet-save").textContent = "Add to day";
     $("sheet-delete").classList.add("hidden");
+    $("sheet-split").classList.add("hidden");
     $("new-title").value = "";
     $("new-title").disabled = false;
     $("new-date").value = iso(state.selected);
@@ -689,6 +691,7 @@
     $("sheet-title").textContent = "Edit task";
     $("sheet-save").textContent = "Save";
     $("sheet-delete").classList.remove("hidden");
+    $("sheet-split").classList.remove("hidden");
     $("new-title").value = task.title;
     $("new-title").disabled = false;
     $("new-date").value = task.scheduled_date || iso(state.selected);
@@ -716,6 +719,28 @@
 
   $("fab").addEventListener("click", () => openSheet(null));
   $("sheet-backdrop").addEventListener("click", closeSheet);
+
+
+  $("sheet-split").addEventListener("click", async () => {
+    if (!state.editing) return;
+    const parentTask = state.items.find(t => t.id === state.editing);
+    if (!parentTask) return;
+    
+    // Create a new child task with the same properties but no start_time (puts it in Inbox)
+    try {
+      await api("POST", "/v2/day/tasks", {
+        title: parentTask.title,
+        project_id: parentTask.project_id || null,
+        scheduled_date: parentTask.scheduled_date || iso(state.selected),
+        estimated_minutes: parentTask.estimated_minutes,
+        parent_task_id: parentTask.parent_task_id || parentTask.id // if splitting a child, point to ultimate parent
+      });
+      closeSheet();
+      await loadDay();
+    } catch(e) {
+      showError(e);
+    }
+  });
 
   function closeSheet() {
     $("sheet").classList.add("hidden");
