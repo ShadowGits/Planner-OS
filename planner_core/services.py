@@ -294,7 +294,7 @@ class TaskService:
         recurrence_key: str | None = None,
         notes: str | None = None,
         parent_task_id: str | None = None,
-        depends_on: list[str] | None = None,
+        depends_on: str | None = None,
     ) -> dict[str, Any]:
         if not title.strip():
             raise PlannerCoreError("Task title is required")
