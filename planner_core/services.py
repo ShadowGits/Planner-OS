@@ -167,6 +167,31 @@ class ProjectService:
             )
         return _envelope(True, f"{len(tree)} projects", {"projects": tree})
 
+    def add_project_qna(self, project_id: str, question: str, answer: str | None = None, status: str = "Drafting", notes: str | None = None) -> dict[str, Any]:
+        row = self.repository.insert_row(
+            "project_qna",
+            {
+                "project_id": project_id,
+                "question": question.strip(),
+                "answer": answer.strip() if answer else None,
+                "status": status,
+                "notes": notes.strip() if notes else None,
+            },
+        )
+        return _envelope(True, "QnA added", {"qna": row})
+
+    def update_project_qna(self, qna_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"question", "answer", "status", "notes"}
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError(f"No valid QnA fields in update; allowed: {sorted(allowed)}")
+        row = self.repository.update_row("project_qna", qna_id, payload)
+        return _envelope(True, "QnA updated", {"qna": row})
+
+    def delete_project_qna(self, qna_id: str) -> dict[str, Any]:
+        self.repository.delete_row("project_qna", qna_id)
+        return _envelope(True, "QnA deleted", None)
+
 
 class GoalService:
     def __init__(self, repository: PlannerCoreRepository) -> None:

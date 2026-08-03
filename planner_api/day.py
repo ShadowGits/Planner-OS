@@ -59,6 +59,18 @@ class MonthlyGoalCreate(BaseModel):
 class MonthlyGoalPatch(BaseModel):
     description: str
 
+class ProjectQnaCreate(BaseModel):
+    question: str = Field(min_length=1)
+    answer: str | None = None
+    status: str = "Drafting"
+    notes: str | None = None
+
+class ProjectQnaPatch(BaseModel):
+    question: str | None = None
+    answer: str | None = None
+    status: str | None = None
+    notes: str | None = None
+
 
 def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def _envelope(success: bool, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -219,12 +231,43 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def get_project_table(project_id: str, table_name: str, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
         core = _core()
-        allowed_tables = {"germany_tests", "colleges", "applications", "professors", "research_papers"}
+        allowed_tables = {"germany_tests", "colleges", "applications", "professors", "research_papers", "project_qna"}
         if table_name not in allowed_tables:
             raise HTTPException(status_code=400, detail=f"Invalid table: {table_name}")
         try:
             rows = core.repository.list_rows(table_name, {"project_id": project_id})
             return _envelope(True, f"Fetched {table_name}", {table_name: rows})
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @api.post("/v2/projects/{project_id}/project_qna")
+    def create_project_qna(project_id: str, body: ProjectQnaCreate, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.projects.add_project_qna(project_id, body.question, body.answer, body.status, body.notes)
+            return _envelope(True, result["message"], result["data"])
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @api.patch("/v2/project_qna/{qna_id}")
+    def patch_project_qna(qna_id: str, body: ProjectQnaPatch, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            updates = body.model_dump(exclude_unset=True) if hasattr(body, "model_dump") else body.dict(exclude_unset=True)
+            result = core.projects.update_project_qna(qna_id, updates)
+            return _envelope(True, result["message"], result["data"])
+        except PlannerCoreError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @api.delete("/v2/project_qna/{qna_id}")
+    def delete_project_qna(qna_id: str, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.projects.delete_project_qna(qna_id)
+            return _envelope(True, result["message"], result["data"])
         except PlannerCoreError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
