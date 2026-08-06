@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID
+from planner_platform.google_oauth import CredentialCipher, SupabaseGoogleCalendarClientFactory
+from adapters.supabase import SupabaseCalendarConnectionRepository
+from adapters.supabase import SupabaseExternalLinkRepository
 
 
 def _core_for_current_user():
@@ -177,6 +180,42 @@ def register_core_tools(server: Any) -> None:
         """Add or update a weekly goal for a project. week_start should be YYYY-MM-DD (a Monday)."""
         _, _, _, _, goals = _core_for_current_user()
         return goals.add_weekly_goal(project_id, week_start, description)
+
+    @server.tool(name="core_sync_calendar")
+    async def core_sync_calendar(days: int = 7) -> dict:
+        """Mirror scheduled tasks to Google Calendar. Returns the number of events created, updated, and deleted."""
+        tasks, _, _, _, _ = _core_for_current_user()
+        
+        # We need the Google Client. We instantiate it exactly like CloudRuntime does.
+        from mcp.server.auth.middleware.auth_context import get_access_token
+        from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
+        token = get_access_token()
+        client = SupabaseRestClient(SupabaseConfig.from_env())
+        
+        cipher = CredentialCipher.from_env()
+        factory = SupabaseGoogleCalendarClientFactory(
+            SupabaseCalendarConnectionRepository(client),
+            cipher,
+            SupabaseExternalLinkRepository(client)
+        )
+        
+        from planner_platform.context import PlannerContext
+        from pathlib import Path
+        context = PlannerContext(
+            user_id=tasks.repository.user_id,
+            workspace_id=tasks.repository.workspace_id,
+            operation_id=tasks.repository.user_id, # Mock operation ID
+            workbook_path=Path("calendar-sync.xlsx"),
+            timezone=tasks.timezone,
+            execution_target="google_calendar",
+            source_revision=0,
+        )
+        
+        try:
+            google_client = factory(context)
+            return tasks.sync_calendar(google_client, days)
+        except Exception as e:
+            return {"success": False, "message": str(e), "data": {}, "errors": [str(e)]}
 
     @server.tool(name="core_metrics")
     async def core_metrics() -> dict:

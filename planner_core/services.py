@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from typing import Any
+from planner_engine.models import DailyPlan, ScheduledBlock
 from zoneinfo import ZoneInfo
 
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
@@ -275,6 +276,31 @@ class GoalService:
         }
 
 
+
+def _blocks_for_day(items: list[dict[str, Any]], on_date, timezone: str) -> list[ScheduledBlock]:
+    """Map a day's timed tasks to calendar blocks; untimed tasks are skipped."""
+    tz = ZoneInfo(timezone)
+    blocks: list[ScheduledBlock] = []
+    for item in items:
+        start_time = item.get("start_time")
+        if not start_time:
+            continue
+        hour, minute = (int(part) for part in str(start_time).split(":")[:2])
+        start = datetime(on_date.year, on_date.month, on_date.day, hour, minute, tzinfo=tz)
+        duration = item.get("estimated_minutes") or 30
+        task_id = str(item["id"])
+        blocks.append(
+            ScheduledBlock(
+                title=item["title"],
+                start=start,
+                end=start + timedelta(minutes=duration),
+                category="task",
+                source="postgres",
+                metadata={"planner_block_id": task_id, "source_task_id": task_id},
+            )
+        )
+    return blocks
+
 class TaskService:
     def __init__(self, repository: PlannerCoreRepository, timezone: str = "UTC") -> None:
         self.repository = repository
@@ -333,7 +359,7 @@ class TaskService:
         )
         return _envelope(True, f"Task created: {row['title']}", {"task": row})
 
-    def create_tasks_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+    def create_tasks_batch(self, items: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
         if not items:
             raise PlannerCoreError("At least one task is required")
         
@@ -600,6 +626,27 @@ class TaskService:
             self.repository.update_row("planner_tasks", pid, {"status": "todo", "completed_at": None})
             
         return _envelope(True, f"Reopened: {row['title']}", {"task": row})
+
+    def sync_calendar(self, client: Any, days: int = 7) -> dict[str, Any]:
+        today = datetime.now(ZoneInfo(self.timezone)).date()
+        totals = {"created": 0, "updated": 0, "deleted": 0, "unchanged": 0}
+        errors: list[str] = []
+        for offset in range(days):
+            on_date = today + timedelta(days=offset)
+            items = self.day_view(on_date.isoformat())["data"]["items"]
+            plan = DailyPlan(date=on_date, blocks=_blocks_for_day(items, on_date, self.timezone), conflicts=[])
+            result = client.sync_plan(plan, start=on_date, end=on_date + timedelta(days=1))
+            totals["created"] += result.created
+            totals["updated"] += result.updated
+            totals["deleted"] += result.deleted
+            totals["unchanged"] += result.unchanged
+            errors.extend(result.errors)
+
+        message = (
+            f"{totals['created']} created, {totals['updated']} updated, "
+            f"{totals['deleted']} removed over {days} day(s)"
+        )
+        return _envelope(True, message, {**totals, "errors": errors, "days": days})
 
     def day_view(self, on_date: str | None = None) -> dict[str, Any]:
         """Tasks belonging to one date, shaped for a timeline: tasks with a

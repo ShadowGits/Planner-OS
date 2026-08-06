@@ -173,39 +173,41 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         core = build_core(cloud.service_client, user.user_id)
         files = core.repository.list_rows("project_files", {"project_id": project_id})
         
-        # If files is empty or database table pending migration, list files directly from Google Drive folder
-        if not files:
-            project = core.repository.get_row("projects", project_id)
-            if project:
-                drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id)
-                if drive_service:
-                    folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
-                    if folder_id:
-                        try:
-                            drive_q = f"'{folder_id}' in parents and trashed = false"
-                            res = drive_service.files().list(q=drive_q, fields="files(id, name, webViewLink, mimeType)").execute()
-                            drive_files = res.get("files", [])
-                            drive_file_rows = []
-                            for f in drive_files:
-                                is_excel = "spreadsheet" in f.get("mimeType", "") or any(ext in f.get("name", "").lower() for ext in [".xls", ".xlsx", ".csv"])
-                                ftype = "excel" if is_excel else "text"
-                                fid = f["id"]
-                                embed = f"https://drive.google.com/file/d/{fid}/preview"
-                                drive_file_rows.append({
-                                    "id": fid,
-                                    "project_id": project_id,
-                                    "name": f.get("name"),
-                                    "file_type": ftype,
-                                    "drive_file_id": fid,
-                                    "drive_web_view_link": f.get("webViewLink"),
-                                    "drive_embed_link": embed
-                                })
-                            if drive_file_rows:
-                                return _envelope(True, "Project files retrieved from Drive", {"files": drive_file_rows})
-                        except Exception as e:
-                            logger.warning(f"Failed listing files from Drive folder {folder_id}: {e}")
+        # Always fetch files from Google Drive if configured, and merge with database files
+        drive_file_rows = []
+        project = core.repository.get_row("projects", project_id)
+        if project:
+            drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id)
+            if drive_service:
+                folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
+                if folder_id:
+                    try:
+                        drive_q = f"'{folder_id}' in parents and trashed = false"
+                        res = drive_service.files().list(q=drive_q, fields="files(id, name, webViewLink, mimeType)").execute()
+                        drive_files = res.get("files", [])
+                        for f in drive_files:
+                            is_excel = "spreadsheet" in f.get("mimeType", "") or any(ext in f.get("name", "").lower() for ext in [".xls", ".xlsx", ".csv"])
+                            ftype = "excel" if is_excel else "text"
+                            fid = f["id"]
+                            embed = f"https://drive.google.com/file/d/{fid}/preview"
+                            # Skip if this drive file is already tracked in the database
+                            if any(db_f.get("drive_file_id") == fid for db_f in files):
+                                continue
+                                
+                            drive_file_rows.append({
+                                "id": fid,
+                                "project_id": project_id,
+                                "name": f.get("name"),
+                                "file_type": ftype,
+                                "drive_file_id": fid,
+                                "drive_web_view_link": f.get("webViewLink"),
+                                "drive_embed_link": embed
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed listing files from Drive folder {folder_id}: {e}")
 
-        return _envelope(True, "Project files retrieved", {"files": files})
+        all_files = files + drive_file_rows
+        return _envelope(True, "Project files retrieved", {"files": all_files})
 
     @api.post("/v2/projects/{project_id}/files/create-document")
     async def create_project_document(project_id: str, request: Request, user=Depends(current_user)):
@@ -373,6 +375,28 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             
         from fastapi.responses import PlainTextResponse
         return PlainTextResponse(content=file_bytes)
+
+
+    @api.post("/v2/projects/{project_id}/tasks")
+    def create_project_task(project_id: str, body: dict, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        
+        title = body.get("title")
+        if not title:
+            raise HTTPException(status_code=400, detail={"code": "MISSING_TITLE", "message": "Task title is required"})
+            
+        date = body.get("scheduled_date")
+        
+        try:
+            result = core.tasks.create_task(
+                title=title,
+                project_id=project_id,
+                scheduled_date=date
+            )
+            return _envelope(True, "Project task created", result["data"])
+        except Exception as e:
+            logger.error(f"Failed to create project task: {e}")
+            raise HTTPException(status_code=500, detail={"code": "CREATE_FAILED", "message": str(e)})
 
     @api.get("/v2/projects/{project_id}/tasks")
     def get_project_tasks(project_id: str, user=Depends(current_user)):

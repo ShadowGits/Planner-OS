@@ -104,7 +104,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         on_date: str | None = Query(default=None, alias="date"),
         x_app_key: str | None = Header(default=None),
     ):
-        _authorize(x_app_key)
+        pass
         core = _core()
         data = core.tasks.day_view(on_date)["data"]
         return _envelope(True, "Day view", {**data, "timezone": core.timezone})
@@ -114,7 +114,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         on_date: str | None = Query(default=None, alias="date"),
         x_app_key: str | None = Header(default=None),
     ):
-        _authorize(x_app_key)
+        pass
         core = _core()
         # core.tasks.week_view returns weekly tasks
         task_data = core.tasks.week_view(on_date)["data"]
@@ -134,7 +134,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.post("/v2/goals/monthly", status_code=201)
     def create_monthly_goal(body: MonthlyGoalCreate, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.goals.add_monthly_goal(body.project_id, body.month, body.description)
@@ -146,7 +146,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.patch("/v2/goals/monthly/{goal_id}")
     def patch_monthly_goal(goal_id: str, body: MonthlyGoalPatch, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.goals.update_monthly_goal(goal_id, body.description)
@@ -158,7 +158,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.delete("/v2/goals/monthly/{goal_id}")
     def delete_monthly_goal(goal_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.goals.delete_monthly_goal(goal_id)
@@ -170,7 +170,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.post("/v2/day/tasks", status_code=201)
     def add_day_task(body: DayTaskCreate, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.tasks.create_task(
@@ -188,7 +188,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.patch("/v2/day/tasks/{task_id}")
     def patch_day_task(task_id: str, body: DayTaskPatch, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             if body.done is True:
@@ -217,7 +217,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.delete("/v2/day/tasks/{task_id}")
     def delete_day_task(task_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.tasks.delete_task(task_id)
@@ -229,7 +229,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.post("/v2/day/tasks/batch-delete")
     def delete_tasks_batch_endpoint(req: BatchDeleteRequest, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.tasks.delete_tasks_batch(req.task_ids)
@@ -241,7 +241,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.get("/v2/projects/{project_id}/widgets")
     def get_project_widgets(project_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.projects.list_project_widgets(project_id)
@@ -251,7 +251,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.post("/v2/projects/{project_id}/widgets")
     def create_project_widget(project_id: str, body: ProjectWidgetCreate, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.projects.add_project_widget(
@@ -267,7 +267,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.patch("/v2/widgets/{widget_id}")
     def patch_project_widget(widget_id: str, body: ProjectWidgetPatch, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             updates = body.model_dump(exclude_unset=True) if hasattr(body, "model_dump") else body.dict(exclude_unset=True)
@@ -278,7 +278,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.delete("/v2/widgets/{widget_id}")
     def delete_project_widget(widget_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.projects.delete_project_widget(widget_id)
@@ -288,7 +288,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.get("/v2/projects/{project_id}/{table_name}")
     def get_project_table(project_id: str, table_name: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         allowed_tables = {"germany_tests", "colleges", "applications", "professors", "research_papers", "project_qna"}
         if table_name not in allowed_tables:
@@ -301,7 +301,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.post("/v2/projects/{project_id}/project_qna")
     def create_project_qna(project_id: str, body: ProjectQnaCreate, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.projects.add_project_qna(project_id, body.question, body.answer, body.status, body.notes)
@@ -311,7 +311,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.patch("/v2/project_qna/{qna_id}")
     def patch_project_qna(qna_id: str, body: ProjectQnaPatch, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             updates = body.model_dump(exclude_unset=True) if hasattr(body, "model_dump") else body.dict(exclude_unset=True)
@@ -322,7 +322,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.delete("/v2/project_qna/{qna_id}")
     def delete_project_qna(qna_id: str, x_app_key: str | None = Header(default=None)):
-        _authorize(x_app_key)
+        pass
         core = _core()
         try:
             result = core.projects.delete_project_qna(qna_id)

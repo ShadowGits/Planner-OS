@@ -31,30 +31,6 @@ from planner_platform.context import PlannerContext
 from planner_platform.google_oauth import GoogleConnectionRequiredError
 
 
-def _blocks_for_day(items: list[dict[str, Any]], on_date, timezone: str) -> list[ScheduledBlock]:
-    """Map a day's timed tasks to calendar blocks; untimed tasks are skipped."""
-    tz = ZoneInfo(timezone)
-    blocks: list[ScheduledBlock] = []
-    for item in items:
-        start_time = item.get("start_time")
-        if not start_time:
-            continue
-        hour, minute = (int(part) for part in str(start_time).split(":")[:2])
-        start = datetime(on_date.year, on_date.month, on_date.day, hour, minute, tzinfo=tz)
-        duration = item.get("estimated_minutes") or 30
-        task_id = str(item["id"])
-        blocks.append(
-            ScheduledBlock(
-                title=item["title"],
-                start=start,
-                end=start + timedelta(minutes=duration),
-                category="task",
-                source="postgres",
-                metadata={"planner_block_id": task_id, "source_task_id": task_id},
-            )
-        )
-    return blocks
-
 
 def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
     def _envelope(success: bool, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -100,22 +76,5 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
 
         tasks = TaskService(PlannerCoreRepository(cloud.service_client, user_id, workspace.id), timezone)
-        today = datetime.now(ZoneInfo(timezone)).date()
-        totals = {"created": 0, "updated": 0, "deleted": 0, "unchanged": 0}
-        errors: list[str] = []
-        for offset in range(days):
-            on_date = today + timedelta(days=offset)
-            items = tasks.day_view(on_date.isoformat())["data"]["items"]
-            plan = DailyPlan(date=on_date, blocks=_blocks_for_day(items, on_date, timezone), conflicts=[])
-            result = client.sync_plan(plan, start=on_date, end=on_date + timedelta(days=1))
-            totals["created"] += result.created
-            totals["updated"] += result.updated
-            totals["deleted"] += result.deleted
-            totals["unchanged"] += result.unchanged
-            errors.extend(result.errors)
-
-        message = (
-            f"{totals['created']} created, {totals['updated']} updated, "
-            f"{totals['deleted']} removed over {days} day(s)"
-        )
-        return _envelope(True, message, {**totals, "errors": errors, "days": days})
+        result = tasks.sync_calendar(client, days)
+        return _envelope(True, result["message"], result["data"])
