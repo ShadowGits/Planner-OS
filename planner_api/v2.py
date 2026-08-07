@@ -100,22 +100,112 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                 status_code=401,
                 detail={"code": "CRON_KEY_INVALID", "message": "X-Cron-Key header is missing or wrong"},
             )
-        core = build_core(cloud.service_client, _configured_user_id())
+        from planner_core.push import send_push_to_all
+
+        user_id = _configured_user_id()
+        core = build_core(cloud.service_client, user_id)
         telegram = TelegramClient.from_env()
         due = core.reminders.due_reminders()
         sent, failed = [], []
         for reminder in due:
-            if telegram is None:
-                failed.append({**reminder, "error": "TELEGRAM_NOT_CONFIGURED"})
-                continue
+            # Send via push notifications (macOS/iOS/iPadOS popups)
+            push_title = {
+                "morning_brief": "☀️ Morning Brief",
+                "evening_nudge": "🌙 Evening Nudge",
+                "deadline_alert": "⚠️ Deadline Alert",
+            }.get(reminder["kind"], "📋 Planner OS")
             try:
-                telegram.send_message(reminder["message"])
-                core.reminders.record_sent(reminder["kind"], "telegram", {"message": reminder["message"]})
-                sent.append(reminder["kind"])
-            except TelegramError as error:
-                logger.error("Reminder send failed (%s): %s", reminder["kind"], error)
-                failed.append({"kind": reminder["kind"], "error": str(error)})
+                push_result = send_push_to_all(
+                    cloud.service_client,
+                    str(user_id),
+                    str(core.repository.workspace_id),
+                    push_title,
+                    reminder["message"],
+                    url="/",
+                )
+                if push_result["sent"] > 0:
+                    core.reminders.record_sent(reminder["kind"], "push", {"message": reminder["message"], **push_result})
+                    sent.append(reminder["kind"])
+            except Exception as push_err:
+                logger.error("Push send failed (%s): %s", reminder["kind"], push_err)
+
+            # Also try Telegram as fallback
+            if reminder["kind"] not in sent and telegram is not None:
+                try:
+                    telegram.send_message(reminder["message"])
+                    core.reminders.record_sent(reminder["kind"], "telegram", {"message": reminder["message"]})
+                    sent.append(reminder["kind"])
+                except TelegramError as error:
+                    logger.error("Telegram send failed (%s): %s", reminder["kind"], error)
+                    failed.append({"kind": reminder["kind"], "error": str(error)})
+            elif reminder["kind"] not in sent:
+                failed.append({**reminder, "error": "NO_PUSH_OR_TELEGRAM"})
+
         return _envelope(True, f"{len(sent)} reminders sent", {"sent": sent, "failed": failed, "due": len(due)})
+
+    # ── Push subscription management ──────────────────────────────────────
+
+    @api.post("/v2/push/subscribe")
+    def push_subscribe(request_body: dict, user=Depends(current_user)):
+        endpoint = request_body.get("endpoint")
+        keys = request_body.get("keys", {})
+        p256dh = keys.get("p256dh")
+        auth = keys.get("auth")
+        device_label = request_body.get("device_label", "")
+
+        if not endpoint or not p256dh or not auth:
+            raise HTTPException(status_code=400, detail="Missing endpoint or keys")
+
+        user_id = _configured_user_id()
+        core = build_core(cloud.service_client, user_id)
+
+        # Upsert: delete existing sub for same endpoint, then insert
+        try:
+            existing = cloud.service_client.select(
+                "push_subscriptions",
+                filters={"user_id": str(user_id), "endpoint": endpoint},
+            )
+            if existing:
+                cloud.service_client.delete(
+                    "push_subscriptions",
+                    filters={"id": existing[0]["id"]},
+                )
+        except Exception:
+            pass
+
+        cloud.service_client.insert("push_subscriptions", {
+            "user_id": str(user_id),
+            "workspace_id": str(core.repository.workspace_id),
+            "endpoint": endpoint,
+            "p256dh": p256dh,
+            "auth": auth,
+            "device_label": device_label,
+        })
+
+        return _envelope(True, "Push subscription saved")
+
+    @api.post("/v2/push/unsubscribe")
+    def push_unsubscribe(request_body: dict, user=Depends(current_user)):
+        endpoint = request_body.get("endpoint")
+        if not endpoint:
+            raise HTTPException(status_code=400, detail="Missing endpoint")
+
+        user_id = _configured_user_id()
+        try:
+            cloud.service_client.delete(
+                "push_subscriptions",
+                filters={"user_id": str(user_id), "endpoint": endpoint},
+            )
+        except Exception:
+            pass
+        return _envelope(True, "Push subscription removed")
+
+    @api.get("/v2/push/vapid-key")
+    def get_vapid_key():
+        key = os.environ.get("VAPID_PUBLIC_KEY", "")
+        if not key:
+            raise HTTPException(status_code=503, detail="VAPID keys not configured")
+        return _envelope(True, "VAPID public key", {"public_key": key})
 
     @api.post("/v2/telegram/webhook")
     async def telegram_webhook(
