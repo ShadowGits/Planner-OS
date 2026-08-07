@@ -177,7 +177,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         drive_file_rows = []
         project = core.repository.get_row("projects", project_id)
         if project:
-            drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id)
+            drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id, allow_service_account=True)
             if drive_service:
                 folder_id = get_or_create_project_folder(drive_service, project["name"], project.get("drive_folder_id"))
                 if folder_id:
@@ -364,7 +364,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
     @api.get("/v2/projects/{project_id}/files/{file_id}/download")
     def download_project_file(project_id: str, file_id: str, user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)
-        drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id)
+        drive_service = get_drive_service(user, core.repository.gateway, core.repository.workspace_id, allow_service_account=True)
         if not drive_service:
             raise HTTPException(status_code=401, detail="Google Drive not authenticated")
             

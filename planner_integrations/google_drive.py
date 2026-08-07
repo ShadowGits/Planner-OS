@@ -17,8 +17,13 @@ SCOPES = [
 ]
 
 
-def get_drive_service(user: Any | None = None, gateway: Any | None = None, workspace_id: Any | None = None) -> Any | None:
-    """Initialize Google Drive client using user's OAuth credentials or fallback to service account."""
+def get_drive_service(user: Any | None = None, gateway: Any | None = None, workspace_id: Any | None = None, *, allow_service_account: bool = False) -> Any | None:
+    """Initialize Google Drive client using user's OAuth credentials or fallback to service account.
+
+    Set *allow_service_account=True* for read-only operations (e.g. listing
+    files) so the endpoint still works when user OAuth creds are unavailable
+    (dashboard X-App-Key calls).
+    """
     if user and gateway:
         try:
             from adapters.supabase.calendar import SupabaseCalendarConnectionRepository
@@ -58,11 +63,30 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None, works
                 return svc
         except Exception as e:
             logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
-            
-    # If we get here, either user didn't exist, no gateway, no connections, or OAuth failed.
-    # Return None so the application knows authentication failed (and can prompt user),
-    # rather than falling back to the Service Account which would use the wrong quota.
+
+    # Fall back to service account when explicitly allowed (read-only operations).
+    if allow_service_account:
+        return _get_service_account_drive()
+
     return None
+
+
+def _get_service_account_drive() -> Any | None:
+    """Build a Drive client from the service account credentials in the environment."""
+    creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+    creds_file = os.environ.get("GCP_SERVICE_ACCOUNT_FILE")
+    try:
+        if creds_json:
+            info = json.loads(creds_json)
+            creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        elif creds_file and os.path.exists(creds_file):
+            creds = service_account.Credentials.from_service_account_file(creds_file, scopes=SCOPES)
+        else:
+            return None
+        return build("drive", "v3", credentials=creds)
+    except Exception as e:
+        logger.warning(f"Service account Drive fallback failed: {e}")
+        return None
 
 
 def get_or_create_project_folder(service: Any, project_name: str, existing_folder_id: str | None = None) -> str | None:
