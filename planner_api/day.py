@@ -48,6 +48,7 @@ class DayTaskPatch(BaseModel):
     scheduled_date: str | None = None
     estimated_minutes: int | None = Field(default=None, gt=0, le=24 * 60)
     title: str | None = None
+    milestone_id: str | None = None
 
 
 class MonthlyGoalCreate(BaseModel):
@@ -199,7 +200,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 result = None
             updates = {
                 field: getattr(body, field)
-                for field in ("start_time", "scheduled_date", "estimated_minutes", "title")
+                for field in ("start_time", "scheduled_date", "estimated_minutes", "title", "milestone_id")
                 if field in body.model_fields_set
             }
             if updates:

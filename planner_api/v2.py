@@ -470,18 +470,20 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
     @api.post("/v2/projects/{project_id}/tasks")
     def create_project_task(project_id: str, body: dict, user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)
-        
+
         title = body.get("title")
         if not title:
             raise HTTPException(status_code=400, detail={"code": "MISSING_TITLE", "message": "Task title is required"})
-            
+
         date = body.get("scheduled_date")
-        
+        milestone_id = body.get("milestone_id")
+
         try:
             result = core.tasks.create_task(
                 title=title,
                 project_id=project_id,
-                scheduled_date=date
+                scheduled_date=date,
+                milestone_id=milestone_id,
             )
             return _envelope(True, "Project task created", result["data"])
         except Exception as e:
@@ -493,6 +495,34 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         core = build_core(cloud.service_client, user.user_id)
         tasks = core.repository.list_rows("planner_tasks", {"project_id": project_id})
         return _envelope(True, "Project tasks retrieved", {"tasks": tasks})
+
+    # ── Milestones ────────────────────────────────────────────────────────
+
+    @api.get("/v2/projects/{project_id}/milestones")
+    def get_project_milestones(project_id: str, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        milestones = core.repository.list_rows("milestones", {"project_id": project_id})
+        sorted_milestones = sorted(milestones, key=lambda m: (m.get("sort_order") or 0, str(m.get("target_date") or "9999")))
+        return _envelope(True, "Project milestones", {"milestones": sorted_milestones})
+
+    @api.post("/v2/projects/{project_id}/milestones")
+    def create_project_milestone(project_id: str, body: dict, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        name = body.get("name", "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail={"code": "MISSING_NAME", "message": "Milestone name is required"})
+        try:
+            result = core.projects.add_milestone(
+                project_id,
+                name,
+                target_date=body.get("target_date"),
+                notes=body.get("notes"),
+            )
+            return _envelope(True, "Milestone created", result["data"])
+        except Exception as e:
+            logger.error(f"Failed to create milestone: {e}")
+            raise HTTPException(status_code=500, detail={"code": "CREATE_FAILED", "message": str(e)})
+
     @api.get("/v2/study/topics")
     def get_study_topics(user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)
