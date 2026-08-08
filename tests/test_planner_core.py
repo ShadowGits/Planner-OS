@@ -45,11 +45,13 @@ class MemoryGateway:
     def __init__(self):
         self.tables: dict[str, list[dict]] = {}
 
-    def select(self, table, *, filters, columns="*", limit=None):
+    def select(self, table, *, filters, columns="*", limit=None, query_string=None):
         rows = [row for row in self.tables.get(table, []) if self._matches(row, filters)]
         return rows[:limit] if limit else rows
 
     def insert(self, table, payload):
+        if isinstance(payload, list):
+            return [self.insert(table, p)[0] for p in payload]
         row = {"id": str(uuid4()), **TABLE_DEFAULTS.get(table, {}), **dict(payload)}
         self.tables.setdefault(table, []).append(row)
         return [dict(row)]
@@ -71,7 +73,15 @@ class MemoryGateway:
 
     @staticmethod
     def _matches(row, filters):
-        return all(str(row.get(key)).casefold() == str(value).casefold() for key, value in filters.items())
+        for key, value in filters.items():
+            row_val = str(row.get(key)).casefold()
+            if isinstance(value, list):
+                if not any(row_val == str(v).casefold() for v in value):
+                    return False
+            else:
+                if row_val != str(value).casefold():
+                    return False
+        return True
 
 
 @pytest.fixture()
@@ -306,6 +316,95 @@ def test_telegram_parse_command_and_chat_extraction() -> None:
     assert parse_command({}) is None
 
 
+def test_milestone_crud_and_task_linking(services) -> None:
+    tasks, projects, _, _ = services
+    project = projects.create_project("Germany Move", track="Colleges")
+    project_id = project["data"]["project"]["id"]
+
+    # Add a milestone
+    ms = projects.add_milestone(project_id, "Shortlist done", target_date="2026-10-01")
+    milestone_id = ms["data"]["milestone"]["id"]
+
+    # Create a task linked to the milestone
+    t = tasks.create_task("Compare TU9", project_id=project_id, milestone_id=milestone_id)
+    assert t["data"]["task"]["milestone_id"] == milestone_id
+
+    # Update milestone status
+    projects.update_milestone(milestone_id, {"status": "in_progress"})
+    tree = projects.project_tree()["data"]["projects"]
+    assert tree[0]["milestones"][0]["status"] == "in_progress"
+
+    # Update task to link to a different milestone
+    ms2 = projects.add_milestone(project_id, "Applications sent")
+    ms2_id = ms2["data"]["milestone"]["id"]
+    tasks.update_task(t["data"]["task"]["id"], {"milestone_id": ms2_id})
+
+
+def test_goal_service_monthly_and_weekly(services) -> None:
+    from planner_core.services import GoalService
+    tasks, projects, _, _ = services
+    goals = GoalService(tasks.repository)
+
+    project = projects.create_project("German", track="german")
+    pid = project["data"]["project"]["id"]
+
+    # Monthly goal upsert
+    result = goals.add_monthly_goal(pid, "2026-08-01", "Finish A1 vocab")
+    assert result["success"]
+    goal_id = result["data"]["monthly_goal"]["id"]
+
+    # Upsert same month overwrites
+    result2 = goals.add_monthly_goal(pid, "2026-08-01", "Finish A1 + A2 vocab")
+    assert result2["data"]["monthly_goal"]["id"] == goal_id
+    assert result2["data"]["monthly_goal"]["description"] == "Finish A1 + A2 vocab"
+
+    # Weekly goal
+    wg = goals.add_weekly_goal(pid, "2026-08-03", "Complete 3 lessons")
+    assert wg["success"]
+
+    # Week view returns goals
+    wv = goals.week_view(date(2026, 8, 3))
+    assert len(wv["monthly_goals"]) == 1
+    assert len(wv["weekly_goals"]) == 1
+
+    # Delete monthly goal
+    goals.delete_monthly_goal(goal_id)
+
+
+def test_batch_delete_removes_tasks(services) -> None:
+    tasks, _, _, _ = services
+    t1 = tasks.create_task("Task A")
+    t2 = tasks.create_task("Task B")
+    t3 = tasks.create_task("Task C")
+    ids = [t1["data"]["task"]["id"], t2["data"]["task"]["id"]]
+
+    result = tasks.delete_tasks_batch(ids)
+    assert result["success"]
+    assert len(result["data"]["deleted"]) == 2
+
+    remaining = tasks.list_tasks()["data"]["tasks"]
+    titles = [t["title"] for t in remaining]
+    assert "Task C" in titles
+    assert "Task A" not in titles
+    assert "Task B" not in titles
+
+
+def test_week_view_groups_tasks_in_week(services) -> None:
+    tasks, _, _, _ = services
+    tasks.create_task("Monday task", scheduled_date="2026-08-03")
+    tasks.create_task("Wednesday task", scheduled_date="2026-08-05")
+    tasks.create_task("Next week", scheduled_date="2026-08-10")
+
+    wv = tasks.week_view("2026-08-04")  # Tuesday → week of Aug 3
+    items = wv["data"]["items"]
+    titles = [i["title"] for i in items]
+
+    assert "Monday task" in titles
+    assert "Wednesday task" in titles
+    assert "Next week" not in titles
+    assert wv["data"]["week_start"] == "2026-08-03"
+
+
 def test_core_tools_register_on_a_fastmcp_server() -> None:
     from mcp.server.fastmcp import FastMCP
 
@@ -315,18 +414,33 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
     register_core_tools(server)
     names = sorted(server._tool_manager._tools)
 
-    assert names == [
+    expected = [
         "core_add_milestone",
+        "core_add_monthly_goal",
+        "core_add_project_qna",
+        "core_add_project_widget",
+        "core_add_weekly_goal",
         "core_complete_task",
         "core_create_project",
         "core_create_task",
         "core_create_tasks_batch",
+        "core_delete_monthly_goal",
+        "core_delete_project_qna",
+        "core_delete_project_widget",
         "core_delete_task",
+        "core_delete_tasks_batch",
+        "core_list_project_widgets",
         "core_list_projects",
         "core_list_tasks",
         "core_metrics",
+        "core_sync_calendar",
         "core_today",
         "core_update_milestone",
+        "core_update_monthly_goal",
         "core_update_project",
+        "core_update_project_qna",
+        "core_update_project_widget",
         "core_update_task",
+        "core_update_task_date_time_batch",
     ]
+    assert names == expected
