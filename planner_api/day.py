@@ -230,8 +230,8 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                     if h >= 24:
                         curr_date = updates.get("scheduled_date")
                         if not curr_date:
-                            task = core.tasks.get_task(task_id)
-                            curr_date = task.get("scheduled_date")
+                            task = core.repository.get_row("planner_tasks", task_id)
+                            curr_date = task.get("scheduled_date") if task else None
                         norm_date, norm_time = _normalize_spillover(curr_date, updates["start_time"])
                         updates["scheduled_date"] = norm_date
                         updates["start_time"] = norm_time

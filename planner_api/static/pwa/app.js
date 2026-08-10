@@ -568,7 +568,10 @@
       const cur = task.start_time ? task.start_time.slice(0, 5) : null;
       if (save && newStart !== null && minToTime(newStart) !== cur) {
         try {
-          await api("PATCH", `/v2/day/tasks/${task.id}`, { start_time: minToTime(newStart) });
+          await api("PATCH", `/v2/day/tasks/${task.id}`, { 
+            scheduled_date: iso(state.selected),
+            start_time: minToTime(newStart) 
+          });
           task.start_time = minToTime(newStart);
           render();
         } catch (e) {
