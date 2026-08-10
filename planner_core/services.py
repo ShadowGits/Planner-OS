@@ -654,7 +654,9 @@ class TaskService:
         target = _parse_date(on_date) or _local_today(self.timezone)
         items: list[dict[str, Any]] = []
         target_str = target.isoformat()
-        qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str})"
+        next_day = target + timedelta(days=1)
+        next_day_str = next_day.isoformat()
+        qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},and(scheduled_date.eq.{next_day_str},start_time.lt.02:00:00))"
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
         parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
         
@@ -665,19 +667,31 @@ class TaskService:
                 
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
+            
+            is_next_day_spillover = False
             if planned:
                 if planned != target:
-                    continue
+                    if planned == next_day and row.get("start_time") and str(row.get("start_time")) < "02:00:00":
+                        is_next_day_spillover = True
+                    else:
+                        continue
             else:
                 if due != target:
                     continue
+                    
+            start_time_val = row.get("start_time")
+            if is_next_day_spillover and start_time_val:
+                # e.g., "01:30:00" -> "25:30:00"
+                h, m, s = str(start_time_val).split(":")
+                start_time_val = f"{int(h) + 24:02d}:{m}:{s}"
+
             items.append(
                 {
                     "id": row["id"],
                     "title": row["title"],
                     "status": row["status"],
                     "done": row["status"] in CLOSED_TASK_STATUSES,
-                    "start_time": row.get("start_time"),
+                    "start_time": start_time_val,
                     "estimated_minutes": row.get("estimated_minutes"),
                     "priority": row.get("priority"),
                     "due_date": row.get("due_date"),

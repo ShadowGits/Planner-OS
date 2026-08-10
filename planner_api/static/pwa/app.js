@@ -573,7 +573,7 @@
           render();
         } catch (e) {
           showError(e);
-          loadDay().catch(() => {});
+          loadDay({ keepScroll: true }).catch(() => {});
         }
       } else {
         render();
@@ -604,7 +604,7 @@
     } catch (e) {
       task.done = !next;
       showError(e);
-      loadDay().catch(() => {});
+      loadDay({ keepScroll: true }).catch(() => {});
     }
   }
 
@@ -629,7 +629,7 @@
         clock.addEventListener("click", () => scheduleNext(task));
         card.appendChild(clock);
         card.querySelector(".icon").addEventListener("click", () =>
-          api("PATCH", `/v2/day/tasks/${task.id}`, { done: true }).then(loadDay).catch(showError)
+          api("PATCH", `/v2/day/tasks/${task.id}`, { done: true }).then(() => loadDay({ keepScroll: true })).catch(showError)
         );
         card.querySelector(".t").addEventListener("click", () => openEdit(task));
       }
@@ -736,7 +736,7 @@
         parent_task_id: parentTask.parent_task_id || parentTask.id // if splitting a child, point to ultimate parent
       });
       closeSheet();
-      await loadDay();
+      await loadDay({ keepScroll: true });
     } catch(e) {
       showError(e);
     }
@@ -787,7 +787,7 @@
       }
       closeSheet();
       toast(state.editing ? "Saved ✓" : "Added ✓");
-      await loadDay();
+      await loadDay({ keepScroll: true });
     } catch (e) {
       showError(e);
     } finally {
@@ -802,7 +802,7 @@
     try {
       await api("DELETE", `/v2/day/tasks/${id}`);
       toast("Deleted");
-      await loadDay();
+      await loadDay({ keepScroll: true });
     } catch (e) {
       showError(e);
     } finally {

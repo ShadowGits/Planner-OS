@@ -11,6 +11,25 @@ import os
 import secrets
 from pathlib import Path
 from typing import Any
+import datetime
+
+def _normalize_spillover(date_str, time_str):
+    if not time_str:
+        return date_str, time_str
+    try:
+        parts = time_str.split(":")
+        h = int(parts[0])
+        if h >= 24:
+            parts[0] = f"{h - 24:02d}"
+            new_time = ":".join(parts)
+            new_date = date_str
+            if date_str:
+                d = datetime.date.fromisoformat(date_str)
+                new_date = (d + datetime.timedelta(days=1)).isoformat()
+            return new_date, new_time
+    except Exception:
+        pass
+    return date_str, time_str
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -174,10 +193,11 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         pass
         core = _core()
         try:
+            norm_date, norm_time = _normalize_spillover(body.date, body.start_time)
             result = core.tasks.create_task(
                 body.title,
-                scheduled_date=body.date,
-                start_time=body.start_time,
+                scheduled_date=norm_date,
+                start_time=norm_time,
                 estimated_minutes=body.estimated_minutes,
                 notes=body.notes,
             )
@@ -203,6 +223,20 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 for field in ("start_time", "scheduled_date", "estimated_minutes", "title", "milestone_id")
                 if field in body.model_fields_set
             }
+            
+            if "start_time" in updates and updates["start_time"]:
+                try:
+                    h = int(updates["start_time"].split(":")[0])
+                    if h >= 24:
+                        curr_date = updates.get("scheduled_date")
+                        if not curr_date:
+                            task = core.tasks.get_task(task_id)
+                            curr_date = task.get("scheduled_date")
+                        norm_date, norm_time = _normalize_spillover(curr_date, updates["start_time"])
+                        updates["scheduled_date"] = norm_date
+                        updates["start_time"] = norm_time
+                except Exception:
+                    pass
             if updates:
                 result = core.tasks.update_task(task_id, updates)
             if result is None:
