@@ -286,7 +286,17 @@ def _blocks_for_day(items: list[dict[str, Any]], on_date, timezone: str) -> list
         if not start_time:
             continue
         hour, minute = (int(part) for part in str(start_time).split(":")[:2])
-        start = datetime(on_date.year, on_date.month, on_date.day, hour, minute, tzinfo=tz)
+        base_date = on_date
+        if item.get("scheduled_date"):
+            try:
+                base_date = datetime.strptime(str(item["scheduled_date"]), "%Y-%m-%d").date()
+            except ValueError:
+                pass
+                
+        if hour == 24:
+            start = datetime(base_date.year, base_date.month, base_date.day, 0, minute, tzinfo=tz) + timedelta(days=1)
+        else:
+            start = datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=tz)
         duration = item.get("estimated_minutes") or 30
         task_id = str(item["id"])
         blocks.append(
