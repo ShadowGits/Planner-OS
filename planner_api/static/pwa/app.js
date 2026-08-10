@@ -886,6 +886,21 @@
     }
   }, 3600000);
 
+  setInterval(() => {
+    if (sameDay(state.selected, new Date())) {
+      const nl = document.querySelector(".now-line");
+      if (nl) {
+        const timed = state.items.filter((t) => t.start_time);
+        const mins = timed.map((t) => timeToMin(t.start_time));
+        const startH = timed.length ? Math.min(0, ...mins.map((m) => Math.floor(m / 60))) : 0;
+        const top0 = startH * 60;
+        const now = new Date();
+        const m = now.getHours() * 60 + now.getMinutes();
+        nl.style.top = `${(m - top0) * PX_PER_MIN}px`;
+      }
+    }
+  }, 60000);
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && key()) loadDay({ keepScroll: true }).catch(showError);
   });
