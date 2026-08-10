@@ -92,6 +92,25 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             {"snapshot": (s := core.metrics.snapshot()), "flat": core.metrics.flat_snapshot(s)},
         )
 
+    @api.post("/v2/google-calendar/connect")
+    def connect_google_v2(user=Depends(current_user)):
+        try:
+            from planner_api.app import envelope
+            workspace = cloud.workspaces(user).get_active(user.user_id)
+            if not workspace:
+                raise ValueError("No active workspace found")
+            context = cloud.context(user, workspace.id)
+            result = cloud.google_oauth_for_user(user).start(context)
+            return envelope(
+                True,
+                "Google Calendar authorization started",
+                data={"authorization_url": result.authorization_url, "expires_in_seconds": result.expires_in_seconds},
+                operation="google_calendar_connect",
+                target="google_calendar",
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error))
+
     @api.post("/v2/reminders/run")
     def run_reminders(x_cron_key: str | None = Header(default=None)):
         expected = os.environ.get("CRON_SECRET", "")
