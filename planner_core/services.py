@@ -293,8 +293,8 @@ def _blocks_for_day(items: list[dict[str, Any]], on_date, timezone: str) -> list
             except ValueError:
                 pass
                 
-        if hour == 24:
-            start = datetime(base_date.year, base_date.month, base_date.day, 0, minute, tzinfo=tz) + timedelta(days=1)
+        if hour >= 24:
+            start = datetime(base_date.year, base_date.month, base_date.day, hour - 24, minute, tzinfo=tz) + timedelta(days=1)
         else:
             start = datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=tz)
         duration = item.get("estimated_minutes") or 30
