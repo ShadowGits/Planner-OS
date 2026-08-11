@@ -20,10 +20,13 @@ MCP_USER_ID   – UUID of the Planner OS owner whose workspace Claude should use
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -45,7 +48,7 @@ except (ImportError, ModuleNotFoundError):
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 
-ACCESS_TOKEN_TTL = 3600
+ACCESS_TOKEN_TTL = 86400  # 24 hours — avoids frequent re-auth on single-user keys
 REFRESH_TOKEN_TTL = 86400 * 30
 AUTH_CODE_TTL = 300
 
@@ -273,7 +276,13 @@ def create_cloud_mcp(runtime) -> tuple[FastMCP, Any, ApiKeyOAuthProvider]:
         from adapters.supabase.oauth_state import SupabaseOAuthStateStore
 
         store = SupabaseOAuthStateStore(SupabaseRestClient(SupabaseConfig.from_env()))
-    except ValueError:
+        logger.info("MCP OAuth tokens will persist in Supabase (survives cold starts)")
+    except Exception as exc:
+        logger.warning(
+            "MCP OAuth falling back to in-memory store — tokens will NOT survive "
+            "cold starts and clients will have to re-authenticate: %s",
+            exc,
+        )
         store = None
     oauth_provider = ApiKeyOAuthProvider(accounts, public_url, store=store)
 

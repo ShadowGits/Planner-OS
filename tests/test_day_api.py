@@ -39,11 +39,13 @@ class MemoryGateway:
     def __init__(self, workspace_row):
         self.tables = {"workspaces": [workspace_row]}
 
-    def select(self, table, *, filters, columns="*", limit=None):
+    def select(self, table, *, filters, columns="*", limit=None, query_string=None):
         rows = [row for row in self.tables.get(table, []) if self._matches(row, filters)]
         return rows[:limit] if limit else rows
 
     def insert(self, table, payload):
+        if isinstance(payload, list):
+            return [self.insert(table, p)[0] for p in payload]
         row = {"id": str(uuid4()), **TABLE_DEFAULTS.get(table, {}), **dict(payload)}
         self.tables.setdefault(table, []).append(row)
         return [dict(row)]
@@ -63,10 +65,15 @@ class MemoryGateway:
 
     @staticmethod
     def _matches(row, filters):
-        return all(
-            str(row.get(key)).casefold() == str(value).casefold()
-            for key, value in filters.items()
-        )
+        for key, value in filters.items():
+            row_val = str(row.get(key)).casefold()
+            if isinstance(value, list):
+                if not any(row_val == str(v).casefold() for v in value):
+                    return False
+            else:
+                if row_val != str(value).casefold():
+                    return False
+        return True
 
 
 def _workspace_row():
@@ -212,6 +219,77 @@ def test_delete_day_task(client) -> None:
 
     assert client.delete(f"/v2/day/tasks/{task_id}", headers=APP_KEY).status_code == 404
     assert client.delete(f"/v2/day/tasks/{task_id}").status_code == 401
+
+
+def test_patch_task_milestone_id(client) -> None:
+    created = client.post(
+        "/v2/day/tasks",
+        json={"title": "Review SOP", "date": "2026-07-22"},
+        headers=APP_KEY,
+    )
+    task_id = created.json()["data"]["task"]["id"]
+
+    patched = client.patch(
+        f"/v2/day/tasks/{task_id}",
+        json={"milestone_id": "ms-123"},
+        headers=APP_KEY,
+    )
+    assert patched.status_code == 200
+    assert patched.json()["data"]["task"]["milestone_id"] == "ms-123"
+
+    # Clear milestone_id by setting to None is an update too
+    patched2 = client.patch(
+        f"/v2/day/tasks/{task_id}",
+        json={"milestone_id": None},
+        headers=APP_KEY,
+    )
+    assert patched2.status_code == 200
+
+
+def test_week_endpoint(client) -> None:
+    client.post(
+        "/v2/day/tasks",
+        json={"title": "Mon gym", "date": "2026-07-20"},
+        headers=APP_KEY,
+    )
+    client.post(
+        "/v2/day/tasks",
+        json={"title": "Wed review", "date": "2026-07-22"},
+        headers=APP_KEY,
+    )
+
+    resp = client.get("/v2/week?date=2026-07-21", headers=APP_KEY)
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert "week_start" in data
+    titles = [i["title"] for i in data["items"]]
+    assert "Mon gym" in titles
+    assert "Wed review" in titles
+    assert data["timezone"] == "Asia/Kolkata"
+
+    # Without auth
+    assert client.get("/v2/week").status_code == 401
+
+
+def test_batch_delete_via_api(client) -> None:
+    ids = []
+    for title in ["A", "B", "C"]:
+        r = client.post("/v2/day/tasks", json={"title": title, "date": "2026-07-22"}, headers=APP_KEY)
+        ids.append(r.json()["data"]["task"]["id"])
+
+    resp = client.post(
+        "/v2/day/tasks/batch-delete",
+        json={"task_ids": ids[:2]},
+        headers=APP_KEY,
+    )
+    assert resp.status_code == 200
+
+    day = client.get("/v2/day?date=2026-07-22", headers=APP_KEY)
+    remaining = [i["title"] for i in day.json()["data"]["items"]]
+    assert remaining == ["C"]
+
+    # Without auth
+    assert client.post("/v2/day/tasks/batch-delete", json={"task_ids": []}).status_code == 401
 
 
 def test_static_shell_is_served(client) -> None:
