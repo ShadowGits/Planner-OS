@@ -28,6 +28,8 @@ class DayTaskCreate(BaseModel):
     start_time: str | None = None
     estimated_minutes: int | None = Field(default=None, gt=0, le=24 * 60)
     notes: str | None = None
+    parent_task_id: str | None = None
+    project_id: str | None = None
 
 
 class DayTaskUpdate(BaseModel):
@@ -180,6 +182,8 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 start_time=body.start_time,
                 estimated_minutes=body.estimated_minutes,
                 notes=body.notes,
+                parent_task_id=body.parent_task_id,
+                project_id=body.project_id,
             )
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(
