@@ -902,7 +902,15 @@
   }, 60000);
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && key()) loadDay({ keepScroll: true }).catch(showError);
+    if (!document.hidden && key()) {
+      const today = startOfDay(new Date());
+      if (!sameDay(state.selected, today)) {
+        state.selected = today;
+        loadDay({ keepScroll: false }).catch(showError);
+      } else {
+        loadDay({ keepScroll: true }).catch(showError);
+      }
+    }
   });
 
   if (!key()) {
