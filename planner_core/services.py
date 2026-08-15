@@ -1073,6 +1073,464 @@ class ReminderService:
         return "\n".join(lines)
 
 
+EXPENSE_CATEGORIES = (
+    "Food", "Groceries", "Transport", "Rent", "Utilities", "Health",
+    "Education", "Shopping", "Entertainment", "Subscriptions", "Travel",
+    "Savings", "Fees", "Family", "Other",
+)
+INCOME_CATEGORIES = ("Salary", "Freelance", "Refund", "Gift", "Interest", "Other")
+TRANSACTION_TYPES = {"expense", "income"}
+CADENCES = {"weekly", "monthly", "yearly"}
+RECURRING_LOOKBACK_DAYS = 62
+
+
+def _normalize_category(value: Any, kind: str = "expense") -> str | None:
+    """Snap a category onto the canonical list so the summary doesn't end up
+    with Food, food and Eating Out as three separate slices."""
+    if value in (None, ""):
+        return None
+    raw = str(value).strip()
+    known = EXPENSE_CATEGORIES if kind == "expense" else INCOME_CATEGORIES
+    for candidate in known:
+        if candidate.casefold() == raw.casefold():
+            return candidate
+    return raw.title()
+
+
+def _money(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+class FinanceService:
+    """Expense passbook, monthly summaries, and recurring charges.
+
+    Amounts are never summed across currencies — day-to-day spending is in
+    rupees while the Germany goals are in euros, and converting without a rate
+    would invent numbers. Every total is reported per currency instead.
+    """
+
+    def __init__(self, repository: PlannerCoreRepository, timezone: str = "UTC") -> None:
+        self.repository = repository
+        self.timezone = timezone
+
+    # ---------- transactions ----------
+
+    def log_transaction(
+        self,
+        description: str,
+        amount: float,
+        *,
+        on_date: str | None = None,
+        category: str | None = None,
+        currency: str = "INR",
+        kind: str = "expense",
+        merchant: str | None = None,
+        payment_method: str | None = None,
+        goal_id: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        if not description.strip():
+            raise PlannerCoreError("Description is required")
+        if kind not in TRANSACTION_TYPES:
+            raise PlannerCoreError(f"type must be one of {sorted(TRANSACTION_TYPES)}")
+        value = _money(amount)
+        if value <= 0:
+            raise PlannerCoreError("Amount must be greater than zero")
+
+        when = _parse_date(on_date) or _local_today(self.timezone)
+        code = str(currency).strip().upper() or "INR"
+
+        if goal_id and not self.repository.get_row("finance_goals", goal_id):
+            raise PlannerCoreError(f"Savings goal was not found: {goal_id}")
+
+        row = self.repository.insert_row(
+            "finance_logs",
+            {
+                "date": when.isoformat(),
+                "description": description.strip(),
+                "amount": value,
+                "currency": code,
+                "type": kind,
+                "category": _normalize_category(category, kind),
+                "merchant": merchant.strip() if merchant else None,
+                "payment_method": payment_method.strip() if payment_method else None,
+                "goal_id": goal_id,
+                "notes": notes,
+            },
+        )
+        return _envelope(True, f"Logged {code} {value:,.2f} — {description.strip()}", {"transaction": row})
+
+    def update_transaction(self, transaction_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "date", "description", "amount", "currency", "type",
+            "category", "merchant", "payment_method", "goal_id", "notes",
+        }
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError("No supported fields to update")
+
+        if "type" in payload and payload["type"] not in TRANSACTION_TYPES:
+            raise PlannerCoreError(f"type must be one of {sorted(TRANSACTION_TYPES)}")
+        if "amount" in payload:
+            payload["amount"] = _money(payload["amount"])
+            if payload["amount"] <= 0:
+                raise PlannerCoreError("Amount must be greater than zero")
+        if "date" in payload:
+            parsed = _parse_date(payload["date"])
+            payload["date"] = parsed.isoformat() if parsed else None
+        if "currency" in payload:
+            payload["currency"] = str(payload["currency"]).strip().upper()
+        if "category" in payload:
+            existing = self.repository.get_row("finance_logs", transaction_id) or {}
+            kind = payload.get("type") or existing.get("type") or "expense"
+            payload["category"] = _normalize_category(payload["category"], kind)
+
+        payload["updated_at"] = datetime.now(ZoneInfo(self.timezone)).isoformat()
+        row = self.repository.update_row("finance_logs", transaction_id, payload)
+        return _envelope(True, "Transaction updated", {"transaction": row})
+
+    def delete_transaction(self, transaction_id: str) -> dict[str, Any]:
+        self.repository.delete_row("finance_logs", transaction_id)
+        return _envelope(True, "Transaction deleted", None)
+
+    def list_transactions(
+        self,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        category: str | None = None,
+        kind: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """The passbook feed: newest first, optionally windowed by date."""
+        rows = self._transactions_between(_parse_date(start), _parse_date(end))
+        if category:
+            wanted = str(category).casefold()
+            rows = [r for r in rows if str(r.get("category") or "").casefold() == wanted]
+        if kind:
+            rows = [r for r in rows if r.get("type") == kind]
+        rows.sort(key=lambda r: (str(r.get("date") or ""), str(r.get("created_at") or "")), reverse=True)
+        return _envelope(True, f"{len(rows)} transactions", {"transactions": rows[: max(1, limit)]})
+
+    def _transactions_between(self, start: date | None, end: date | None) -> list[dict[str, Any]]:
+        clauses = []
+        if start:
+            clauses.append(f"date=gte.{start.isoformat()}")
+        if end:
+            clauses.append(f"date=lte.{end.isoformat()}")
+        qs = "&".join(clauses) if clauses else None
+        return self.repository.list_rows("finance_logs", query_string=qs)
+
+    # ---------- summary ----------
+
+    def monthly_summary(self, month: str | None = None) -> dict[str, Any]:
+        """Totals for one month, split by currency then by category, with the
+        previous month alongside so the header can show the direction."""
+        anchor = _parse_date(month) if month and len(str(month)) > 7 else None
+        if anchor is None:
+            if month:
+                year, mon = str(month).split("-")[:2]
+                anchor = date(int(year), int(mon), 1)
+            else:
+                anchor = _local_today(self.timezone).replace(day=1)
+        start = anchor.replace(day=1)
+        end = _end_of_month(start)
+        prev_start = (start - timedelta(days=1)).replace(day=1)
+
+        current = self._transactions_between(start, end)
+        previous = self._transactions_between(prev_start, _end_of_month(prev_start))
+        prev_expense = self._totals_by_currency(previous, "expense")
+
+        currencies: dict[str, Any] = {}
+        for code in sorted({str(r.get("currency") or "INR").upper() for r in current}):
+            scoped = [r for r in current if str(r.get("currency") or "INR").upper() == code]
+            expense = sum(_money(r["amount"]) for r in scoped if r.get("type") != "income")
+            income = sum(_money(r["amount"]) for r in scoped if r.get("type") == "income")
+            was = prev_expense.get(code, 0.0)
+            currencies[code] = {
+                "expense": round(expense, 2),
+                "income": round(income, 2),
+                "net": round(income - expense, 2),
+                "previous_expense": round(was, 2),
+                "change_pct": round((expense - was) / was * 100, 1) if was else None,
+                "by_category": self._by_category(scoped, expense),
+            }
+
+        return _envelope(
+            True,
+            f"Summary for {start.strftime('%B %Y')}",
+            {
+                "month": start.strftime("%Y-%m"),
+                "month_label": start.strftime("%B %Y"),
+                "currencies": currencies,
+                "transaction_count": len(current),
+            },
+        )
+
+    @staticmethod
+    def _totals_by_currency(rows: list[dict[str, Any]], kind: str) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for row in rows:
+            if kind == "expense" and row.get("type") == "income":
+                continue
+            if kind == "income" and row.get("type") != "income":
+                continue
+            code = str(row.get("currency") or "INR").upper()
+            totals[code] = totals.get(code, 0.0) + _money(row.get("amount"))
+        return totals
+
+    @staticmethod
+    def _by_category(rows: list[dict[str, Any]], total: float) -> list[dict[str, Any]]:
+        buckets: dict[str, float] = {}
+        for row in rows:
+            if row.get("type") == "income":
+                continue
+            name = row.get("category") or "Uncategorised"
+            buckets[name] = buckets.get(name, 0.0) + _money(row.get("amount"))
+        out = [
+            {
+                "category": name,
+                "amount": round(amount, 2),
+                "share_pct": round(amount / total * 100, 1) if total else 0.0,
+            }
+            for name, amount in buckets.items()
+        ]
+        out.sort(key=lambda item: item["amount"], reverse=True)
+        return out
+
+    # ---------- savings goals ----------
+
+    def goal_progress(self) -> dict[str, Any]:
+        """Germany savings goals with their hand-set baseline plus everything
+        logged against them. Contributions in another currency are reported
+        separately rather than converted at a rate we do not have."""
+        goals = self.repository.list_rows("finance_goals")
+        linked = [r for r in self.repository.list_rows("finance_logs") if r.get("goal_id")]
+
+        by_goal: dict[str, dict[str, float]] = {}
+        for row in linked:
+            key = str(row["goal_id"])
+            code = str(row.get("currency") or "INR").upper()
+            by_goal.setdefault(key, {})
+            by_goal[key][code] = by_goal[key].get(code, 0.0) + _money(row.get("amount"))
+
+        out = []
+        for goal in goals:
+            code = str(goal.get("currency") or "EUR").upper()
+            contributions = by_goal.get(str(goal["id"]), {})
+            baseline = _money(goal.get("saved_amount"))
+            matched = contributions.get(code, 0.0)
+            saved = round(baseline + matched, 2)
+            target = _money(goal.get("target_amount"))
+            other = {c: round(a, 2) for c, a in contributions.items() if c != code}
+            out.append({
+                "id": goal["id"],
+                "goal": goal.get("goal"),
+                "currency": code,
+                "target_amount": target,
+                "baseline_amount": baseline,
+                "contributed_amount": round(matched, 2),
+                "saved_amount": saved,
+                "remaining_amount": round(max(target - saved, 0), 2),
+                "progress_pct": round(min(saved / target * 100, 100), 1) if target else 0.0,
+                "deadline": goal.get("deadline"),
+                "other_currency_contributions": other,
+            })
+        out.sort(key=lambda g: (g["deadline"] or "9999-12-31", g["goal"] or ""))
+        return _envelope(True, f"{len(out)} savings goals", {"goals": out})
+
+    # ---------- recurring charges ----------
+
+    def add_recurring(
+        self,
+        description: str,
+        amount: float,
+        *,
+        cadence: str = "monthly",
+        day_of_month: int | None = None,
+        day_of_week: int | None = None,
+        category: str | None = None,
+        currency: str = "INR",
+        kind: str = "expense",
+        merchant: str | None = None,
+        payment_method: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        if not description.strip():
+            raise PlannerCoreError("Description is required")
+        if cadence not in CADENCES:
+            raise PlannerCoreError(f"cadence must be one of {sorted(CADENCES)}")
+        if kind not in TRANSACTION_TYPES:
+            raise PlannerCoreError(f"type must be one of {sorted(TRANSACTION_TYPES)}")
+        value = _money(amount)
+        if value <= 0:
+            raise PlannerCoreError("Amount must be greater than zero")
+
+        begins = _parse_date(start_date) or _local_today(self.timezone)
+        ends = _parse_date(end_date)
+        if ends and ends < begins:
+            raise PlannerCoreError("end_date cannot be before start_date")
+        if cadence == "monthly" and day_of_month is None:
+            day_of_month = begins.day
+        if cadence == "weekly" and day_of_week is None:
+            day_of_week = begins.weekday()
+        if day_of_month is not None and not 1 <= int(day_of_month) <= 31:
+            raise PlannerCoreError("day_of_month must be between 1 and 31")
+        if day_of_week is not None and not 0 <= int(day_of_week) <= 6:
+            raise PlannerCoreError("day_of_week must be between 0 (Monday) and 6 (Sunday)")
+
+        row = self.repository.insert_row(
+            "finance_recurring",
+            {
+                "description": description.strip(),
+                "amount": value,
+                "currency": str(currency).strip().upper() or "INR",
+                "type": kind,
+                "cadence": cadence,
+                "day_of_month": day_of_month,
+                "day_of_week": day_of_week,
+                "category": _normalize_category(category, kind),
+                "merchant": merchant.strip() if merchant else None,
+                "payment_method": payment_method.strip() if payment_method else None,
+                "start_date": begins.isoformat(),
+                "end_date": ends.isoformat() if ends else None,
+                "notes": notes,
+                "active": True,
+            },
+        )
+        return _envelope(True, f"Recurring {cadence} charge saved — {description.strip()}", {"recurring": row})
+
+    def list_recurring(self, *, include_inactive: bool = False) -> dict[str, Any]:
+        rows = self.repository.list_rows("finance_recurring")
+        if not include_inactive:
+            rows = [r for r in rows if r.get("active")]
+        rows.sort(key=lambda r: str(r.get("description") or ""))
+        return _envelope(True, f"{len(rows)} recurring charges", {"recurring": rows})
+
+    def update_recurring(self, recurring_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "description", "amount", "currency", "type", "cadence", "day_of_month",
+            "day_of_week", "category", "merchant", "payment_method", "start_date",
+            "end_date", "active", "notes",
+        }
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError("No supported fields to update")
+        if "cadence" in payload and payload["cadence"] not in CADENCES:
+            raise PlannerCoreError(f"cadence must be one of {sorted(CADENCES)}")
+        if "amount" in payload:
+            payload["amount"] = _money(payload["amount"])
+            if payload["amount"] <= 0:
+                raise PlannerCoreError("Amount must be greater than zero")
+        payload["updated_at"] = datetime.now(ZoneInfo(self.timezone)).isoformat()
+        row = self.repository.update_row("finance_recurring", recurring_id, payload)
+        return _envelope(True, "Recurring charge updated", {"recurring": row})
+
+    def delete_recurring(self, recurring_id: str) -> dict[str, Any]:
+        self.repository.delete_row("finance_recurring", recurring_id)
+        return _envelope(True, "Recurring charge deleted", None)
+
+    def materialize_recurring(self, on_date: str | None = None) -> dict[str, Any]:
+        """Turn every recurring rule that has come due into a real passbook
+        entry. Safe to run repeatedly: rows already generated for a date are
+        skipped, and the unique index on (recurring_id, date) is the backstop."""
+        today = _parse_date(on_date) or _local_today(self.timezone)
+        rules = [r for r in self.repository.list_rows("finance_recurring") if r.get("active")]
+
+        created: list[dict[str, Any]] = []
+        for rule in rules:
+            due = self._due_dates(rule, today)
+            if not due:
+                continue
+            already = {
+                str(row.get("date"))[:10]
+                for row in self.repository.list_rows("finance_logs", {"recurring_id": rule["id"]})
+            }
+            for when in due:
+                if when.isoformat() in already:
+                    continue
+                created.append(self.repository.insert_row(
+                    "finance_logs",
+                    {
+                        "date": when.isoformat(),
+                        "description": rule["description"],
+                        "amount": _money(rule.get("amount")),
+                        "currency": str(rule.get("currency") or "INR").upper(),
+                        "type": rule.get("type") or "expense",
+                        "category": rule.get("category"),
+                        "merchant": rule.get("merchant"),
+                        "payment_method": rule.get("payment_method"),
+                        "recurring_id": rule["id"],
+                        "notes": rule.get("notes"),
+                    },
+                ))
+
+        return _envelope(
+            True,
+            f"{len(created)} recurring charges posted" if created else "No recurring charges due",
+            {"created": created},
+        )
+
+    def _due_dates(self, rule: Mapping[str, Any], today: date) -> list[date]:
+        """Occurrences between the lookback window and today. The window keeps
+        the work bounded while still catching up a cron that was down."""
+        begins = _parse_date(rule.get("start_date")) or today
+        ends = _parse_date(rule.get("end_date"))
+        window_start = max(begins, today - timedelta(days=RECURRING_LOOKBACK_DAYS))
+        window_end = min(today, ends) if ends else today
+        if window_start > window_end:
+            return []
+
+        cadence = rule.get("cadence") or "monthly"
+        out: list[date] = []
+
+        if cadence == "weekly":
+            wanted = rule.get("day_of_week")
+            wanted = begins.weekday() if wanted is None else int(wanted)
+            cursor = window_start
+            while cursor <= window_end:
+                if cursor.weekday() == wanted:
+                    out.append(cursor)
+                cursor += timedelta(days=1)
+            return out
+
+        if cadence == "monthly":
+            wanted = rule.get("day_of_month")
+            wanted = begins.day if wanted is None else int(wanted)
+            cursor = window_start.replace(day=1)
+            while cursor <= window_end:
+                # Rent set to the 31st still posts in February.
+                day = min(wanted, _days_in_month(cursor))
+                occurrence = cursor.replace(day=day)
+                if window_start <= occurrence <= window_end:
+                    out.append(occurrence)
+                cursor = _end_of_month(cursor) + timedelta(days=1)
+            return out
+
+        # Yearly recurs on the anniversary of start_date.
+        for year in range(window_start.year, window_end.year + 1):
+            day = min(begins.day, _days_in_month(date(year, begins.month, 1)))
+            occurrence = date(year, begins.month, day)
+            if window_start <= occurrence <= window_end:
+                out.append(occurrence)
+        return out
+
+
+def _days_in_month(any_day: date) -> int:
+    import calendar
+
+    return calendar.monthrange(any_day.year, any_day.month)[1]
+
+
+def _end_of_month(any_day: date) -> date:
+    return any_day.replace(day=_days_in_month(any_day))
+
+
 def _slug(value: str) -> str:
     import re
 

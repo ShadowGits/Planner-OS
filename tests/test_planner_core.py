@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
-from planner_core.services import MetricsService, ProjectService, ReminderService, TaskService
+from planner_core.services import (
+    FinanceService,
+    MetricsService,
+    ProjectService,
+    ReminderService,
+    TaskService,
+)
 from planner_core.telegram import parse_command, sender_chat_id
 
 USER_ID = uuid4()
@@ -47,7 +53,40 @@ class MemoryGateway:
 
     def select(self, table, *, filters, columns="*", limit=None, query_string=None):
         rows = [row for row in self.tables.get(table, []) if self._matches(row, filters)]
+        rows = [row for row in rows if self._matches_query(row, query_string)]
         return rows[:limit] if limit else rows
+
+    @staticmethod
+    def _matches_query(row, query_string):
+        """Handle the `col=op.value` clauses the services build. `or=(...)`
+        groups are left alone — the callers that use those assert on the
+        unfiltered result."""
+        if not query_string or "or=(" in query_string:
+            return True
+        for clause in query_string.split("&"):
+            if "=" not in clause:
+                continue
+            column, _, condition = clause.partition("=")
+            op, _, value = condition.partition(".")
+            actual = row.get(column)
+            if op == "is" and value == "null":
+                if actual is not None:
+                    return False
+                continue
+            if actual is None:
+                return False
+            actual, value = str(actual), str(value)
+            if op == "eq" and actual != value:
+                return False
+            if op == "gte" and actual < value:
+                return False
+            if op == "lte" and actual > value:
+                return False
+            if op == "gt" and actual <= value:
+                return False
+            if op == "lt" and actual >= value:
+                return False
+        return True
 
     def insert(self, table, payload):
         if isinstance(payload, list):
@@ -419,6 +458,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_add_monthly_goal",
         "core_add_project_qna",
         "core_add_project_widget",
+        "core_add_recurring_charge",
         "core_add_weekly_goal",
         "core_complete_task",
         "core_create_project",
@@ -427,11 +467,19 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_delete_monthly_goal",
         "core_delete_project_qna",
         "core_delete_project_widget",
+        "core_delete_recurring_charge",
         "core_delete_task",
         "core_delete_tasks_batch",
+        "core_delete_transaction",
+        "core_finance_goals",
+        "core_finance_summary",
         "core_list_project_widgets",
         "core_list_projects",
+        "core_list_recurring_charges",
         "core_list_tasks",
+        "core_list_transactions",
+        "core_log_expense",
+        "core_log_income",
         "core_metrics",
         "core_sync_calendar",
         "core_today",
@@ -440,7 +488,208 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_update_project",
         "core_update_project_qna",
         "core_update_project_widget",
+        "core_update_recurring_charge",
         "core_update_task",
         "core_update_task_date_time_batch",
+        "core_update_transaction",
     ]
     assert names == expected
+
+
+# ---------------------------------------------------------------- finance ---
+
+
+@pytest.fixture()
+def finance(repo):
+    return FinanceService(repo, TZ)
+
+
+def test_log_expense_normalises_category_and_defaults_to_today(finance):
+    result = finance.log_transaction("Chai and samosa", 60, category="food")
+
+    row = result["data"]["transaction"]
+    assert row["category"] == "Food"  # snapped onto the canonical list
+    assert row["currency"] == "INR"
+    assert row["type"] == "expense"
+    assert row["date"] == _today().isoformat()
+
+
+def test_log_transaction_rejects_zero_and_negative_amounts(finance):
+    for bad in (0, -250):
+        with pytest.raises(PlannerCoreError, match="greater than zero"):
+            finance.log_transaction("Refund gone wrong", bad)
+
+
+def test_log_transaction_rejects_unknown_type(finance):
+    with pytest.raises(PlannerCoreError, match="type must be"):
+        finance.log_transaction("Mystery", 100, kind="transfer")
+
+
+def test_log_transaction_rejects_unknown_goal(finance):
+    with pytest.raises(PlannerCoreError, match="was not found"):
+        finance.log_transaction("Savings", 5000, goal_id=str(uuid4()))
+
+
+def test_summary_keeps_currencies_apart(finance):
+    month = _today().replace(day=1).isoformat()
+    finance.log_transaction("Groceries", 3000, category="Groceries", on_date=month)
+    finance.log_transaction("Lunch", 500, category="Food", on_date=month)
+    finance.log_transaction("Visa fee", 75, currency="EUR", category="Fees", on_date=month)
+    finance.log_transaction("Salary", 90000, kind="income", on_date=month)
+
+    data = finance.monthly_summary()["data"]
+
+    inr, eur = data["currencies"]["INR"], data["currencies"]["EUR"]
+    assert inr["expense"] == 3500.0
+    assert inr["income"] == 90000.0
+    assert inr["net"] == 86500.0
+    # The euro fee must never be folded into the rupee total.
+    assert eur["expense"] == 75.0
+    assert eur["income"] == 0.0
+
+
+def test_summary_ranks_categories_by_spend(finance):
+    month = _today().replace(day=1).isoformat()
+    finance.log_transaction("Rent", 20000, category="Rent", on_date=month)
+    finance.log_transaction("Groceries", 4000, category="Groceries", on_date=month)
+    finance.log_transaction("Chai", 1000, category="Food", on_date=month)
+
+    inr = finance.monthly_summary()["data"]["currencies"]["INR"]
+
+    assert [c["category"] for c in inr["by_category"]] == ["Rent", "Groceries", "Food"]
+    assert inr["by_category"][0]["share_pct"] == 80.0
+
+
+def test_summary_excludes_other_months(finance):
+    this_month = _today().replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    finance.log_transaction("This month", 100, on_date=this_month.isoformat())
+    finance.log_transaction("Last month", 999, on_date=last_month.isoformat())
+
+    data = finance.monthly_summary(this_month.strftime("%Y-%m"))["data"]
+
+    assert data["transaction_count"] == 1
+    assert data["currencies"]["INR"]["expense"] == 100.0
+    assert data["currencies"]["INR"]["previous_expense"] == 999.0
+
+
+def test_goal_progress_adds_contributions_to_the_baseline(finance, repo):
+    goal = repo.insert_row(
+        "finance_goals",
+        {"goal": "Blocked account", "target_amount": 12000, "saved_amount": 2000, "currency": "EUR"},
+    )
+    finance.log_transaction("Transfer", 1000, currency="EUR", goal_id=str(goal["id"]))
+
+    tracked = finance.goal_progress()["data"]["goals"][0]
+
+    assert tracked["baseline_amount"] == 2000.0
+    assert tracked["contributed_amount"] == 1000.0
+    assert tracked["saved_amount"] == 3000.0
+    assert tracked["remaining_amount"] == 9000.0
+    assert tracked["progress_pct"] == 25.0
+
+
+def test_goal_progress_reports_other_currencies_separately(finance, repo):
+    goal = repo.insert_row(
+        "finance_goals",
+        {"goal": "Blocked account", "target_amount": 12000, "saved_amount": 0, "currency": "EUR"},
+    )
+    finance.log_transaction("Rupee savings", 90000, currency="INR", goal_id=str(goal["id"]))
+
+    tracked = finance.goal_progress()["data"]["goals"][0]
+
+    # No exchange rate exists, so rupees must not inflate a euro goal.
+    assert tracked["saved_amount"] == 0.0
+    assert tracked["progress_pct"] == 0.0
+    assert tracked["other_currency_contributions"] == {"INR": 90000.0}
+
+
+def test_monthly_recurring_clamps_to_a_short_month(finance):
+    finance.add_recurring(
+        "Rent", 25000, cadence="monthly", day_of_month=31,
+        category="Rent", start_date="2027-01-31",
+    )
+
+    posted = finance.materialize_recurring("2027-03-05")["data"]["created"]
+
+    # The 31st does not exist in February, so rent posts on the 28th. March's
+    # 31st has not arrived yet on the 5th, so it is not posted early.
+    assert {r["date"] for r in posted} == {"2027-01-31", "2027-02-28"}
+
+
+def test_recurring_does_not_post_twice(finance):
+    finance.add_recurring("Netflix", 649, cadence="monthly", day_of_month=1, start_date="2027-01-01")
+
+    first = finance.materialize_recurring("2027-02-10")["data"]["created"]
+    again = finance.materialize_recurring("2027-02-10")["data"]["created"]
+
+    assert len(first) == 2  # January and February
+    assert again == []  # a second cron run charges nothing
+
+
+def test_recurring_stops_after_end_date(finance):
+    finance.add_recurring(
+        "Gym", 1500, cadence="monthly", day_of_month=5,
+        start_date="2027-01-05", end_date="2027-02-05",
+    )
+
+    posted = finance.materialize_recurring("2027-02-20")["data"]["created"]
+
+    assert {r["date"] for r in posted} == {"2027-01-05", "2027-02-05"}
+
+
+def test_recurring_catch_up_is_bounded_by_the_lookback_window(finance):
+    """Adding a rule with an old start date must not retroactively post a
+    year of charges — only the recent window is filled in."""
+    finance.add_recurring(
+        "Rent", 25000, cadence="monthly", day_of_month=1, start_date="2026-01-01",
+    )
+
+    posted = finance.materialize_recurring("2027-03-10")["data"]["created"]
+
+    assert {r["date"] for r in posted} == {"2027-02-01", "2027-03-01"}
+
+
+def test_weekly_recurring_posts_on_the_chosen_weekday(finance):
+    # 2027-03-01 is a Monday.
+    finance.add_recurring(
+        "Cleaner", 500, cadence="weekly", day_of_week=0, start_date="2027-03-01",
+    )
+
+    posted = finance.materialize_recurring("2027-03-22")["data"]["created"]
+
+    assert {r["date"] for r in posted} == {"2027-03-01", "2027-03-08", "2027-03-15", "2027-03-22"}
+
+
+def test_inactive_recurring_charges_are_skipped(finance):
+    created = finance.add_recurring(
+        "Old subscription", 199, cadence="monthly", day_of_month=1, start_date="2027-01-01",
+    )["data"]["recurring"]
+    finance.update_recurring(str(created["id"]), {"active": False})
+
+    assert finance.materialize_recurring("2027-02-10")["data"]["created"] == []
+
+
+def test_recurring_rejects_a_bad_cadence(finance):
+    with pytest.raises(PlannerCoreError, match="cadence must be"):
+        finance.add_recurring("Nonsense", 100, cadence="fortnightly")
+
+
+def test_recurring_rejects_end_before_start(finance):
+    with pytest.raises(PlannerCoreError, match="end_date cannot be before"):
+        finance.add_recurring("Backwards", 100, start_date="2027-05-01", end_date="2027-04-01")
+
+
+def test_list_transactions_is_newest_first_and_filterable(finance):
+    finance.log_transaction("Older", 100, category="Food", on_date="2027-01-01")
+    finance.log_transaction("Newer", 200, category="Food", on_date="2027-01-05")
+    finance.log_transaction("Transport", 50, category="Transport", on_date="2027-01-03")
+
+    rows = finance.list_transactions()["data"]["transactions"]
+    assert [r["description"] for r in rows] == ["Newer", "Transport", "Older"]
+
+    food = finance.list_transactions(category="Food")["data"]["transactions"]
+    assert {r["description"] for r in food} == {"Older", "Newer"}
+
+    windowed = finance.list_transactions(start="2027-01-02", end="2027-01-04")["data"]["transactions"]
+    assert [r["description"] for r in windowed] == ["Transport"]
