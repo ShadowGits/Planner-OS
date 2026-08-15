@@ -1,9 +1,57 @@
 -- Personal finance tracker.
 --
--- finance_logs and finance_goals were created in 0010 but only goals were ever
--- used. This migration fills in what the expense side needs: where the money
--- went, how it was paid, and an optional link from a savings transfer to the
+-- finance_goals and finance_logs were both declared in 0010, but only the
+-- goals half reached the live database. This migration creates whatever is
+-- missing and then adds what the expense side needs: where the money went,
+-- how it was paid, and an optional link from a savings transfer to the
 -- Germany goal it funds, so saved_amount stops being a hand-typed number.
+
+-- 0. Create the base tables if 0010 never landed them.
+create table if not exists public.finance_goals (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null,
+    workspace_id uuid not null,
+    goal text not null,
+    target_amount numeric(12,2) default 0.0,
+    saved_amount numeric(12,2) default 0.0,
+    deadline date,
+    notes text,
+    created_at timestamptz not null default now(),
+    foreign key (user_id, workspace_id) references public.workspaces(user_id, id) on delete cascade
+);
+
+create table if not exists public.finance_logs (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null,
+    workspace_id uuid not null,
+    date date not null default current_date,
+    category text,
+    description text,
+    amount numeric(12,2) default 0.0,
+    currency text default 'INR',
+    type text default 'expense',
+    notes text,
+    created_at timestamptz not null default now(),
+    foreign key (user_id, workspace_id) references public.workspaces(user_id, id) on delete cascade
+);
+
+alter table public.finance_goals enable row level security;
+alter table public.finance_logs enable row level security;
+
+drop policy if exists finance_goals_owner_all on public.finance_goals;
+create policy finance_goals_owner_all on public.finance_goals
+    for all to authenticated
+    using ((select auth.uid()) = user_id)
+    with check ((select auth.uid()) = user_id);
+
+drop policy if exists finance_logs_owner_all on public.finance_logs;
+create policy finance_logs_owner_all on public.finance_logs
+    for all to authenticated
+    using ((select auth.uid()) = user_id)
+    with check ((select auth.uid()) = user_id);
+
+grant select, insert, update, delete on public.finance_goals to authenticated, service_role;
+grant select, insert, update, delete on public.finance_logs to authenticated, service_role;
 
 -- 1. Expense log: the passbook.
 alter table public.finance_logs add column if not exists merchant text;
