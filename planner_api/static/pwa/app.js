@@ -15,7 +15,7 @@
   const $ = (id) => document.getElementById(id);
 
   const state = {
-    selected: startOfDay(new Date()),
+    selected: getLogicalToday(),
     items: [],
     tz: null,
     editing: null, // task id when the sheet is in edit mode
@@ -31,6 +31,12 @@
     const x = new Date(d);
     x.setHours(0, 0, 0, 0);
     return x;
+  }
+
+  function getLogicalToday() {
+    const d = new Date();
+    if (d.getHours() < 4) d.setDate(d.getDate() - 1);
+    return startOfDay(d);
   }
 
   function iso(d) {
@@ -289,7 +295,7 @@
   /* ---------- header + week strip ---------- */
 
   function renderHeader() {
-    const today = startOfDay(new Date());
+    const today = getLogicalToday();
     const diff = Math.round((state.selected - today) / 86400000);
     const names = { "-1": "Yesterday", 0: "Today", 1: "Tomorrow" };
     const label =
@@ -311,7 +317,7 @@
       d.setDate(monday.getDate() + i);
       const pill = document.createElement("button");
       pill.className = "day-pill";
-      if (sameDay(d, new Date())) pill.classList.add("today");
+      if (sameDay(d, getLogicalToday())) pill.classList.add("today");
       if (sameDay(d, state.selected)) pill.classList.add("selected");
       pill.innerHTML = `<span class="dow">${d.toLocaleDateString([], { weekday: "narrow" })}</span>
         <span class="num">${d.getDate()}</span><span class="dot"></span>`;
@@ -393,9 +399,10 @@
       list.appendChild(lbl);
     }
 
-    if (sameDay(state.selected, new Date())) {
+    if (sameDay(state.selected, getLogicalToday())) {
       const now = new Date();
-      const m = now.getHours() * 60 + now.getMinutes();
+      let m = now.getHours() * 60 + now.getMinutes();
+      if (now.getHours() < 4) m += 24 * 60;
       if (m >= top0 && m <= endH * 60) {
         const nl = document.createElement("div");
         nl.className = "now-line";
@@ -649,15 +656,17 @@
       }))
       .sort((a, b) => a.start - b.start);
     const now = new Date();
-    let candidate = sameDay(state.selected, now)
-      ? Math.ceil((now.getHours() * 60 + now.getMinutes()) / 30) * 30
+    let m = now.getHours() * 60 + now.getMinutes();
+    if (now.getHours() < 4) m += 24 * 60;
+    let candidate = sameDay(state.selected, getLogicalToday())
+      ? Math.ceil(m / 30) * 30
       : 9 * 60;
     const need = task.estimated_minutes || 30;
     for (const slot of blocks) {
       if (candidate + need <= slot.start) break;
       if (candidate < slot.end) candidate = slot.end;
     }
-    candidate = Math.min(candidate, 23 * 60);
+    candidate = Math.min(candidate, 27 * 60);
     // Instead of auto-saving, open the modal with the calculated candidate time prefilled
     prefillMin = null;
     $("new-id").value = task.id;
@@ -887,7 +896,7 @@
   }, 3600000);
 
   setInterval(() => {
-    if (sameDay(state.selected, new Date())) {
+    if (sameDay(state.selected, getLogicalToday())) {
       const nl = document.querySelector(".now-line");
       if (nl) {
         const timed = state.items.filter((t) => t.start_time);
@@ -895,7 +904,8 @@
         const startH = timed.length ? Math.min(0, ...mins.map((m) => Math.floor(m / 60))) : 0;
         const top0 = startH * 60;
         const now = new Date();
-        const m = now.getHours() * 60 + now.getMinutes();
+        let m = now.getHours() * 60 + now.getMinutes();
+        if (now.getHours() < 4) m += 24 * 60;
         nl.style.top = `${(m - top0) * PX_PER_MIN}px`;
       }
     }
@@ -903,7 +913,7 @@
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && key()) {
-      const today = startOfDay(new Date());
+      const today = getLogicalToday();
       if (!sameDay(state.selected, today)) {
         state.selected = today;
         loadDay({ keepScroll: false }).catch(showError);
