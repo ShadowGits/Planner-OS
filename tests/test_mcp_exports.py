@@ -39,7 +39,17 @@ class TestMCPExports(unittest.TestCase):
             "clear_all_reminders",
             "sync_reminders",
             "complete_by_title",
-            "reopen_task"
+            "reopen_task",
+            # Finance tools are named for what they do rather than after the
+            # method, so Claude picks the right one from the tool list alone.
+            "log_transaction",  # split into core_log_expense / core_log_income
+            "monthly_summary",  # mapped to core_finance_summary
+            "goal_progress",  # mapped to core_finance_goals
+            "add_recurring",  # mapped to core_add_recurring_charge
+            "list_recurring",  # mapped to core_list_recurring_charges
+            "update_recurring",  # mapped to core_update_recurring_charge
+            "delete_recurring",  # mapped to core_delete_recurring_charge
+            "materialize_recurring",  # cron only: POST /v2/finance/recurring/run
         }
         
         missing = []

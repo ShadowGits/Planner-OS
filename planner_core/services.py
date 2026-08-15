@@ -22,6 +22,8 @@ MILESTONE_STATUSES = {"not_started", "in_progress", "blocked", "done"}
 PROJECT_STATUSES = {"active", "paused", "done", "archived"}
 PRIORITIES = {"low", "medium", "high", "critical"}
 DEADLINE_WINDOW_DAYS = 7
+DEADLINE_HORIZON_DAYS = 30
+OVERDUE_LIST_LIMIT = 200
 
 
 def _envelope(success: bool, message: str, data: dict[str, Any] | None = None, errors: list[str] | None = None) -> dict[str, Any]:
@@ -340,16 +342,9 @@ class TaskService:
         _parse_date(scheduled_date)
         _parse_time(start_time)
         
-        # Enforce scheduled_date rule
-        if parent_task_id and scheduled_date:
-            parent = self.repository.get_row("planner_tasks", parent_task_id)
-            if parent:
-                parent_date = parent.get("scheduled_date")
-                if parent_date and parent_date != scheduled_date:
-                    raise PlannerCoreError(f"Cannot schedule child on {scheduled_date}; parent is on {parent_date}")
-                elif not parent_date:
-                    self.repository.update_row("planner_tasks", parent_task_id, {"scheduled_date": scheduled_date})
-                    
+        self._align_with_parent(parent_task_id, scheduled_date)
+
+
         row = self.repository.insert_row(
             "planner_tasks",
             {
@@ -406,6 +401,24 @@ class TaskService:
         created = self.repository.insert_rows("planner_tasks", payloads)
         return _envelope(True, f"Created {len(created)} tasks", {"tasks": created})
 
+    def _align_with_parent(self, parent_task_id: str | None, scheduled_date: str | None) -> None:
+        """A time-slot child lives on its parent's day. If the parent has no
+        day yet, it takes the child's."""
+        if not parent_task_id or not scheduled_date:
+            return
+        parent = self.repository.get_row("planner_tasks", parent_task_id)
+        if parent is None:
+            return
+        parent_date = parent.get("scheduled_date")
+        if parent_date and str(parent_date)[:10] != str(scheduled_date)[:10]:
+            raise PlannerCoreError(
+                f"Cannot schedule child on {scheduled_date}; parent is on {parent_date}"
+            )
+        if not parent_date:
+            self.repository.update_row(
+                "planner_tasks", parent_task_id, {"scheduled_date": scheduled_date}
+            )
+
     def update_task(self, task_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "title",
@@ -430,7 +443,28 @@ class TaskService:
             raise PlannerCoreError(f"Invalid task status: {status}")
         if "start_time" in payload:
             _parse_time(payload["start_time"])
+
+        # Creation forces a child onto its parent's day; without the same check
+        # here an edit could quietly move it off again.
+        if "scheduled_date" in payload or "parent_task_id" in payload:
+            existing = self.repository.get_row("planner_tasks", task_id) or {}
+            parent_id = payload.get("parent_task_id", existing.get("parent_task_id"))
+            new_date = payload.get("scheduled_date", existing.get("scheduled_date"))
+            self._align_with_parent(parent_id, new_date)
+
         row = self.repository.update_row("planner_tasks", task_id, payload)
+
+        # Moving a parent takes its time slots along, so the group never splits
+        # across two days.
+        if "scheduled_date" in payload and payload["scheduled_date"]:
+            for child in self.repository.list_rows(
+                "planner_tasks", {"parent_task_id": task_id}, columns="id,scheduled_date"
+            ):
+                if str(child.get("scheduled_date") or "")[:10] != str(payload["scheduled_date"])[:10]:
+                    self.repository.update_row(
+                        "planner_tasks", str(child["id"]), {"scheduled_date": payload["scheduled_date"]}
+                    )
+
         return _envelope(True, f"Task updated: {row['title']}", {"task": row})
 
     def delete_task(self, task_id: str) -> dict[str, Any]:
@@ -737,8 +771,22 @@ class TaskService:
         
         items: list[dict[str, Any]] = []
         monday_str = monday.isoformat()
-        qs = f"or=(scheduled_date.gte.{monday_str},due_date.gte.{monday_str})"
-        all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        sunday_str = (monday + timedelta(days=6)).isoformat()
+        # Bounded at both ends and limited to the fields the view returns.
+        # Without the upper bound this pulled every task dated from Monday to
+        # the end of time — 2027 deadlines included — only to discard them below.
+        qs = (
+            f"or=(and(scheduled_date.gte.{monday_str},scheduled_date.lte.{sunday_str}),"
+            f"and(due_date.gte.{monday_str},due_date.lte.{sunday_str}))"
+        )
+        all_rows = self.repository.list_rows(
+            "planner_tasks",
+            query_string=qs,
+            columns=(
+                "id,title,status,start_time,estimated_minutes,priority,"
+                "due_date,scheduled_date,notes,project_id,parent_task_id"
+            ),
+        )
         parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
         
         for row in all_rows:
@@ -804,7 +852,9 @@ class MetricsService:
         current_month = today.replace(day=1).isoformat()
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
-        tasks = self.repository.list_rows("planner_tasks", columns="id,title,project_id,status,scheduled_date,due_date", query_string="parent_task_id=is.null")
+        counts = self._task_counts(today)
+        deadline_tasks = self._tasks_due_by(today + timedelta(days=DEADLINE_HORIZON_DAYS))
+        overdue_list = self._overdue_tasks(today)
         cutoff = (today - timedelta(days=90)).isoformat()
         completions = self.repository.list_rows(
             "task_completions",
@@ -829,20 +879,18 @@ class MetricsService:
 
         project_metrics = []
         for project in projects:
-            pm = self._project_metrics(project, milestones, tasks, today)
-            
+            pm = self._project_metrics(project, milestones, counts, today)
+
             p_goals = goals_by_project.get(str(project["id"]), [])
             p_files = files_by_project.get(str(project["id"]), [])
             curr_goal = next((g for g in p_goals if g["month"] == current_month), None)
-            
+
             pm["monthly_goal"] = curr_goal
             pm["monthly_goals"] = p_goals
             pm["files"] = p_files
             project_metrics.append(pm)
-        deadlines = self._upcoming_deadlines(milestones, tasks, today)
+        deadlines = self._upcoming_deadlines(milestones, deadline_tasks, today)
         streaks = self._streaks(completions, today)
-        open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]
-        overdue = [task for task in open_tasks if _is_overdue(task, today)]
         completed_today = [row for row in completions if _parse_date(row.get("completed_on")) == today]
         return {
             "generated_on": today.isoformat(),
@@ -851,9 +899,12 @@ class MetricsService:
             "upcoming_deadlines": deadlines,
             "streaks": streaks,
             "totals": {
-                "open_tasks": len(open_tasks),
-                "overdue_tasks": len(overdue),
-                "overdue_list": sorted(overdue, key=lambda x: x.get("target_date") or "9999-99-99"),
+                "open_tasks": sum(bucket["open"] for bucket in counts.values()),
+                # Counted across every overdue task; the list below is capped
+                # so a long backlog cannot bloat the dashboard payload.
+                "overdue_tasks": sum(bucket["overdue"] for bucket in counts.values()),
+                "overdue_list": overdue_list,
+                "overdue_list_truncated": len(overdue_list) >= OVERDUE_LIST_LIMIT,
                 "completed_today": len(completed_today),
                 "completions_last_7_days": len(
                     [
@@ -887,18 +938,95 @@ class MetricsService:
             flat[f"{_slug(key)}_streak_days"] = str(streak)
         return flat
 
+    OPEN_STATUS_LIST = "todo,in_progress,blocked"
+
+    def _task_counts(self, today: date) -> dict[str, dict[str, int]]:
+        """Per-project task counts, rolled up by Postgres rather than by
+        shipping every row here to be counted. Falls back to the old full scan
+        when the rollup function has not been installed yet, so a deploy that
+        lands before the migration still serves a correct dashboard."""
+        try:
+            rows = self.repository.call_function(
+                "planner_task_counts", {"p_today": today.isoformat()}
+            )
+        except Exception:
+            rows = None
+
+        if rows is None:
+            return self._task_counts_by_scan(today)
+
+        return {
+            str(row.get("project_id") or ""): {
+                "done": int(row.get("done_count") or 0),
+                "total": int(row.get("total_count") or 0),
+                "open": int(row.get("open_count") or 0),
+                "overdue": int(row.get("overdue_count") or 0),
+            }
+            for row in rows
+        }
+
+    def _task_counts_by_scan(self, today: date) -> dict[str, dict[str, int]]:
+        tasks = self.repository.list_rows(
+            "planner_tasks",
+            columns="id,project_id,status,scheduled_date,due_date",
+            query_string="parent_task_id=is.null",
+        )
+        buckets: dict[str, dict[str, int]] = {}
+        for task in tasks:
+            key = str(task.get("project_id") or "")
+            bucket = buckets.setdefault(key, {"done": 0, "total": 0, "open": 0, "overdue": 0})
+            status = task.get("status")
+            if status == "done":
+                bucket["done"] += 1
+            if status != "skipped":
+                bucket["total"] += 1
+            if status in OPEN_TASK_STATUSES:
+                bucket["open"] += 1
+                if _is_overdue(task, today):
+                    bucket["overdue"] += 1
+        return buckets
+
+    def _tasks_due_by(self, horizon: date) -> list[dict[str, Any]]:
+        """Only the open tasks with a deadline inside the window the dashboard
+        actually lists."""
+        return self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title,due_date,status",
+            query_string=(
+                "parent_task_id=is.null"
+                f"&status=in.({self.OPEN_STATUS_LIST})"
+                f"&due_date=lte.{horizon.isoformat()}"
+            ),
+        )
+
+    def _overdue_tasks(self, today: date) -> list[dict[str, Any]]:
+        """Overdue open tasks, oldest deadline first. Capped: the dashboard
+        shows this as a list, and nobody reads past a couple of hundred."""
+        stamp = today.isoformat()
+        return self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title,project_id,status,scheduled_date,due_date,priority",
+            query_string=(
+                "parent_task_id=is.null"
+                f"&status=in.({self.OPEN_STATUS_LIST})"
+                f"&or=(due_date.lt.{stamp},and(due_date.is.null,scheduled_date.lt.{stamp}))"
+                "&order=due_date.asc.nullsfirst,scheduled_date.asc"
+                f"&limit={OVERDUE_LIST_LIMIT}"
+            ),
+        )
+
     def _project_metrics(
         self,
         project: dict[str, Any],
         milestones: list[dict[str, Any]],
-        tasks: list[dict[str, Any]],
+        counts: dict[str, dict[str, int]],
         today: date,
     ) -> dict[str, Any]:
         key = str(project["id"])
-        own_tasks = [task for task in tasks if str(task.get("project_id") or "") == key]
+        bucket = counts.get(key, {"done": 0, "total": 0, "open": 0, "overdue": 0})
         own_milestones = [row for row in milestones if str(row["project_id"]) == key]
-        done = len([task for task in own_tasks if task["status"] == "done"])
-        total = len([task for task in own_tasks if task["status"] != "skipped"])
+        done = bucket["done"]
+        total = bucket["total"]
         milestones_done = len([row for row in own_milestones if row["status"] == "done"])
         target = _parse_date(project.get("target_date"))
         return {
@@ -1071,6 +1199,476 @@ class ReminderService:
             state = "OVERDUE" if item["overdue"] else f"{item['days_left']}d left"
             lines.append(f"- [{item['kind']}] {item['name']} — {item['date']} ({state})")
         return "\n".join(lines)
+
+
+EXPENSE_CATEGORIES = (
+    "Food", "Groceries", "Transport", "Rent", "Utilities", "Health",
+    "Education", "Shopping", "Entertainment", "Subscriptions", "Travel",
+    "Savings", "Fees", "Family", "Other",
+)
+INCOME_CATEGORIES = ("Salary", "Freelance", "Refund", "Gift", "Interest", "Other")
+TRANSACTION_TYPES = {"expense", "income"}
+CADENCES = {"weekly", "monthly", "yearly"}
+RECURRING_LOOKBACK_DAYS = 62
+
+
+def _normalize_category(value: Any, kind: str = "expense") -> str | None:
+    """Snap a category onto the canonical list so the summary doesn't end up
+    with Food, food and Eating Out as three separate slices."""
+    if value in (None, ""):
+        return None
+    raw = str(value).strip()
+    known = EXPENSE_CATEGORIES if kind == "expense" else INCOME_CATEGORIES
+    for candidate in known:
+        if candidate.casefold() == raw.casefold():
+            return candidate
+    return raw.title()
+
+
+def _money(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+class FinanceService:
+    """Expense passbook, monthly summaries, and recurring charges.
+
+    Amounts are never summed across currencies — day-to-day spending is in
+    rupees while the Germany goals are in euros, and converting without a rate
+    would invent numbers. Every total is reported per currency instead.
+    """
+
+    def __init__(self, repository: PlannerCoreRepository, timezone: str = "UTC") -> None:
+        self.repository = repository
+        self.timezone = timezone
+
+    # ---------- transactions ----------
+
+    def log_transaction(
+        self,
+        description: str,
+        amount: float,
+        *,
+        on_date: str | None = None,
+        category: str | None = None,
+        currency: str = "INR",
+        kind: str = "expense",
+        merchant: str | None = None,
+        payment_method: str | None = None,
+        goal_id: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        if not description.strip():
+            raise PlannerCoreError("Description is required")
+        if kind not in TRANSACTION_TYPES:
+            raise PlannerCoreError(f"type must be one of {sorted(TRANSACTION_TYPES)}")
+        value = _money(amount)
+        if value <= 0:
+            raise PlannerCoreError("Amount must be greater than zero")
+
+        when = _parse_date(on_date) or _local_today(self.timezone)
+        code = str(currency).strip().upper() or "INR"
+
+        if goal_id and not self.repository.get_row("finance_goals", goal_id):
+            raise PlannerCoreError(f"Savings goal was not found: {goal_id}")
+
+        row = self.repository.insert_row(
+            "finance_logs",
+            {
+                "date": when.isoformat(),
+                "description": description.strip(),
+                "amount": value,
+                "currency": code,
+                "type": kind,
+                "category": _normalize_category(category, kind),
+                "merchant": merchant.strip() if merchant else None,
+                "payment_method": payment_method.strip() if payment_method else None,
+                "goal_id": goal_id,
+                "notes": notes,
+            },
+        )
+        return _envelope(True, f"Logged {code} {value:,.2f} — {description.strip()}", {"transaction": row})
+
+    def update_transaction(self, transaction_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "date", "description", "amount", "currency", "type",
+            "category", "merchant", "payment_method", "goal_id", "notes",
+        }
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError("No supported fields to update")
+
+        if "type" in payload and payload["type"] not in TRANSACTION_TYPES:
+            raise PlannerCoreError(f"type must be one of {sorted(TRANSACTION_TYPES)}")
+        if "amount" in payload:
+            payload["amount"] = _money(payload["amount"])
+            if payload["amount"] <= 0:
+                raise PlannerCoreError("Amount must be greater than zero")
+        if "date" in payload:
+            parsed = _parse_date(payload["date"])
+            payload["date"] = parsed.isoformat() if parsed else None
+        if "currency" in payload:
+            payload["currency"] = str(payload["currency"]).strip().upper()
+        if "category" in payload:
+            existing = self.repository.get_row("finance_logs", transaction_id) or {}
+            kind = payload.get("type") or existing.get("type") or "expense"
+            payload["category"] = _normalize_category(payload["category"], kind)
+
+        payload["updated_at"] = datetime.now(ZoneInfo(self.timezone)).isoformat()
+        row = self.repository.update_row("finance_logs", transaction_id, payload)
+        return _envelope(True, "Transaction updated", {"transaction": row})
+
+    def delete_transaction(self, transaction_id: str) -> dict[str, Any]:
+        self.repository.delete_row("finance_logs", transaction_id)
+        return _envelope(True, "Transaction deleted", None)
+
+    def list_transactions(
+        self,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        category: str | None = None,
+        kind: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """The passbook feed: newest first, optionally windowed by date."""
+        rows = self._transactions_between(_parse_date(start), _parse_date(end))
+        if category:
+            wanted = str(category).casefold()
+            rows = [r for r in rows if str(r.get("category") or "").casefold() == wanted]
+        if kind:
+            rows = [r for r in rows if r.get("type") == kind]
+        rows.sort(key=lambda r: (str(r.get("date") or ""), str(r.get("created_at") or "")), reverse=True)
+        return _envelope(True, f"{len(rows)} transactions", {"transactions": rows[: max(1, limit)]})
+
+    def _transactions_between(self, start: date | None, end: date | None) -> list[dict[str, Any]]:
+        clauses = []
+        if start:
+            clauses.append(f"date=gte.{start.isoformat()}")
+        if end:
+            clauses.append(f"date=lte.{end.isoformat()}")
+        qs = "&".join(clauses) if clauses else None
+        return self.repository.list_rows("finance_logs", query_string=qs)
+
+    # ---------- summary ----------
+
+    def monthly_summary(self, month: str | None = None) -> dict[str, Any]:
+        """Totals for one month, split by currency then by category, with the
+        previous month alongside so the header can show the direction."""
+        anchor = _parse_date(month) if month and len(str(month)) > 7 else None
+        if anchor is None:
+            if month:
+                year, mon = str(month).split("-")[:2]
+                anchor = date(int(year), int(mon), 1)
+            else:
+                anchor = _local_today(self.timezone).replace(day=1)
+        start = anchor.replace(day=1)
+        end = _end_of_month(start)
+        prev_start = (start - timedelta(days=1)).replace(day=1)
+
+        current = self._transactions_between(start, end)
+        previous = self._transactions_between(prev_start, _end_of_month(prev_start))
+        prev_expense = self._totals_by_currency(previous, "expense")
+
+        currencies: dict[str, Any] = {}
+        for code in sorted({str(r.get("currency") or "INR").upper() for r in current}):
+            scoped = [r for r in current if str(r.get("currency") or "INR").upper() == code]
+            expense = sum(_money(r["amount"]) for r in scoped if r.get("type") != "income")
+            income = sum(_money(r["amount"]) for r in scoped if r.get("type") == "income")
+            was = prev_expense.get(code, 0.0)
+            currencies[code] = {
+                "expense": round(expense, 2),
+                "income": round(income, 2),
+                "net": round(income - expense, 2),
+                "previous_expense": round(was, 2),
+                "change_pct": round((expense - was) / was * 100, 1) if was else None,
+                "by_category": self._by_category(scoped, expense),
+            }
+
+        return _envelope(
+            True,
+            f"Summary for {start.strftime('%B %Y')}",
+            {
+                "month": start.strftime("%Y-%m"),
+                "month_label": start.strftime("%B %Y"),
+                "currencies": currencies,
+                "transaction_count": len(current),
+            },
+        )
+
+    @staticmethod
+    def _totals_by_currency(rows: list[dict[str, Any]], kind: str) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for row in rows:
+            if kind == "expense" and row.get("type") == "income":
+                continue
+            if kind == "income" and row.get("type") != "income":
+                continue
+            code = str(row.get("currency") or "INR").upper()
+            totals[code] = totals.get(code, 0.0) + _money(row.get("amount"))
+        return totals
+
+    @staticmethod
+    def _by_category(rows: list[dict[str, Any]], total: float) -> list[dict[str, Any]]:
+        buckets: dict[str, float] = {}
+        for row in rows:
+            if row.get("type") == "income":
+                continue
+            name = row.get("category") or "Uncategorised"
+            buckets[name] = buckets.get(name, 0.0) + _money(row.get("amount"))
+        out = [
+            {
+                "category": name,
+                "amount": round(amount, 2),
+                "share_pct": round(amount / total * 100, 1) if total else 0.0,
+            }
+            for name, amount in buckets.items()
+        ]
+        out.sort(key=lambda item: item["amount"], reverse=True)
+        return out
+
+    # ---------- savings goals ----------
+
+    def goal_progress(self) -> dict[str, Any]:
+        """Germany savings goals with their hand-set baseline plus everything
+        logged against them. Contributions in another currency are reported
+        separately rather than converted at a rate we do not have."""
+        goals = self.repository.list_rows("finance_goals")
+        linked = [r for r in self.repository.list_rows("finance_logs") if r.get("goal_id")]
+
+        by_goal: dict[str, dict[str, float]] = {}
+        for row in linked:
+            key = str(row["goal_id"])
+            code = str(row.get("currency") or "INR").upper()
+            by_goal.setdefault(key, {})
+            by_goal[key][code] = by_goal[key].get(code, 0.0) + _money(row.get("amount"))
+
+        out = []
+        for goal in goals:
+            code = str(goal.get("currency") or "EUR").upper()
+            contributions = by_goal.get(str(goal["id"]), {})
+            baseline = _money(goal.get("saved_amount"))
+            matched = contributions.get(code, 0.0)
+            saved = round(baseline + matched, 2)
+            target = _money(goal.get("target_amount"))
+            other = {c: round(a, 2) for c, a in contributions.items() if c != code}
+            out.append({
+                "id": goal["id"],
+                "goal": goal.get("goal"),
+                "currency": code,
+                "target_amount": target,
+                "baseline_amount": baseline,
+                "contributed_amount": round(matched, 2),
+                "saved_amount": saved,
+                "remaining_amount": round(max(target - saved, 0), 2),
+                "progress_pct": round(min(saved / target * 100, 100), 1) if target else 0.0,
+                "deadline": goal.get("deadline"),
+                "other_currency_contributions": other,
+            })
+        out.sort(key=lambda g: (g["deadline"] or "9999-12-31", g["goal"] or ""))
+        return _envelope(True, f"{len(out)} savings goals", {"goals": out})
+
+    # ---------- recurring charges ----------
+
+    def add_recurring(
+        self,
+        description: str,
+        amount: float,
+        *,
+        cadence: str = "monthly",
+        day_of_month: int | None = None,
+        day_of_week: int | None = None,
+        category: str | None = None,
+        currency: str = "INR",
+        kind: str = "expense",
+        merchant: str | None = None,
+        payment_method: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        if not description.strip():
+            raise PlannerCoreError("Description is required")
+        if cadence not in CADENCES:
+            raise PlannerCoreError(f"cadence must be one of {sorted(CADENCES)}")
+        if kind not in TRANSACTION_TYPES:
+            raise PlannerCoreError(f"type must be one of {sorted(TRANSACTION_TYPES)}")
+        value = _money(amount)
+        if value <= 0:
+            raise PlannerCoreError("Amount must be greater than zero")
+
+        begins = _parse_date(start_date) or _local_today(self.timezone)
+        ends = _parse_date(end_date)
+        if ends and ends < begins:
+            raise PlannerCoreError("end_date cannot be before start_date")
+        if cadence == "monthly" and day_of_month is None:
+            day_of_month = begins.day
+        if cadence == "weekly" and day_of_week is None:
+            day_of_week = begins.weekday()
+        if day_of_month is not None and not 1 <= int(day_of_month) <= 31:
+            raise PlannerCoreError("day_of_month must be between 1 and 31")
+        if day_of_week is not None and not 0 <= int(day_of_week) <= 6:
+            raise PlannerCoreError("day_of_week must be between 0 (Monday) and 6 (Sunday)")
+
+        row = self.repository.insert_row(
+            "finance_recurring",
+            {
+                "description": description.strip(),
+                "amount": value,
+                "currency": str(currency).strip().upper() or "INR",
+                "type": kind,
+                "cadence": cadence,
+                "day_of_month": day_of_month,
+                "day_of_week": day_of_week,
+                "category": _normalize_category(category, kind),
+                "merchant": merchant.strip() if merchant else None,
+                "payment_method": payment_method.strip() if payment_method else None,
+                "start_date": begins.isoformat(),
+                "end_date": ends.isoformat() if ends else None,
+                "notes": notes,
+                "active": True,
+            },
+        )
+        return _envelope(True, f"Recurring {cadence} charge saved — {description.strip()}", {"recurring": row})
+
+    def list_recurring(self, *, include_inactive: bool = False) -> dict[str, Any]:
+        rows = self.repository.list_rows("finance_recurring")
+        if not include_inactive:
+            rows = [r for r in rows if r.get("active")]
+        rows.sort(key=lambda r: str(r.get("description") or ""))
+        return _envelope(True, f"{len(rows)} recurring charges", {"recurring": rows})
+
+    def update_recurring(self, recurring_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "description", "amount", "currency", "type", "cadence", "day_of_month",
+            "day_of_week", "category", "merchant", "payment_method", "start_date",
+            "end_date", "active", "notes",
+        }
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError("No supported fields to update")
+        if "cadence" in payload and payload["cadence"] not in CADENCES:
+            raise PlannerCoreError(f"cadence must be one of {sorted(CADENCES)}")
+        if "amount" in payload:
+            payload["amount"] = _money(payload["amount"])
+            if payload["amount"] <= 0:
+                raise PlannerCoreError("Amount must be greater than zero")
+        payload["updated_at"] = datetime.now(ZoneInfo(self.timezone)).isoformat()
+        row = self.repository.update_row("finance_recurring", recurring_id, payload)
+        return _envelope(True, "Recurring charge updated", {"recurring": row})
+
+    def delete_recurring(self, recurring_id: str) -> dict[str, Any]:
+        self.repository.delete_row("finance_recurring", recurring_id)
+        return _envelope(True, "Recurring charge deleted", None)
+
+    def materialize_recurring(self, on_date: str | None = None) -> dict[str, Any]:
+        """Turn every recurring rule that has come due into a real passbook
+        entry. Safe to run repeatedly: rows already generated for a date are
+        skipped, and the unique index on (recurring_id, date) is the backstop."""
+        today = _parse_date(on_date) or _local_today(self.timezone)
+        rules = [r for r in self.repository.list_rows("finance_recurring") if r.get("active")]
+        if not rules:
+            return _envelope(True, "No recurring charges due", {"created": []})
+
+        # One lookup for every rule at once, bounded to the catch-up window, so
+        # this stays cheap however often the cron runs and however long the
+        # passbook gets.
+        window_start = (today - timedelta(days=RECURRING_LOOKBACK_DAYS)).isoformat()
+        already: dict[str, set[str]] = {}
+        for row in self.repository.list_rows(
+            "finance_logs",
+            {"recurring_id": [str(rule["id"]) for rule in rules]},
+            columns="recurring_id,date",
+            query_string=f"date=gte.{window_start}",
+        ):
+            already.setdefault(str(row["recurring_id"]), set()).add(str(row.get("date"))[:10])
+
+        created: list[dict[str, Any]] = []
+        for rule in rules:
+            due = self._due_dates(rule, today)
+            if not due:
+                continue
+            posted = already.get(str(rule["id"]), set())
+            for when in due:
+                if when.isoformat() in posted:
+                    continue
+                created.append(self.repository.insert_row(
+                    "finance_logs",
+                    {
+                        "date": when.isoformat(),
+                        "description": rule["description"],
+                        "amount": _money(rule.get("amount")),
+                        "currency": str(rule.get("currency") or "INR").upper(),
+                        "type": rule.get("type") or "expense",
+                        "category": rule.get("category"),
+                        "merchant": rule.get("merchant"),
+                        "payment_method": rule.get("payment_method"),
+                        "recurring_id": rule["id"],
+                        "notes": rule.get("notes"),
+                    },
+                ))
+
+        return _envelope(
+            True,
+            f"{len(created)} recurring charges posted" if created else "No recurring charges due",
+            {"created": created},
+        )
+
+    def _due_dates(self, rule: Mapping[str, Any], today: date) -> list[date]:
+        """Occurrences between the lookback window and today. The window keeps
+        the work bounded while still catching up a cron that was down."""
+        begins = _parse_date(rule.get("start_date")) or today
+        ends = _parse_date(rule.get("end_date"))
+        window_start = max(begins, today - timedelta(days=RECURRING_LOOKBACK_DAYS))
+        window_end = min(today, ends) if ends else today
+        if window_start > window_end:
+            return []
+
+        cadence = rule.get("cadence") or "monthly"
+        out: list[date] = []
+
+        if cadence == "weekly":
+            wanted = rule.get("day_of_week")
+            wanted = begins.weekday() if wanted is None else int(wanted)
+            cursor = window_start
+            while cursor <= window_end:
+                if cursor.weekday() == wanted:
+                    out.append(cursor)
+                cursor += timedelta(days=1)
+            return out
+
+        if cadence == "monthly":
+            wanted = rule.get("day_of_month")
+            wanted = begins.day if wanted is None else int(wanted)
+            cursor = window_start.replace(day=1)
+            while cursor <= window_end:
+                # Rent set to the 31st still posts in February.
+                day = min(wanted, _days_in_month(cursor))
+                occurrence = cursor.replace(day=day)
+                if window_start <= occurrence <= window_end:
+                    out.append(occurrence)
+                cursor = _end_of_month(cursor) + timedelta(days=1)
+            return out
+
+        # Yearly recurs on the anniversary of start_date.
+        for year in range(window_start.year, window_end.year + 1):
+            day = min(begins.day, _days_in_month(date(year, begins.month, 1)))
+            occurrence = date(year, begins.month, day)
+            if window_start <= occurrence <= window_end:
+                out.append(occurrence)
+        return out
+
+
+def _days_in_month(any_day: date) -> int:
+    import calendar
+
+    return calendar.monthrange(any_day.year, any_day.month)[1]
+
+
+def _end_of_month(any_day: date) -> date:
+    return any_day.replace(day=_days_in_month(any_day))
 
 
 def _slug(value: str) -> str:

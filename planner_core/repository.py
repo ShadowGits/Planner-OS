@@ -67,3 +67,14 @@ class PlannerCoreRepository:
 
     def delete_rows(self, table: str, extra_filters: Mapping[str, Any]) -> None:
         self.gateway.delete(table, filters={**self._tenant(), **extra_filters})
+
+    def call_function(self, name: str, payload: Mapping[str, Any] | None = None) -> Any:
+        """Invoke a Postgres function with this tenant's ids already applied."""
+        return self.gateway.rpc(
+            name,
+            {
+                "p_user_id": str(self.user_id),
+                "p_workspace_id": str(self.workspace_id),
+                **dict(payload or {}),
+            },
+        )

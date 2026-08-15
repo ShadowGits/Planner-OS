@@ -7,6 +7,7 @@ from the MCP access token exactly like the legacy workbook handlers do.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 from planner_platform.google_oauth import CredentialCipher, SupabaseGoogleCalendarClientFactory
@@ -14,13 +15,13 @@ from adapters.supabase import SupabaseCalendarConnectionRepository
 from adapters.supabase import SupabaseExternalLinkRepository
 
 
-def _core_for_current_user():
+def _repository_for_current_user():
+    """Resolve the caller's workspace repository and timezone from the MCP token."""
     from mcp.server.auth.middleware.auth_context import get_access_token
 
     from adapters.supabase.client import SupabaseConfig, SupabaseRestClient
     from adapters.supabase.workspaces import SupabaseWorkspaceRepository
     from planner_core.repository import PlannerCoreRepository
-    from planner_core.services import GoalService, MetricsService, ProjectService, ReminderService, TaskService
 
     token = get_access_token()
     if not token or not token.subject:
@@ -36,13 +37,36 @@ def _core_for_current_user():
             "No active Planner OS workspace found. "
             "Create and activate a workspace in the Planner OS web app first."
         )
-    repository = PlannerCoreRepository(client, user_id, workspace.id)
-    tasks = TaskService(repository, workspace.timezone)
-    projects = ProjectService(repository)
-    metrics = MetricsService(repository, workspace.timezone)
-    reminders = ReminderService(repository, metrics, tasks, workspace.timezone)
-    goals = GoalService(repository)
-    return tasks, projects, metrics, reminders, goals
+    return PlannerCoreRepository(client, user_id, workspace.id), workspace.timezone
+
+
+class _CoreBundle:
+    """Every v2 service bound to the caller's workspace."""
+
+    def __init__(self, repository: Any, timezone: str) -> None:
+        from planner_core.services import (
+            FinanceService, GoalService, MetricsService,
+            ProjectService, ReminderService, TaskService,
+        )
+
+        self.repository = repository
+        self.timezone = timezone
+        self.tasks = TaskService(repository, timezone)
+        self.projects = ProjectService(repository)
+        self.metrics = MetricsService(repository, timezone)
+        self.reminders = ReminderService(repository, self.metrics, self.tasks, timezone)
+        self.goals = GoalService(repository)
+        self.finance = FinanceService(repository, timezone)
+
+
+def _core() -> _CoreBundle:
+    return _CoreBundle(*_repository_for_current_user())
+
+
+def _core_for_current_user():
+    """Tuple shape the older tools unpack. New tools should use _core()."""
+    core = _core()
+    return core.tasks, core.projects, core.metrics, core.reminders, core.goals
 
 
 def register_core_tools(server: Any) -> None:
@@ -276,4 +300,123 @@ def register_core_tools(server: Any) -> None:
     def core_delete_monthly_goal(goal_id: str) -> str:
         """Delete a monthly goal."""
         result = _core().goals.delete_monthly_goal(goal_id)
+        return json.dumps(result)
+
+    # ---------- personal finance ----------
+
+    @server.tool(name="core_log_expense")
+    def core_log_expense(
+        description: str,
+        amount: float,
+        category: str | None = None,
+        currency: str = "INR",
+        date: str | None = None,
+        merchant: str | None = None,
+        payment_method: str | None = None,
+        goal_id: str | None = None,
+        notes: str | None = None,
+    ) -> str:
+        """Log money spent. Amount is a positive number; currency is INR (default, day-to-day spending) or EUR (Germany costs). Date defaults to today, YYYY-MM-DD otherwise. Pick category from: Food, Groceries, Transport, Rent, Utilities, Health, Education, Shopping, Entertainment, Subscriptions, Travel, Savings, Fees, Family, Other — reuse these exact names so monthly summaries stay consistent. Pass goal_id when the spend is a transfer into a savings goal (use core_finance_goals to find the id)."""
+        result = _core().finance.log_transaction(
+            description, amount, on_date=date, category=category, currency=currency,
+            kind="expense", merchant=merchant, payment_method=payment_method,
+            goal_id=goal_id, notes=notes,
+        )
+        return json.dumps(result)
+
+    @server.tool(name="core_log_income")
+    def core_log_income(
+        description: str,
+        amount: float,
+        category: str | None = None,
+        currency: str = "INR",
+        date: str | None = None,
+        notes: str | None = None,
+    ) -> str:
+        """Log money received. Pick category from: Salary, Freelance, Refund, Gift, Interest, Other."""
+        result = _core().finance.log_transaction(
+            description, amount, on_date=date, category=category,
+            currency=currency, kind="income", notes=notes,
+        )
+        return json.dumps(result)
+
+    @server.tool(name="core_update_transaction")
+    def core_update_transaction(transaction_id: str, updates: dict) -> str:
+        """Correct a logged transaction. Updatable fields: date, description, amount, currency, type, category, merchant, payment_method, goal_id, notes."""
+        result = _core().finance.update_transaction(transaction_id, updates)
+        return json.dumps(result)
+
+    @server.tool(name="core_delete_transaction")
+    def core_delete_transaction(transaction_id: str) -> str:
+        """Delete a logged transaction."""
+        result = _core().finance.delete_transaction(transaction_id)
+        return json.dumps(result)
+
+    @server.tool(name="core_list_transactions")
+    def core_list_transactions(
+        start: str | None = None,
+        end: str | None = None,
+        category: str | None = None,
+        type: str | None = None,
+        limit: int = 200,
+    ) -> str:
+        """List transactions newest first. Window with start/end as YYYY-MM-DD, and filter by category or by type (expense/income)."""
+        result = _core().finance.list_transactions(
+            start=start, end=end, category=category, kind=type, limit=limit
+        )
+        return json.dumps(result)
+
+    @server.tool(name="core_finance_summary")
+    def core_finance_summary(month: str | None = None) -> str:
+        """Spending summary for a month (YYYY-MM, defaults to the current one): totals and category breakdown per currency, with last month alongside for comparison. Currencies are never added together — there is no exchange rate here."""
+        result = _core().finance.monthly_summary(month)
+        return json.dumps(result)
+
+    @server.tool(name="core_finance_goals")
+    def core_finance_goals() -> str:
+        """Savings goals with real progress: the hand-set baseline plus every transaction logged against each goal. Contributions made in a different currency to the goal are reported separately rather than converted."""
+        result = _core().finance.goal_progress()
+        return json.dumps(result)
+
+    @server.tool(name="core_add_recurring_charge")
+    def core_add_recurring_charge(
+        description: str,
+        amount: float,
+        cadence: str = "monthly",
+        day_of_month: int | None = None,
+        day_of_week: int | None = None,
+        category: str | None = None,
+        currency: str = "INR",
+        type: str = "expense",
+        merchant: str | None = None,
+        payment_method: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        notes: str | None = None,
+    ) -> str:
+        """Set up a repeating charge — rent, a subscription, an EMI, or recurring income like salary. cadence is weekly, monthly, or yearly. For monthly give day_of_month (1-31; a 31 posts on the last day of shorter months). For weekly give day_of_week (0=Monday to 6=Sunday). Yearly repeats on the anniversary of start_date. These post into the passbook automatically as they fall due."""
+        result = _core().finance.add_recurring(
+            description, amount, cadence=cadence, day_of_month=day_of_month,
+            day_of_week=day_of_week, category=category, currency=currency, kind=type,
+            merchant=merchant, payment_method=payment_method,
+            start_date=start_date, end_date=end_date, notes=notes,
+        )
+        return json.dumps(result)
+
+    @server.tool(name="core_list_recurring_charges")
+    def core_list_recurring_charges(include_inactive: bool = False) -> str:
+        """List repeating charges (rent, subscriptions, EMIs, salary)."""
+        result = _core().finance.list_recurring(include_inactive=include_inactive)
+        return json.dumps(result)
+
+    @server.tool(name="core_update_recurring_charge")
+    def core_update_recurring_charge(recurring_id: str, updates: dict) -> str:
+        """Change a repeating charge. Set active to false to stop it without losing its history. Updatable: description, amount, currency, type, cadence, day_of_month, day_of_week, category, merchant, payment_method, start_date, end_date, active, notes."""
+        result = _core().finance.update_recurring(recurring_id, updates)
+        return json.dumps(result)
+
+    @server.tool(name="core_delete_recurring_charge")
+    def core_delete_recurring_charge(recurring_id: str) -> str:
+        """Delete a repeating charge. Transactions it already posted are kept."""
+        result = _core().finance.delete_recurring(recurring_id)
         return json.dumps(result)

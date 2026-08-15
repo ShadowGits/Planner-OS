@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
-from planner_core.services import MetricsService, ProjectService, ReminderService, TaskService
+from planner_core.services import (
+    OVERDUE_LIST_LIMIT,
+    FinanceService,
+    MetricsService,
+    ProjectService,
+    ReminderService,
+    TaskService,
+)
 from planner_core.telegram import parse_command, sender_chat_id
 
 USER_ID = uuid4()
@@ -47,7 +54,129 @@ class MemoryGateway:
 
     def select(self, table, *, filters, columns="*", limit=None, query_string=None):
         rows = [row for row in self.tables.get(table, []) if self._matches(row, filters)]
+        rows = [row for row in rows if self._matches_query(row, query_string)]
+        rows = self._apply_directives(rows, query_string)
         return rows[:limit] if limit else rows
+
+    def rpc(self, function, payload):
+        """Only the rollup the metrics snapshot calls. Mirrors the SQL in
+        migration 0019 so the tests cover the real path, not just the
+        fallback."""
+        if function != "planner_task_counts":
+            raise NotImplementedError(function)
+
+        today = str(payload["p_today"])
+        buckets: dict = {}
+        for row in self.tables.get("planner_tasks", []):
+            if str(row.get("user_id")) != str(payload["p_user_id"]):
+                continue
+            if str(row.get("workspace_id")) != str(payload["p_workspace_id"]):
+                continue
+            if row.get("parent_task_id"):
+                continue
+            key = row.get("project_id")
+            bucket = buckets.setdefault(
+                key,
+                {"project_id": key, "done_count": 0, "total_count": 0,
+                 "open_count": 0, "overdue_count": 0},
+            )
+            status = row.get("status")
+            if status == "done":
+                bucket["done_count"] += 1
+            if status != "skipped":
+                bucket["total_count"] += 1
+            if status in {"todo", "in_progress", "blocked"}:
+                bucket["open_count"] += 1
+                due, planned = row.get("due_date"), row.get("scheduled_date")
+                if (due and str(due) < today) or (not due and planned and str(planned) < today):
+                    bucket["overdue_count"] += 1
+        return list(buckets.values())
+
+    @staticmethod
+    def _split_top(text):
+        """Split on commas that are not inside parentheses."""
+        parts, depth, current = [], 0, ""
+        for char in text:
+            if char == "," and depth == 0:
+                parts.append(current)
+                current = ""
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            current += char
+        if current:
+            parts.append(current)
+        return parts
+
+    @classmethod
+    def _evaluate(cls, row, expression):
+        expression = expression.strip()
+        for prefix, combine in (("and(", all), ("or(", any)):
+            if expression.startswith(prefix) and expression.endswith(")"):
+                inner = expression[len(prefix):-1]
+                return combine(cls._evaluate(row, part) for part in cls._split_top(inner))
+        column, _, condition = expression.partition(".")
+        return cls._compare(row.get(column), condition)
+
+    @staticmethod
+    def _compare(actual, condition):
+        op, _, value = condition.partition(".")
+        if op == "is":
+            return actual is None if value == "null" else actual is not None
+        if op == "in":
+            return actual is not None and str(actual) in value.strip("()").split(",")
+        if actual is None:
+            return False
+        actual = str(actual)
+        if op == "eq":
+            return actual == value
+        if op == "gte":
+            return actual >= value
+        if op == "lte":
+            return actual <= value
+        if op == "gt":
+            return actual > value
+        if op == "lt":
+            return actual < value
+        return True
+
+    @classmethod
+    def _matches_query(cls, row, query_string):
+        """Evaluate the PostgREST filter grammar the services build, including
+        nested or=(and(...),and(...)) groups."""
+        if not query_string:
+            return True
+        for clause in query_string.split("&"):
+            key, _, condition = clause.partition("=")
+            if key in {"order", "limit", "offset", "select"} or not condition:
+                continue
+            if key in {"or", "and"}:
+                if not cls._evaluate(row, f"{key}{condition}"):
+                    return False
+            elif not cls._compare(row.get(key), condition):
+                return False
+        return True
+
+    @staticmethod
+    def _apply_directives(rows, query_string):
+        if not query_string:
+            return rows
+        for clause in query_string.split("&"):
+            key, _, value = clause.partition("=")
+            if key == "order":
+                for spec in reversed(value.split(",")):
+                    parts = spec.split(".")
+                    column, descending = parts[0], "desc" in parts
+                    rows = sorted(
+                        rows,
+                        key=lambda r, c=column: (r.get(c) is None, str(r.get(c) or "")),
+                        reverse=descending,
+                    )
+            elif key == "limit":
+                rows = rows[: int(value)]
+        return rows
 
     def insert(self, table, payload):
         if isinstance(payload, list):
@@ -419,6 +548,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_add_monthly_goal",
         "core_add_project_qna",
         "core_add_project_widget",
+        "core_add_recurring_charge",
         "core_add_weekly_goal",
         "core_complete_task",
         "core_create_project",
@@ -427,11 +557,19 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_delete_monthly_goal",
         "core_delete_project_qna",
         "core_delete_project_widget",
+        "core_delete_recurring_charge",
         "core_delete_task",
         "core_delete_tasks_batch",
+        "core_delete_transaction",
+        "core_finance_goals",
+        "core_finance_summary",
         "core_list_project_widgets",
         "core_list_projects",
+        "core_list_recurring_charges",
         "core_list_tasks",
+        "core_list_transactions",
+        "core_log_expense",
+        "core_log_income",
         "core_metrics",
         "core_sync_calendar",
         "core_today",
@@ -440,7 +578,329 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_update_project",
         "core_update_project_qna",
         "core_update_project_widget",
+        "core_update_recurring_charge",
         "core_update_task",
         "core_update_task_date_time_batch",
+        "core_update_transaction",
     ]
     assert names == expected
+
+
+# ---------------------------------------------------------------- finance ---
+
+
+@pytest.fixture()
+def finance(repo):
+    return FinanceService(repo, TZ)
+
+
+def test_log_expense_normalises_category_and_defaults_to_today(finance):
+    result = finance.log_transaction("Chai and samosa", 60, category="food")
+
+    row = result["data"]["transaction"]
+    assert row["category"] == "Food"  # snapped onto the canonical list
+    assert row["currency"] == "INR"
+    assert row["type"] == "expense"
+    assert row["date"] == _today().isoformat()
+
+
+def test_log_transaction_rejects_zero_and_negative_amounts(finance):
+    for bad in (0, -250):
+        with pytest.raises(PlannerCoreError, match="greater than zero"):
+            finance.log_transaction("Refund gone wrong", bad)
+
+
+def test_log_transaction_rejects_unknown_type(finance):
+    with pytest.raises(PlannerCoreError, match="type must be"):
+        finance.log_transaction("Mystery", 100, kind="transfer")
+
+
+def test_log_transaction_rejects_unknown_goal(finance):
+    with pytest.raises(PlannerCoreError, match="was not found"):
+        finance.log_transaction("Savings", 5000, goal_id=str(uuid4()))
+
+
+def test_summary_keeps_currencies_apart(finance):
+    month = _today().replace(day=1).isoformat()
+    finance.log_transaction("Groceries", 3000, category="Groceries", on_date=month)
+    finance.log_transaction("Lunch", 500, category="Food", on_date=month)
+    finance.log_transaction("Visa fee", 75, currency="EUR", category="Fees", on_date=month)
+    finance.log_transaction("Salary", 90000, kind="income", on_date=month)
+
+    data = finance.monthly_summary()["data"]
+
+    inr, eur = data["currencies"]["INR"], data["currencies"]["EUR"]
+    assert inr["expense"] == 3500.0
+    assert inr["income"] == 90000.0
+    assert inr["net"] == 86500.0
+    # The euro fee must never be folded into the rupee total.
+    assert eur["expense"] == 75.0
+    assert eur["income"] == 0.0
+
+
+def test_summary_ranks_categories_by_spend(finance):
+    month = _today().replace(day=1).isoformat()
+    finance.log_transaction("Rent", 20000, category="Rent", on_date=month)
+    finance.log_transaction("Groceries", 4000, category="Groceries", on_date=month)
+    finance.log_transaction("Chai", 1000, category="Food", on_date=month)
+
+    inr = finance.monthly_summary()["data"]["currencies"]["INR"]
+
+    assert [c["category"] for c in inr["by_category"]] == ["Rent", "Groceries", "Food"]
+    assert inr["by_category"][0]["share_pct"] == 80.0
+
+
+def test_summary_excludes_other_months(finance):
+    this_month = _today().replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    finance.log_transaction("This month", 100, on_date=this_month.isoformat())
+    finance.log_transaction("Last month", 999, on_date=last_month.isoformat())
+
+    data = finance.monthly_summary(this_month.strftime("%Y-%m"))["data"]
+
+    assert data["transaction_count"] == 1
+    assert data["currencies"]["INR"]["expense"] == 100.0
+    assert data["currencies"]["INR"]["previous_expense"] == 999.0
+
+
+def test_goal_progress_adds_contributions_to_the_baseline(finance, repo):
+    goal = repo.insert_row(
+        "finance_goals",
+        {"goal": "Blocked account", "target_amount": 12000, "saved_amount": 2000, "currency": "EUR"},
+    )
+    finance.log_transaction("Transfer", 1000, currency="EUR", goal_id=str(goal["id"]))
+
+    tracked = finance.goal_progress()["data"]["goals"][0]
+
+    assert tracked["baseline_amount"] == 2000.0
+    assert tracked["contributed_amount"] == 1000.0
+    assert tracked["saved_amount"] == 3000.0
+    assert tracked["remaining_amount"] == 9000.0
+    assert tracked["progress_pct"] == 25.0
+
+
+def test_goal_progress_reports_other_currencies_separately(finance, repo):
+    goal = repo.insert_row(
+        "finance_goals",
+        {"goal": "Blocked account", "target_amount": 12000, "saved_amount": 0, "currency": "EUR"},
+    )
+    finance.log_transaction("Rupee savings", 90000, currency="INR", goal_id=str(goal["id"]))
+
+    tracked = finance.goal_progress()["data"]["goals"][0]
+
+    # No exchange rate exists, so rupees must not inflate a euro goal.
+    assert tracked["saved_amount"] == 0.0
+    assert tracked["progress_pct"] == 0.0
+    assert tracked["other_currency_contributions"] == {"INR": 90000.0}
+
+
+def test_monthly_recurring_clamps_to_a_short_month(finance):
+    finance.add_recurring(
+        "Rent", 25000, cadence="monthly", day_of_month=31,
+        category="Rent", start_date="2027-01-31",
+    )
+
+    posted = finance.materialize_recurring("2027-03-05")["data"]["created"]
+
+    # The 31st does not exist in February, so rent posts on the 28th. March's
+    # 31st has not arrived yet on the 5th, so it is not posted early.
+    assert {r["date"] for r in posted} == {"2027-01-31", "2027-02-28"}
+
+
+def test_recurring_does_not_post_twice(finance):
+    finance.add_recurring("Netflix", 649, cadence="monthly", day_of_month=1, start_date="2027-01-01")
+
+    first = finance.materialize_recurring("2027-02-10")["data"]["created"]
+    again = finance.materialize_recurring("2027-02-10")["data"]["created"]
+
+    assert len(first) == 2  # January and February
+    assert again == []  # a second cron run charges nothing
+
+
+def test_recurring_stops_after_end_date(finance):
+    finance.add_recurring(
+        "Gym", 1500, cadence="monthly", day_of_month=5,
+        start_date="2027-01-05", end_date="2027-02-05",
+    )
+
+    posted = finance.materialize_recurring("2027-02-20")["data"]["created"]
+
+    assert {r["date"] for r in posted} == {"2027-01-05", "2027-02-05"}
+
+
+def test_recurring_catch_up_is_bounded_by_the_lookback_window(finance):
+    """Adding a rule with an old start date must not retroactively post a
+    year of charges — only the recent window is filled in."""
+    finance.add_recurring(
+        "Rent", 25000, cadence="monthly", day_of_month=1, start_date="2026-01-01",
+    )
+
+    posted = finance.materialize_recurring("2027-03-10")["data"]["created"]
+
+    assert {r["date"] for r in posted} == {"2027-02-01", "2027-03-01"}
+
+
+def test_weekly_recurring_posts_on_the_chosen_weekday(finance):
+    # 2027-03-01 is a Monday.
+    finance.add_recurring(
+        "Cleaner", 500, cadence="weekly", day_of_week=0, start_date="2027-03-01",
+    )
+
+    posted = finance.materialize_recurring("2027-03-22")["data"]["created"]
+
+    assert {r["date"] for r in posted} == {"2027-03-01", "2027-03-08", "2027-03-15", "2027-03-22"}
+
+
+def test_inactive_recurring_charges_are_skipped(finance):
+    created = finance.add_recurring(
+        "Old subscription", 199, cadence="monthly", day_of_month=1, start_date="2027-01-01",
+    )["data"]["recurring"]
+    finance.update_recurring(str(created["id"]), {"active": False})
+
+    assert finance.materialize_recurring("2027-02-10")["data"]["created"] == []
+
+
+def test_recurring_rejects_a_bad_cadence(finance):
+    with pytest.raises(PlannerCoreError, match="cadence must be"):
+        finance.add_recurring("Nonsense", 100, cadence="fortnightly")
+
+
+def test_recurring_rejects_end_before_start(finance):
+    with pytest.raises(PlannerCoreError, match="end_date cannot be before"):
+        finance.add_recurring("Backwards", 100, start_date="2027-05-01", end_date="2027-04-01")
+
+
+def test_list_transactions_is_newest_first_and_filterable(finance):
+    finance.log_transaction("Older", 100, category="Food", on_date="2027-01-01")
+    finance.log_transaction("Newer", 200, category="Food", on_date="2027-01-05")
+    finance.log_transaction("Transport", 50, category="Transport", on_date="2027-01-03")
+
+    rows = finance.list_transactions()["data"]["transactions"]
+    assert [r["description"] for r in rows] == ["Newer", "Transport", "Older"]
+
+    food = finance.list_transactions(category="Food")["data"]["transactions"]
+    assert {r["description"] for r in food} == {"Older", "Newer"}
+
+    windowed = finance.list_transactions(start="2027-01-02", end="2027-01-04")["data"]["transactions"]
+    assert [r["description"] for r in windowed] == ["Transport"]
+
+
+# ------------------------------------------------- egress optimisations ---
+
+
+def test_week_view_ignores_tasks_outside_the_week(services):
+    tasks, _, _, _ = services
+    monday = _today() - timedelta(days=_today().weekday())
+
+    tasks.create_task("This week", scheduled_date=(monday + timedelta(days=2)).isoformat())
+    tasks.create_task("Next month", scheduled_date=(monday + timedelta(days=40)).isoformat())
+    tasks.create_task("Deadline in 2027", due_date="2027-07-31")
+
+    titles = [item["title"] for item in tasks.week_view()["data"]["items"]]
+
+    assert titles == ["This week"]
+
+
+def test_week_view_still_hides_a_parent_whose_slots_are_this_week(services):
+    tasks, _, _, _ = services
+    day = (_today() - timedelta(days=_today().weekday())).isoformat()
+
+    parent = tasks.create_task("Learn German", scheduled_date=day)["data"]["task"]
+    tasks.create_task(
+        "German slot", scheduled_date=day, start_time="09:00", parent_task_id=parent["id"]
+    )
+
+    titles = [item["title"] for item in tasks.week_view()["data"]["items"]]
+
+    assert titles == ["German slot"]
+
+
+def test_child_cannot_be_moved_off_its_parents_day(services):
+    tasks, _, _, _ = services
+    parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
+    child = tasks.create_task(
+        "Slot", scheduled_date="2027-03-01", parent_task_id=parent["id"]
+    )["data"]["task"]
+
+    with pytest.raises(PlannerCoreError, match="parent is on 2027-03-01"):
+        tasks.update_task(child["id"], {"scheduled_date": "2027-03-05"})
+
+
+def test_moving_a_parent_takes_its_slots_along(services):
+    tasks, _, _, _ = services
+    parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
+    child = tasks.create_task(
+        "Slot", scheduled_date="2027-03-01", parent_task_id=parent["id"]
+    )["data"]["task"]
+
+    tasks.update_task(parent["id"], {"scheduled_date": "2027-03-08"})
+
+    moved = [t for t in tasks.list_tasks()["data"]["tasks"] if t["id"] == child["id"]][0]
+    assert moved["scheduled_date"] == "2027-03-08"
+
+
+def test_metrics_counts_match_between_the_rollup_and_a_full_scan(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Germany Move")["data"]["project"]
+    pid = project["id"]
+
+    done = tasks.create_task("Done one", project_id=pid)["data"]["task"]
+    tasks.complete_task(done["id"])
+    tasks.create_task("Open one", project_id=pid)
+    tasks.create_task("Stale", project_id=pid, scheduled_date="2020-01-01")
+    skipped = tasks.create_task("Skipped", project_id=pid)["data"]["task"]
+    tasks.update_task(skipped["id"], {"status": "skipped"})
+
+    today = _today()
+    rolled_up = metrics._task_counts(today)
+    scanned = metrics._task_counts_by_scan(today)
+
+    assert rolled_up == scanned
+    assert rolled_up[str(pid)]["done"] == 1
+    assert rolled_up[str(pid)]["open"] == 2  # Open one + Stale
+    assert rolled_up[str(pid)]["total"] == 3  # the skipped one does not count
+    assert rolled_up[str(pid)]["overdue"] == 1  # the 2020 one
+
+
+def test_metrics_snapshot_totals_survive_the_rollup(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Germany Move")["data"]["project"]
+    pid = project["id"]
+
+    tasks.create_task("Old and open", project_id=pid, scheduled_date="2020-01-01")
+    tasks.create_task("Fine", project_id=pid, scheduled_date=_today().isoformat())
+
+    snapshot = metrics.snapshot()
+
+    assert snapshot["totals"]["open_tasks"] == 2
+    assert snapshot["totals"]["overdue_tasks"] == 1
+    assert [t["title"] for t in snapshot["totals"]["overdue_list"]] == ["Old and open"]
+    assert snapshot["totals"]["overdue_list_truncated"] is False
+    assert snapshot["projects"][0]["total_tasks"] == 2
+
+
+def test_overdue_list_is_capped_but_the_count_is_not(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Backlog")["data"]["project"]
+
+    for i in range(OVERDUE_LIST_LIMIT + 25):
+        tasks.create_task(f"Stale {i}", project_id=project["id"], scheduled_date="2020-01-01")
+
+    snapshot = metrics.snapshot()
+
+    # The dashboard renders the list, so it is bounded; the headline number
+    # must still be the true total.
+    assert len(snapshot["totals"]["overdue_list"]) == OVERDUE_LIST_LIMIT
+    assert snapshot["totals"]["overdue_tasks"] == OVERDUE_LIST_LIMIT + 25
+    assert snapshot["totals"]["overdue_list_truncated"] is True
+
+
+def test_upcoming_deadlines_only_reach_the_horizon(services):
+    tasks, _, metrics, _ = services
+    today = _today()
+    tasks.create_task("Soon", due_date=(today + timedelta(days=5)).isoformat())
+    tasks.create_task("Far off", due_date=(today + timedelta(days=90)).isoformat())
+
+    names = [d["name"] for d in metrics.snapshot()["upcoming_deadlines"] if d["kind"] == "task"]
+
+    assert names == ["Soon"]

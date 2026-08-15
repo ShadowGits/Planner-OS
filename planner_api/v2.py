@@ -19,7 +19,14 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Uplo
 
 from adapters.supabase import SupabaseWorkspaceRepository
 from planner_core.repository import PlannerCoreRepository
-from planner_core.services import GoalService, MetricsService, ProjectService, ReminderService, TaskService
+from planner_core.services import (
+    FinanceService,
+    GoalService,
+    MetricsService,
+    ProjectService,
+    ReminderService,
+    TaskService,
+)
 from planner_core.telegram import TelegramClient, TelegramError, parse_command, sender_chat_id
 
 from planner_integrations.google_drive import (
@@ -43,6 +50,7 @@ class PlannerCoreBundle:
         self.metrics = MetricsService(repository, timezone)
         self.reminders = ReminderService(repository, self.metrics, self.tasks, timezone)
         self.goals = GoalService(repository)
+        self.finance = FinanceService(repository, timezone)
 
 
 def build_core(service_client: Any, user_id: UUID) -> PlannerCoreBundle:
@@ -124,6 +132,17 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         user_id = _configured_user_id()
         core = build_core(cloud.service_client, user_id)
         telegram = TelegramClient.from_env()
+
+        # Rent, subscriptions and EMIs post themselves on the back of this
+        # cron rather than needing a scheduler job of their own. Idempotent, so
+        # a schedule that fires more than once a day charges nothing twice.
+        # Never let a finance problem stop the reminders going out.
+        try:
+            posted = len(core.finance.materialize_recurring()["data"]["created"])
+        except Exception as error:
+            logger.error("Recurring charges failed to post: %s", error)
+            posted = 0
+
         due = core.reminders.due_reminders()
         sent, failed = [], []
         for reminder in due:
@@ -160,7 +179,11 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             elif reminder["kind"] not in sent:
                 failed.append({**reminder, "error": "NO_PUSH_OR_TELEGRAM"})
 
-        return _envelope(True, f"{len(sent)} reminders sent", {"sent": sent, "failed": failed, "due": len(due)})
+        return _envelope(
+            True,
+            f"{len(sent)} reminders sent",
+            {"sent": sent, "failed": failed, "due": len(due), "recurring_posted": posted},
+        )
 
     # ── Push subscription management ──────────────────────────────────────
 
@@ -571,6 +594,44 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         core = build_core(cloud.service_client, user.user_id)
         goals = core.repository.list_rows("finance_goals")
         return _envelope(True, "Finance goals retrieved", {"goals": goals})
+
+    @api.get("/v2/finance/goals/progress")
+    def get_finance_goal_progress(user=Depends(current_user)):
+        """Goals with logged contributions folded in, so saved_amount reflects
+        what was actually transferred rather than what was last typed in."""
+        core = build_core(cloud.service_client, user.user_id)
+        return _envelope(True, "Goal progress", core.finance.goal_progress()["data"])
+
+    @api.get("/v2/finance/summary")
+    def get_finance_summary(month: str | None = None, user=Depends(current_user)):
+        core = build_core(cloud.service_client, user.user_id)
+        return _envelope(True, "Finance summary", core.finance.monthly_summary(month)["data"])
+
+    @api.get("/v2/finance/transactions")
+    def get_finance_transactions(
+        start: str | None = None,
+        end: str | None = None,
+        category: str | None = None,
+        limit: int = 200,
+        user=Depends(current_user),
+    ):
+        core = build_core(cloud.service_client, user.user_id)
+        result = core.finance.list_transactions(start=start, end=end, category=category, limit=limit)
+        return _envelope(True, result["message"], result["data"])
+
+    @api.post("/v2/finance/recurring/run")
+    def run_recurring_charges(x_cron_key: str | None = Header(default=None)):
+        """Cron hook: post any rent/subscription/EMI that has fallen due.
+        Idempotent, so a daily schedule with retries cannot double-charge."""
+        expected = os.environ.get("CRON_SECRET", "")
+        if not expected or not x_cron_key or not secrets.compare_digest(x_cron_key, expected):
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "CRON_KEY_INVALID", "message": "X-Cron-Key header is missing or wrong"},
+            )
+        core = build_core(cloud.service_client, _configured_user_id())
+        result = core.finance.materialize_recurring()
+        return _envelope(True, result["message"], result["data"])
 
     @api.post("/v2/admin/cleanup-duplicates")
     async def cleanup_duplicate_folders(user=Depends(current_user)):

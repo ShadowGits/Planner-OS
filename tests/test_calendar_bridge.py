@@ -9,7 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from planner_api.app import create_app
-from planner_api.calendar_bridge import _blocks_for_day
+# _blocks_for_day moved to planner_core.services when the day-view logic was
+# consolidated there; the bridge imports it from the same place.
+from planner_core.services import _blocks_for_day
 from planner_integrations.google_calendar import CalendarSyncResult
 from planner_platform.google_oauth import GoogleConnectionRequiredError
 
