@@ -10,6 +10,7 @@ import pytest
 
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
 from planner_core.services import (
+    OVERDUE_LIST_LIMIT,
     FinanceService,
     MetricsService,
     ProjectService,
@@ -54,39 +55,128 @@ class MemoryGateway:
     def select(self, table, *, filters, columns="*", limit=None, query_string=None):
         rows = [row for row in self.tables.get(table, []) if self._matches(row, filters)]
         rows = [row for row in rows if self._matches_query(row, query_string)]
+        rows = self._apply_directives(rows, query_string)
         return rows[:limit] if limit else rows
 
+    def rpc(self, function, payload):
+        """Only the rollup the metrics snapshot calls. Mirrors the SQL in
+        migration 0019 so the tests cover the real path, not just the
+        fallback."""
+        if function != "planner_task_counts":
+            raise NotImplementedError(function)
+
+        today = str(payload["p_today"])
+        buckets: dict = {}
+        for row in self.tables.get("planner_tasks", []):
+            if str(row.get("user_id")) != str(payload["p_user_id"]):
+                continue
+            if str(row.get("workspace_id")) != str(payload["p_workspace_id"]):
+                continue
+            if row.get("parent_task_id"):
+                continue
+            key = row.get("project_id")
+            bucket = buckets.setdefault(
+                key,
+                {"project_id": key, "done_count": 0, "total_count": 0,
+                 "open_count": 0, "overdue_count": 0},
+            )
+            status = row.get("status")
+            if status == "done":
+                bucket["done_count"] += 1
+            if status != "skipped":
+                bucket["total_count"] += 1
+            if status in {"todo", "in_progress", "blocked"}:
+                bucket["open_count"] += 1
+                due, planned = row.get("due_date"), row.get("scheduled_date")
+                if (due and str(due) < today) or (not due and planned and str(planned) < today):
+                    bucket["overdue_count"] += 1
+        return list(buckets.values())
+
     @staticmethod
-    def _matches_query(row, query_string):
-        """Handle the `col=op.value` clauses the services build. `or=(...)`
-        groups are left alone — the callers that use those assert on the
-        unfiltered result."""
-        if not query_string or "or=(" in query_string:
+    def _split_top(text):
+        """Split on commas that are not inside parentheses."""
+        parts, depth, current = [], 0, ""
+        for char in text:
+            if char == "," and depth == 0:
+                parts.append(current)
+                current = ""
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            current += char
+        if current:
+            parts.append(current)
+        return parts
+
+    @classmethod
+    def _evaluate(cls, row, expression):
+        expression = expression.strip()
+        for prefix, combine in (("and(", all), ("or(", any)):
+            if expression.startswith(prefix) and expression.endswith(")"):
+                inner = expression[len(prefix):-1]
+                return combine(cls._evaluate(row, part) for part in cls._split_top(inner))
+        column, _, condition = expression.partition(".")
+        return cls._compare(row.get(column), condition)
+
+    @staticmethod
+    def _compare(actual, condition):
+        op, _, value = condition.partition(".")
+        if op == "is":
+            return actual is None if value == "null" else actual is not None
+        if op == "in":
+            return actual is not None and str(actual) in value.strip("()").split(",")
+        if actual is None:
+            return False
+        actual = str(actual)
+        if op == "eq":
+            return actual == value
+        if op == "gte":
+            return actual >= value
+        if op == "lte":
+            return actual <= value
+        if op == "gt":
+            return actual > value
+        if op == "lt":
+            return actual < value
+        return True
+
+    @classmethod
+    def _matches_query(cls, row, query_string):
+        """Evaluate the PostgREST filter grammar the services build, including
+        nested or=(and(...),and(...)) groups."""
+        if not query_string:
             return True
         for clause in query_string.split("&"):
-            if "=" not in clause:
+            key, _, condition = clause.partition("=")
+            if key in {"order", "limit", "offset", "select"} or not condition:
                 continue
-            column, _, condition = clause.partition("=")
-            op, _, value = condition.partition(".")
-            actual = row.get(column)
-            if op == "is" and value == "null":
-                if actual is not None:
+            if key in {"or", "and"}:
+                if not cls._evaluate(row, f"{key}{condition}"):
                     return False
-                continue
-            if actual is None:
-                return False
-            actual, value = str(actual), str(value)
-            if op == "eq" and actual != value:
-                return False
-            if op == "gte" and actual < value:
-                return False
-            if op == "lte" and actual > value:
-                return False
-            if op == "gt" and actual <= value:
-                return False
-            if op == "lt" and actual >= value:
+            elif not cls._compare(row.get(key), condition):
                 return False
         return True
+
+    @staticmethod
+    def _apply_directives(rows, query_string):
+        if not query_string:
+            return rows
+        for clause in query_string.split("&"):
+            key, _, value = clause.partition("=")
+            if key == "order":
+                for spec in reversed(value.split(",")):
+                    parts = spec.split(".")
+                    column, descending = parts[0], "desc" in parts
+                    rows = sorted(
+                        rows,
+                        key=lambda r, c=column: (r.get(c) is None, str(r.get(c) or "")),
+                        reverse=descending,
+                    )
+            elif key == "limit":
+                rows = rows[: int(value)]
+        return rows
 
     def insert(self, table, payload):
         if isinstance(payload, list):
@@ -693,3 +783,124 @@ def test_list_transactions_is_newest_first_and_filterable(finance):
 
     windowed = finance.list_transactions(start="2027-01-02", end="2027-01-04")["data"]["transactions"]
     assert [r["description"] for r in windowed] == ["Transport"]
+
+
+# ------------------------------------------------- egress optimisations ---
+
+
+def test_week_view_ignores_tasks_outside_the_week(services):
+    tasks, _, _, _ = services
+    monday = _today() - timedelta(days=_today().weekday())
+
+    tasks.create_task("This week", scheduled_date=(monday + timedelta(days=2)).isoformat())
+    tasks.create_task("Next month", scheduled_date=(monday + timedelta(days=40)).isoformat())
+    tasks.create_task("Deadline in 2027", due_date="2027-07-31")
+
+    titles = [item["title"] for item in tasks.week_view()["data"]["items"]]
+
+    assert titles == ["This week"]
+
+
+def test_week_view_still_hides_a_parent_whose_slots_are_this_week(services):
+    tasks, _, _, _ = services
+    day = (_today() - timedelta(days=_today().weekday())).isoformat()
+
+    parent = tasks.create_task("Learn German", scheduled_date=day)["data"]["task"]
+    tasks.create_task(
+        "German slot", scheduled_date=day, start_time="09:00", parent_task_id=parent["id"]
+    )
+
+    titles = [item["title"] for item in tasks.week_view()["data"]["items"]]
+
+    assert titles == ["German slot"]
+
+
+def test_child_cannot_be_moved_off_its_parents_day(services):
+    tasks, _, _, _ = services
+    parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
+    child = tasks.create_task(
+        "Slot", scheduled_date="2027-03-01", parent_task_id=parent["id"]
+    )["data"]["task"]
+
+    with pytest.raises(PlannerCoreError, match="parent is on 2027-03-01"):
+        tasks.update_task(child["id"], {"scheduled_date": "2027-03-05"})
+
+
+def test_moving_a_parent_takes_its_slots_along(services):
+    tasks, _, _, _ = services
+    parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
+    child = tasks.create_task(
+        "Slot", scheduled_date="2027-03-01", parent_task_id=parent["id"]
+    )["data"]["task"]
+
+    tasks.update_task(parent["id"], {"scheduled_date": "2027-03-08"})
+
+    moved = [t for t in tasks.list_tasks()["data"]["tasks"] if t["id"] == child["id"]][0]
+    assert moved["scheduled_date"] == "2027-03-08"
+
+
+def test_metrics_counts_match_between_the_rollup_and_a_full_scan(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Germany Move")["data"]["project"]
+    pid = project["id"]
+
+    done = tasks.create_task("Done one", project_id=pid)["data"]["task"]
+    tasks.complete_task(done["id"])
+    tasks.create_task("Open one", project_id=pid)
+    tasks.create_task("Stale", project_id=pid, scheduled_date="2020-01-01")
+    skipped = tasks.create_task("Skipped", project_id=pid)["data"]["task"]
+    tasks.update_task(skipped["id"], {"status": "skipped"})
+
+    today = _today()
+    rolled_up = metrics._task_counts(today)
+    scanned = metrics._task_counts_by_scan(today)
+
+    assert rolled_up == scanned
+    assert rolled_up[str(pid)]["done"] == 1
+    assert rolled_up[str(pid)]["open"] == 2  # Open one + Stale
+    assert rolled_up[str(pid)]["total"] == 3  # the skipped one does not count
+    assert rolled_up[str(pid)]["overdue"] == 1  # the 2020 one
+
+
+def test_metrics_snapshot_totals_survive_the_rollup(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Germany Move")["data"]["project"]
+    pid = project["id"]
+
+    tasks.create_task("Old and open", project_id=pid, scheduled_date="2020-01-01")
+    tasks.create_task("Fine", project_id=pid, scheduled_date=_today().isoformat())
+
+    snapshot = metrics.snapshot()
+
+    assert snapshot["totals"]["open_tasks"] == 2
+    assert snapshot["totals"]["overdue_tasks"] == 1
+    assert [t["title"] for t in snapshot["totals"]["overdue_list"]] == ["Old and open"]
+    assert snapshot["totals"]["overdue_list_truncated"] is False
+    assert snapshot["projects"][0]["total_tasks"] == 2
+
+
+def test_overdue_list_is_capped_but_the_count_is_not(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Backlog")["data"]["project"]
+
+    for i in range(OVERDUE_LIST_LIMIT + 25):
+        tasks.create_task(f"Stale {i}", project_id=project["id"], scheduled_date="2020-01-01")
+
+    snapshot = metrics.snapshot()
+
+    # The dashboard renders the list, so it is bounded; the headline number
+    # must still be the true total.
+    assert len(snapshot["totals"]["overdue_list"]) == OVERDUE_LIST_LIMIT
+    assert snapshot["totals"]["overdue_tasks"] == OVERDUE_LIST_LIMIT + 25
+    assert snapshot["totals"]["overdue_list_truncated"] is True
+
+
+def test_upcoming_deadlines_only_reach_the_horizon(services):
+    tasks, _, metrics, _ = services
+    today = _today()
+    tasks.create_task("Soon", due_date=(today + timedelta(days=5)).isoformat())
+    tasks.create_task("Far off", due_date=(today + timedelta(days=90)).isoformat())
+
+    names = [d["name"] for d in metrics.snapshot()["upcoming_deadlines"] if d["kind"] == "task"]
+
+    assert names == ["Soon"]

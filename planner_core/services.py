@@ -22,6 +22,8 @@ MILESTONE_STATUSES = {"not_started", "in_progress", "blocked", "done"}
 PROJECT_STATUSES = {"active", "paused", "done", "archived"}
 PRIORITIES = {"low", "medium", "high", "critical"}
 DEADLINE_WINDOW_DAYS = 7
+DEADLINE_HORIZON_DAYS = 30
+OVERDUE_LIST_LIMIT = 200
 
 
 def _envelope(success: bool, message: str, data: dict[str, Any] | None = None, errors: list[str] | None = None) -> dict[str, Any]:
@@ -340,16 +342,9 @@ class TaskService:
         _parse_date(scheduled_date)
         _parse_time(start_time)
         
-        # Enforce scheduled_date rule
-        if parent_task_id and scheduled_date:
-            parent = self.repository.get_row("planner_tasks", parent_task_id)
-            if parent:
-                parent_date = parent.get("scheduled_date")
-                if parent_date and parent_date != scheduled_date:
-                    raise PlannerCoreError(f"Cannot schedule child on {scheduled_date}; parent is on {parent_date}")
-                elif not parent_date:
-                    self.repository.update_row("planner_tasks", parent_task_id, {"scheduled_date": scheduled_date})
-                    
+        self._align_with_parent(parent_task_id, scheduled_date)
+
+
         row = self.repository.insert_row(
             "planner_tasks",
             {
@@ -406,6 +401,24 @@ class TaskService:
         created = self.repository.insert_rows("planner_tasks", payloads)
         return _envelope(True, f"Created {len(created)} tasks", {"tasks": created})
 
+    def _align_with_parent(self, parent_task_id: str | None, scheduled_date: str | None) -> None:
+        """A time-slot child lives on its parent's day. If the parent has no
+        day yet, it takes the child's."""
+        if not parent_task_id or not scheduled_date:
+            return
+        parent = self.repository.get_row("planner_tasks", parent_task_id)
+        if parent is None:
+            return
+        parent_date = parent.get("scheduled_date")
+        if parent_date and str(parent_date)[:10] != str(scheduled_date)[:10]:
+            raise PlannerCoreError(
+                f"Cannot schedule child on {scheduled_date}; parent is on {parent_date}"
+            )
+        if not parent_date:
+            self.repository.update_row(
+                "planner_tasks", parent_task_id, {"scheduled_date": scheduled_date}
+            )
+
     def update_task(self, task_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "title",
@@ -430,7 +443,28 @@ class TaskService:
             raise PlannerCoreError(f"Invalid task status: {status}")
         if "start_time" in payload:
             _parse_time(payload["start_time"])
+
+        # Creation forces a child onto its parent's day; without the same check
+        # here an edit could quietly move it off again.
+        if "scheduled_date" in payload or "parent_task_id" in payload:
+            existing = self.repository.get_row("planner_tasks", task_id) or {}
+            parent_id = payload.get("parent_task_id", existing.get("parent_task_id"))
+            new_date = payload.get("scheduled_date", existing.get("scheduled_date"))
+            self._align_with_parent(parent_id, new_date)
+
         row = self.repository.update_row("planner_tasks", task_id, payload)
+
+        # Moving a parent takes its time slots along, so the group never splits
+        # across two days.
+        if "scheduled_date" in payload and payload["scheduled_date"]:
+            for child in self.repository.list_rows(
+                "planner_tasks", {"parent_task_id": task_id}, columns="id,scheduled_date"
+            ):
+                if str(child.get("scheduled_date") or "")[:10] != str(payload["scheduled_date"])[:10]:
+                    self.repository.update_row(
+                        "planner_tasks", str(child["id"]), {"scheduled_date": payload["scheduled_date"]}
+                    )
+
         return _envelope(True, f"Task updated: {row['title']}", {"task": row})
 
     def delete_task(self, task_id: str) -> dict[str, Any]:
@@ -737,8 +771,22 @@ class TaskService:
         
         items: list[dict[str, Any]] = []
         monday_str = monday.isoformat()
-        qs = f"or=(scheduled_date.gte.{monday_str},due_date.gte.{monday_str})"
-        all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        sunday_str = (monday + timedelta(days=6)).isoformat()
+        # Bounded at both ends and limited to the fields the view returns.
+        # Without the upper bound this pulled every task dated from Monday to
+        # the end of time — 2027 deadlines included — only to discard them below.
+        qs = (
+            f"or=(and(scheduled_date.gte.{monday_str},scheduled_date.lte.{sunday_str}),"
+            f"and(due_date.gte.{monday_str},due_date.lte.{sunday_str}))"
+        )
+        all_rows = self.repository.list_rows(
+            "planner_tasks",
+            query_string=qs,
+            columns=(
+                "id,title,status,start_time,estimated_minutes,priority,"
+                "due_date,scheduled_date,notes,project_id,parent_task_id"
+            ),
+        )
         parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
         
         for row in all_rows:
@@ -804,7 +852,9 @@ class MetricsService:
         current_month = today.replace(day=1).isoformat()
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
-        tasks = self.repository.list_rows("planner_tasks", columns="id,title,project_id,status,scheduled_date,due_date", query_string="parent_task_id=is.null")
+        counts = self._task_counts(today)
+        deadline_tasks = self._tasks_due_by(today + timedelta(days=DEADLINE_HORIZON_DAYS))
+        overdue_list = self._overdue_tasks(today)
         cutoff = (today - timedelta(days=90)).isoformat()
         completions = self.repository.list_rows(
             "task_completions",
@@ -829,20 +879,18 @@ class MetricsService:
 
         project_metrics = []
         for project in projects:
-            pm = self._project_metrics(project, milestones, tasks, today)
-            
+            pm = self._project_metrics(project, milestones, counts, today)
+
             p_goals = goals_by_project.get(str(project["id"]), [])
             p_files = files_by_project.get(str(project["id"]), [])
             curr_goal = next((g for g in p_goals if g["month"] == current_month), None)
-            
+
             pm["monthly_goal"] = curr_goal
             pm["monthly_goals"] = p_goals
             pm["files"] = p_files
             project_metrics.append(pm)
-        deadlines = self._upcoming_deadlines(milestones, tasks, today)
+        deadlines = self._upcoming_deadlines(milestones, deadline_tasks, today)
         streaks = self._streaks(completions, today)
-        open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]
-        overdue = [task for task in open_tasks if _is_overdue(task, today)]
         completed_today = [row for row in completions if _parse_date(row.get("completed_on")) == today]
         return {
             "generated_on": today.isoformat(),
@@ -851,9 +899,12 @@ class MetricsService:
             "upcoming_deadlines": deadlines,
             "streaks": streaks,
             "totals": {
-                "open_tasks": len(open_tasks),
-                "overdue_tasks": len(overdue),
-                "overdue_list": sorted(overdue, key=lambda x: x.get("target_date") or "9999-99-99"),
+                "open_tasks": sum(bucket["open"] for bucket in counts.values()),
+                # Counted across every overdue task; the list below is capped
+                # so a long backlog cannot bloat the dashboard payload.
+                "overdue_tasks": sum(bucket["overdue"] for bucket in counts.values()),
+                "overdue_list": overdue_list,
+                "overdue_list_truncated": len(overdue_list) >= OVERDUE_LIST_LIMIT,
                 "completed_today": len(completed_today),
                 "completions_last_7_days": len(
                     [
@@ -887,18 +938,95 @@ class MetricsService:
             flat[f"{_slug(key)}_streak_days"] = str(streak)
         return flat
 
+    OPEN_STATUS_LIST = "todo,in_progress,blocked"
+
+    def _task_counts(self, today: date) -> dict[str, dict[str, int]]:
+        """Per-project task counts, rolled up by Postgres rather than by
+        shipping every row here to be counted. Falls back to the old full scan
+        when the rollup function has not been installed yet, so a deploy that
+        lands before the migration still serves a correct dashboard."""
+        try:
+            rows = self.repository.call_function(
+                "planner_task_counts", {"p_today": today.isoformat()}
+            )
+        except Exception:
+            rows = None
+
+        if rows is None:
+            return self._task_counts_by_scan(today)
+
+        return {
+            str(row.get("project_id") or ""): {
+                "done": int(row.get("done_count") or 0),
+                "total": int(row.get("total_count") or 0),
+                "open": int(row.get("open_count") or 0),
+                "overdue": int(row.get("overdue_count") or 0),
+            }
+            for row in rows
+        }
+
+    def _task_counts_by_scan(self, today: date) -> dict[str, dict[str, int]]:
+        tasks = self.repository.list_rows(
+            "planner_tasks",
+            columns="id,project_id,status,scheduled_date,due_date",
+            query_string="parent_task_id=is.null",
+        )
+        buckets: dict[str, dict[str, int]] = {}
+        for task in tasks:
+            key = str(task.get("project_id") or "")
+            bucket = buckets.setdefault(key, {"done": 0, "total": 0, "open": 0, "overdue": 0})
+            status = task.get("status")
+            if status == "done":
+                bucket["done"] += 1
+            if status != "skipped":
+                bucket["total"] += 1
+            if status in OPEN_TASK_STATUSES:
+                bucket["open"] += 1
+                if _is_overdue(task, today):
+                    bucket["overdue"] += 1
+        return buckets
+
+    def _tasks_due_by(self, horizon: date) -> list[dict[str, Any]]:
+        """Only the open tasks with a deadline inside the window the dashboard
+        actually lists."""
+        return self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title,due_date,status",
+            query_string=(
+                "parent_task_id=is.null"
+                f"&status=in.({self.OPEN_STATUS_LIST})"
+                f"&due_date=lte.{horizon.isoformat()}"
+            ),
+        )
+
+    def _overdue_tasks(self, today: date) -> list[dict[str, Any]]:
+        """Overdue open tasks, oldest deadline first. Capped: the dashboard
+        shows this as a list, and nobody reads past a couple of hundred."""
+        stamp = today.isoformat()
+        return self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title,project_id,status,scheduled_date,due_date,priority",
+            query_string=(
+                "parent_task_id=is.null"
+                f"&status=in.({self.OPEN_STATUS_LIST})"
+                f"&or=(due_date.lt.{stamp},and(due_date.is.null,scheduled_date.lt.{stamp}))"
+                "&order=due_date.asc.nullsfirst,scheduled_date.asc"
+                f"&limit={OVERDUE_LIST_LIMIT}"
+            ),
+        )
+
     def _project_metrics(
         self,
         project: dict[str, Any],
         milestones: list[dict[str, Any]],
-        tasks: list[dict[str, Any]],
+        counts: dict[str, dict[str, int]],
         today: date,
     ) -> dict[str, Any]:
         key = str(project["id"])
-        own_tasks = [task for task in tasks if str(task.get("project_id") or "") == key]
+        bucket = counts.get(key, {"done": 0, "total": 0, "open": 0, "overdue": 0})
         own_milestones = [row for row in milestones if str(row["project_id"]) == key]
-        done = len([task for task in own_tasks if task["status"] == "done"])
-        total = len([task for task in own_tasks if task["status"] != "skipped"])
+        done = bucket["done"]
+        total = bucket["total"]
         milestones_done = len([row for row in own_milestones if row["status"] == "done"])
         target = _parse_date(project.get("target_date"))
         return {
