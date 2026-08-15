@@ -1569,18 +1569,30 @@ class FinanceService:
         skipped, and the unique index on (recurring_id, date) is the backstop."""
         today = _parse_date(on_date) or _local_today(self.timezone)
         rules = [r for r in self.repository.list_rows("finance_recurring") if r.get("active")]
+        if not rules:
+            return _envelope(True, "No recurring charges due", {"created": []})
+
+        # One lookup for every rule at once, bounded to the catch-up window, so
+        # this stays cheap however often the cron runs and however long the
+        # passbook gets.
+        window_start = (today - timedelta(days=RECURRING_LOOKBACK_DAYS)).isoformat()
+        already: dict[str, set[str]] = {}
+        for row in self.repository.list_rows(
+            "finance_logs",
+            {"recurring_id": [str(rule["id"]) for rule in rules]},
+            columns="recurring_id,date",
+            query_string=f"date=gte.{window_start}",
+        ):
+            already.setdefault(str(row["recurring_id"]), set()).add(str(row.get("date"))[:10])
 
         created: list[dict[str, Any]] = []
         for rule in rules:
             due = self._due_dates(rule, today)
             if not due:
                 continue
-            already = {
-                str(row.get("date"))[:10]
-                for row in self.repository.list_rows("finance_logs", {"recurring_id": rule["id"]})
-            }
+            posted = already.get(str(rule["id"]), set())
             for when in due:
-                if when.isoformat() in already:
+                if when.isoformat() in posted:
                     continue
                 created.append(self.repository.insert_row(
                     "finance_logs",

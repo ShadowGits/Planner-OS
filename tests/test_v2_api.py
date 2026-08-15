@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -114,14 +114,19 @@ class FakeVerifier:
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def runtime():
+    return FakeRuntime()
+
+
+@pytest.fixture()
+def client(monkeypatch, runtime):
     monkeypatch.setenv("MCP_USER_ID", str(USER_ID))
     monkeypatch.setenv("CRON_SECRET", "cron-secret")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "hook-secret")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("MCP_API_KEY", raising=False)
-    return TestClient(create_app(runtime=FakeRuntime(), verifier=FakeVerifier()))
+    return TestClient(create_app(runtime=runtime, verifier=FakeVerifier()))
 
 
 def test_metrics_requires_auth_and_returns_snapshot(client) -> None:
@@ -268,3 +273,37 @@ def test_today_command_renders_checklist_without_error(client) -> None:
 
     assert response.status_code == 200
     assert response.json()["data"]["action"] == "today"
+
+
+def test_reminders_cron_also_posts_due_recurring_charges(client, runtime) -> None:
+    """Rent and subscriptions ride along on the reminders cron rather than
+    needing a scheduler job of their own."""
+    from planner_api.v2 import build_core, _configured_user_id
+
+    core = build_core(runtime.service_client, _configured_user_id())
+    today = date.today()
+    core.finance.add_recurring(
+        "Rent", 25000, cadence="monthly", day_of_month=today.day,
+        category="Rent", start_date=today.isoformat(),
+    )
+
+    first = client.post("/v2/reminders/run", headers={"X-Cron-Key": "cron-secret"})
+    again = client.post("/v2/reminders/run", headers={"X-Cron-Key": "cron-secret"})
+
+    assert first.json()["data"]["recurring_posted"] >= 1
+    # A second run the same day must not charge rent twice.
+    assert again.json()["data"]["recurring_posted"] == 0
+
+
+def test_reminders_still_go_out_when_recurring_charges_blow_up(client, monkeypatch) -> None:
+    from planner_core.services import FinanceService
+
+    def explode(self, on_date=None):
+        raise RuntimeError("finance is down")
+
+    monkeypatch.setattr(FinanceService, "materialize_recurring", explode)
+
+    response = client.post("/v2/reminders/run", headers={"X-Cron-Key": "cron-secret"})
+
+    assert response.status_code == 200
+    assert response.json()["data"]["recurring_posted"] == 0

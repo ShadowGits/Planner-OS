@@ -132,6 +132,17 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         user_id = _configured_user_id()
         core = build_core(cloud.service_client, user_id)
         telegram = TelegramClient.from_env()
+
+        # Rent, subscriptions and EMIs post themselves on the back of this
+        # cron rather than needing a scheduler job of their own. Idempotent, so
+        # a schedule that fires more than once a day charges nothing twice.
+        # Never let a finance problem stop the reminders going out.
+        try:
+            posted = len(core.finance.materialize_recurring()["data"]["created"])
+        except Exception as error:
+            logger.error("Recurring charges failed to post: %s", error)
+            posted = 0
+
         due = core.reminders.due_reminders()
         sent, failed = [], []
         for reminder in due:
@@ -168,7 +179,11 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             elif reminder["kind"] not in sent:
                 failed.append({**reminder, "error": "NO_PUSH_OR_TELEGRAM"})
 
-        return _envelope(True, f"{len(sent)} reminders sent", {"sent": sent, "failed": failed, "due": len(due)})
+        return _envelope(
+            True,
+            f"{len(sent)} reminders sent",
+            {"sent": sent, "failed": failed, "due": len(due), "recurring_posted": posted},
+        )
 
     # ── Push subscription management ──────────────────────────────────────
 
