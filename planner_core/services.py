@@ -666,7 +666,7 @@ class TaskService:
         target_str = target.isoformat()
         next_day = target + timedelta(days=1)
         next_day_str = next_day.isoformat()
-        qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},and(scheduled_date.eq.{next_day_str},start_time.lt.02:00:00))"
+        qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},and(scheduled_date.eq.{next_day_str},start_time.lt.04:00:00))"
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
         parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
         
@@ -681,7 +681,7 @@ class TaskService:
             is_next_day_spillover = False
             if planned:
                 if planned != target:
-                    if planned == next_day and row.get("start_time") and str(row.get("start_time")) < "02:00:00":
+                    if planned == next_day and row.get("start_time") and str(row.get("start_time")) < "04:00:00":
                         is_next_day_spillover = True
                     else:
                         continue
