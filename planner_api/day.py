@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from planner_api.v2 import build_core, _configured_user_id
 from planner_core.repository import PlannerCoreError
+from planner_core.services import parse_habit_item_id
 
 STATIC_DIR = Path(__file__).parent / "static" / "pwa"
 
@@ -215,6 +216,39 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def patch_day_task(task_id: str, body: DayTaskPatch, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
         core = _core()
+
+        # A habit occurrence has no row, so the day view gives it a synthetic
+        # id and it comes back here. Ticking writes a completion; moving or
+        # retiming writes an override for that one day, leaving the rule and
+        # every other day alone.
+        occurrence = parse_habit_item_id(task_id)
+        if occurrence is not None:
+            habit_id, rule_day = occurrence
+            try:
+                result = None
+                if body.done is True:
+                    result = core.habits.complete_occurrence(habit_id, rule_day, source="pwa")
+                elif body.done is False:
+                    result = core.habits.reopen_occurrence(habit_id, rule_day)
+                moved = {
+                    "moved_to": body.scheduled_date,
+                    "start_time": body.start_time,
+                    "estimated_minutes": body.estimated_minutes,
+                }
+                moved = {k: v for k, v in moved.items() if k.replace("moved_to", "scheduled_date") in body.model_fields_set}
+                if moved:
+                    result = core.habits.reschedule_occurrence(habit_id, rule_day, **moved)
+                if result is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"code": "PATCH_EMPTY", "message": "Nothing to change"},
+                    )
+            except (PlannerCoreError, ValueError) as error:
+                raise HTTPException(
+                    status_code=400, detail={"code": "HABIT_UPDATE_INVALID", "message": str(error)}
+                ) from error
+            return _envelope(True, result["message"], result["data"])
+
         try:
             if body.done is True:
                 result = core.tasks.complete_task(task_id, source="dashboard")
@@ -258,6 +292,20 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def delete_day_task(task_id: str, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
         core = _core()
+
+        # Deleting one day of a habit means skipping that day, not removing
+        # the habit — you did not stop going to the gym.
+        occurrence = parse_habit_item_id(task_id)
+        if occurrence is not None:
+            habit_id, rule_day = occurrence
+            try:
+                result = core.habits.skip_occurrence(habit_id, rule_day)
+            except (PlannerCoreError, ValueError) as error:
+                raise HTTPException(
+                    status_code=404, detail={"code": "HABIT_NOT_FOUND", "message": str(error)}
+                ) from error
+            return _envelope(True, result["message"], result["data"])
+
         try:
             result = core.tasks.delete_task(task_id)
         except (PlannerCoreError, ValueError) as error:

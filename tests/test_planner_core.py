@@ -12,10 +12,12 @@ from planner_core.repository import PlannerCoreError, PlannerCoreRepository
 from planner_core.services import (
     OVERDUE_LIST_LIMIT,
     FinanceService,
+    HabitService,
     MetricsService,
     ProjectService,
     ReminderService,
     TaskService,
+    parse_habit_item_id,
 )
 from planner_core.telegram import parse_command, sender_chat_id
 
@@ -43,6 +45,23 @@ TABLE_DEFAULTS = {
         "completed_at": None,
     },
     "task_completions": {"task_id": None, "recurrence_key": None, "note": None},
+    # Mirrors the column defaults in migration 0022; without them a habit
+    # reads as inactive and every occurrence silently disappears.
+    "habits": {
+        "cadence": "daily",
+        "days_of_week": [],
+        "start_time": None,
+        "estimated_minutes": None,
+        "project_id": None,
+        "end_date": None,
+        "is_active": True,
+    },
+    "habit_overrides": {
+        "moved_to": None,
+        "start_time": None,
+        "estimated_minutes": None,
+        "skipped": False,
+    },
     "reminder_log": {"channel": "telegram", "payload": None},
 }
 
@@ -544,16 +563,19 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
     names = sorted(server._tool_manager._tools)
 
     expected = [
+        "core_add_habit",
         "core_add_milestone",
         "core_add_monthly_goal",
         "core_add_project_qna",
         "core_add_project_widget",
         "core_add_recurring_charge",
         "core_add_weekly_goal",
+        "core_complete_habit_day",
         "core_complete_task",
         "core_create_project",
         "core_create_task",
         "core_create_tasks_batch",
+        "core_delete_habit",
         "core_delete_monthly_goal",
         "core_delete_project_qna",
         "core_delete_project_widget",
@@ -563,6 +585,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_delete_transaction",
         "core_finance_goals",
         "core_finance_summary",
+        "core_list_habits",
         "core_list_project_widgets",
         "core_list_projects",
         "core_list_recurring_charges",
@@ -571,8 +594,12 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_log_expense",
         "core_log_income",
         "core_metrics",
+        "core_reopen_habit_day",
+        "core_reschedule_habit_day",
+        "core_skip_habit_day",
         "core_sync_calendar",
         "core_today",
+        "core_update_habit",
         "core_update_milestone",
         "core_update_monthly_goal",
         "core_update_project",
@@ -1026,3 +1053,137 @@ def test_a_task_carries_its_projects_own_columns(services):
     stored = [t for t in tasks.list_tasks()["data"]["tasks"] if t["id"] == task["id"]][0]
 
     assert stored["metadata"] == {"Subject": "Linear algebra"}
+
+
+# ---------------------------------------------------------------------------
+# habits
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def habits(repo):
+    return HabitService(repo, TZ)
+
+
+def test_a_daily_habit_appears_every_day_without_storing_a_row(habits, repo):
+    """The whole point: gym used to be 295 pre-generated rows, every missed
+    one overdue for ever. It is one rule now."""
+    habits.add_habit("Gym", start_time="07:00", estimated_minutes=45, start_date="2026-09-01")
+
+    days = habits.occurrences(date(2026, 9, 1), date(2026, 9, 7))
+
+    assert len(days) == 7
+    assert {item["title"] for item in days} == {"Gym"}
+    assert days[0]["start_time"] == "07:00"
+    assert all(item["is_habit"] for item in days)
+    # one rule row, and nothing generated per day
+    assert len(repo.list_rows("habits")) == 1
+    assert repo.list_rows("planner_tasks") == []
+
+
+def test_a_weekly_habit_only_lands_on_its_days(habits):
+    # 0=Sunday, so 1 and 3 are Monday and Wednesday.
+    habits.add_habit(
+        "Piano", cadence="weekly", days_of_week=[1, 3], start_date="2026-09-01"
+    )
+
+    days = habits.occurrences(date(2026, 9, 1), date(2026, 9, 14))
+
+    # Sept 1 2026 is a Tuesday, so the first Monday is the 7th.
+    assert [item["scheduled_date"] for item in days] == [
+        "2026-09-02", "2026-09-07", "2026-09-09", "2026-09-14",
+    ]
+
+
+def test_a_weekly_habit_needs_days_and_the_cadence_must_be_known(habits):
+    with pytest.raises(PlannerCoreError, match="at least one day"):
+        habits.add_habit("Piano", cadence="weekly")
+    with pytest.raises(PlannerCoreError, match="Invalid cadence"):
+        habits.add_habit("Piano", cadence="fortnightly")
+
+
+def test_one_day_can_be_moved_without_disturbing_the_rest(habits):
+    habit = habits.add_habit("Gym", start_time="07:00", start_date="2026-09-01")["data"]["habit"]
+
+    habits.reschedule_occurrence(habit["id"], date(2026, 9, 2), moved_to="2026-09-03", start_time="18:00")
+
+    week = habits.occurrences(date(2026, 9, 1), date(2026, 9, 4))
+    by_day: dict[str, list[dict]] = {}
+    for item in week:
+        by_day.setdefault(item["scheduled_date"], []).append(item)
+
+    assert "2026-09-02" not in by_day                     # left its own day
+    assert len(by_day["2026-09-03"]) == 2                 # and landed alongside the 3rd's
+    moved = [i for i in by_day["2026-09-03"] if i["start_time"] == "18:00"]
+    assert len(moved) == 1
+    assert by_day["2026-09-01"][0]["start_time"] == "07:00"   # rule untouched
+    assert by_day["2026-09-04"][0]["start_time"] == "07:00"
+
+
+def test_skipping_a_day_removes_only_that_day(habits):
+    habit = habits.add_habit("Gym", start_date="2026-09-01")["data"]["habit"]
+
+    habits.skip_occurrence(habit["id"], date(2026, 9, 2))
+
+    dates = [i["scheduled_date"] for i in habits.occurrences(date(2026, 9, 1), date(2026, 9, 3))]
+    assert dates == ["2026-09-01", "2026-09-03"]
+
+
+def test_ticking_a_day_feeds_the_streak_and_survives_a_reopen(habits, repo):
+    habit = habits.add_habit("Gym", recurrence_key="gym", start_date="2026-09-01")["data"]["habit"]
+
+    habits.complete_occurrence(habit["id"], date(2026, 9, 1))
+    habits.complete_occurrence(habit["id"], date(2026, 9, 1))  # twice must not double-log
+
+    logged = repo.list_rows("task_completions")
+    assert len(logged) == 1
+    assert logged[0]["recurrence_key"] == "gym"
+
+    done = {i["scheduled_date"]: i["done"] for i in habits.occurrences(date(2026, 9, 1), date(2026, 9, 2))}
+    assert done == {"2026-09-01": True, "2026-09-02": False}
+
+    habits.reopen_occurrence(habit["id"], date(2026, 9, 1))
+    assert repo.list_rows("task_completions") == []
+
+
+def test_a_moved_day_is_ticked_on_the_day_it_moved_to(habits, repo):
+    """The completion has to follow the occurrence, or the streak records a
+    day you did not do it and misses the one you did."""
+    habit = habits.add_habit("Gym", recurrence_key="gym", start_date="2026-09-01")["data"]["habit"]
+    habits.reschedule_occurrence(habit["id"], date(2026, 9, 2), moved_to="2026-09-03")
+
+    habits.complete_occurrence(habit["id"], date(2026, 9, 2))
+
+    assert repo.list_rows("task_completions")[0]["completed_on"] == "2026-09-03"
+
+
+def test_habits_never_reach_the_overdue_list_or_the_open_count(habits, services):
+    """A habit from months ago is not owed. This is the bug the whole thing
+    was built to kill."""
+    tasks, _, metrics, _ = services
+    habits.add_habit("Gym", start_date="2026-01-01")
+    tasks.create_task("File the visa form", scheduled_date="2026-01-01")
+
+    totals = metrics.snapshot()["totals"]
+
+    assert totals["overdue_tasks"] == 1  # the visa form, and nothing else
+    assert [row["title"] for row in totals["overdue_list"]] == ["File the visa form"]
+    assert totals["open_tasks"] == 1
+
+
+def test_the_day_view_shows_habits_beside_tasks_in_time_order(repo, habits):
+    tasks = TaskService(repo, TZ, habits=habits)
+    habits.add_habit("Gym", start_time="07:00", start_date="2026-09-01")
+    tasks.create_task("Standup", scheduled_date="2026-09-01", start_time="09:30")
+
+    items = tasks.day_view("2026-09-01")["data"]["items"]
+
+    assert [item["title"] for item in items] == ["Gym", "Standup"]
+    assert items[0]["id"].startswith("habit:")
+
+
+def test_a_habit_item_id_survives_a_round_trip(habits):
+    habit = habits.add_habit("Gym", start_date="2026-09-01")["data"]["habit"]
+    item = habits.occurrences(date(2026, 9, 1), date(2026, 9, 1))[0]
+
+    assert parse_habit_item_id(item["id"]) == (habit["id"], date(2026, 9, 1))
+    assert parse_habit_item_id("not-a-habit-id") is None

@@ -50,6 +50,13 @@ class TestMCPExports(unittest.TestCase):
             "update_recurring",  # mapped to core_update_recurring_charge
             "delete_recurring",  # mapped to core_delete_recurring_charge
             "materialize_recurring",  # cron only: POST /v2/finance/recurring/run
+            # A habit's occurrences have no rows, so the tools are named for
+            # the day they act on rather than after the method.
+            "occurrences",  # read through core_today and the day view
+            "complete_occurrence",  # mapped to core_complete_habit_day
+            "reopen_occurrence",  # mapped to core_reopen_habit_day
+            "reschedule_occurrence",  # mapped to core_reschedule_habit_day
+            "skip_occurrence",  # mapped to core_skip_habit_day
         }
         
         missing = []

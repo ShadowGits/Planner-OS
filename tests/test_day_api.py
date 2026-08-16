@@ -32,6 +32,23 @@ TABLE_DEFAULTS = {
     },
     "task_completions": {"task_id": None, "recurrence_key": None, "note": None},
     "reminder_log": {"channel": "telegram", "payload": None},
+    # Column defaults from migration 0022. Without is_active a habit reads as
+    # retired and none of its days show up.
+    "habits": {
+        "cadence": "daily",
+        "days_of_week": [],
+        "start_time": None,
+        "estimated_minutes": None,
+        "project_id": None,
+        "end_date": None,
+        "is_active": True,
+    },
+    "habit_overrides": {
+        "moved_to": None,
+        "start_time": None,
+        "estimated_minutes": None,
+        "skipped": False,
+    },
 }
 
 
@@ -115,12 +132,17 @@ APP_KEY = {"X-App-Key": "app-secret"}
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def runtime():
+    return FakeRuntime()
+
+
+@pytest.fixture()
+def client(monkeypatch, runtime):
     monkeypatch.setenv("MCP_USER_ID", str(USER_ID))
     monkeypatch.setenv("PWA_ACCESS_KEY", "app-secret")
     monkeypatch.delenv("MCP_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    return TestClient(create_app(runtime=FakeRuntime(), verifier=FakeVerifier()))
+    return TestClient(create_app(runtime=runtime, verifier=FakeVerifier()))
 
 
 def test_day_requires_app_key(client) -> None:
@@ -347,3 +369,45 @@ def test_a_slot_lands_on_the_day_it_was_split_from(client) -> None:
         second.json()["data"]["task"]["id"],
     ]
     assert sum(item["estimated_minutes"] for item in items) == 90
+
+
+def test_the_pwa_can_tick_move_and_skip_a_habit_day(client, runtime) -> None:
+    """A habit occurrence has no row, so the day view hands out a synthetic id
+    and the PWA sends it straight back to the same endpoints."""
+    from planner_api.v2 import build_core
+
+    core = build_core(runtime.service_client, USER_ID)
+    habit = core.habits.add_habit(
+        "Gym", recurrence_key="gym", start_time="07:00", estimated_minutes=45,
+        start_date="2026-07-20",
+    )["data"]["habit"]
+
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    gym = [i for i in items if i["title"] == "Gym"][0]
+    assert gym["id"].startswith("habit:")
+    assert gym["done"] is False
+
+    # tick
+    assert client.patch(f"/v2/day/tasks/{gym['id']}", json={"done": True}, headers=APP_KEY).status_code == 200
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    assert [i for i in items if i["title"] == "Gym"][0]["done"] is True
+
+    # move it to the next day
+    assert client.patch(
+        f"/v2/day/tasks/{gym['id']}",
+        json={"scheduled_date": "2026-07-23", "start_time": "18:00"},
+        headers=APP_KEY,
+    ).status_code == 200
+    assert not [i for i in client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"] if i["title"] == "Gym"]
+    moved = [i for i in client.get("/v2/day?date=2026-07-23", headers=APP_KEY).json()["data"]["items"] if i["title"] == "Gym"]
+    assert len(moved) == 2  # the 23rd's own occurrence, plus the one moved in
+    assert "18:00" in {i["start_time"] for i in moved}
+
+    # deleting one day skips it rather than destroying the habit
+    twentyfourth = [
+        i for i in client.get("/v2/day?date=2026-07-24", headers=APP_KEY).json()["data"]["items"]
+        if i["title"] == "Gym"
+    ][0]
+    assert client.delete(f"/v2/day/tasks/{twentyfourth['id']}", headers=APP_KEY).status_code == 200
+    assert not [i for i in client.get("/v2/day?date=2026-07-24", headers=APP_KEY).json()["data"]["items"] if i["title"] == "Gym"]
+    assert core.habits.list_habits()["data"]["habits"][0]["id"] == habit["id"]

@@ -21,6 +21,7 @@ from adapters.supabase import SupabaseWorkspaceRepository
 from planner_core.repository import PlannerCoreRepository
 from planner_core.services import (
     FinanceService,
+    HabitService,
     GoalService,
     MetricsService,
     ProjectService,
@@ -45,7 +46,8 @@ class PlannerCoreBundle:
     def __init__(self, repository: PlannerCoreRepository, timezone: str) -> None:
         self.repository = repository
         self.timezone = timezone
-        self.tasks = TaskService(repository, timezone)
+        self.habits = HabitService(repository, timezone)
+        self.tasks = TaskService(repository, timezone, habits=self.habits)
         self.projects = ProjectService(repository)
         self.metrics = MetricsService(repository, timezone)
         self.reminders = ReminderService(repository, self.metrics, self.tasks, timezone)

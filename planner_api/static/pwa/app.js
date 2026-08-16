@@ -741,6 +741,9 @@
     const task = state.items.find(t => t.id === state.editing);
     if (!task) return;
 
+    // A habit is a rule, not a row, so there is nothing to split into slots.
+    if (task.is_habit) { toast("Habits can't be split"); return; }
+
     const date = task.scheduled_date || iso(state.selected);
     const total = task.estimated_minutes || 30;
     const keep = Math.round(total / 2);

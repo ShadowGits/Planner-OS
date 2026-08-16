@@ -314,9 +314,17 @@ def _blocks_for_day(items: list[dict[str, Any]], on_date, timezone: str) -> list
     return blocks
 
 class TaskService:
-    def __init__(self, repository: PlannerCoreRepository, timezone: str = "UTC") -> None:
+    def __init__(
+        self,
+        repository: PlannerCoreRepository,
+        timezone: str = "UTC",
+        habits: "HabitService | None" = None,
+    ) -> None:
         self.repository = repository
         self.timezone = timezone
+        # Habits have no rows, so the day and week views ask for them here
+        # rather than every caller stitching two lists together.
+        self.habits = habits or HabitService(repository, timezone)
 
     def create_task(
         self,
@@ -776,6 +784,7 @@ class TaskService:
                     "parent_task_id": row.get("parent_task_id"),
                 }
             )
+        items.extend(self.habits.occurrences(target, target))
         items.sort(
             key=lambda item: (
                 item["start_time"] is None,
@@ -847,6 +856,7 @@ class TaskService:
                     "project_id": row.get("project_id"),
                 }
             )
+        items.extend(self.habits.occurrences(monday, monday + timedelta(days=6)))
         items.sort(
             key=lambda item: (
                 str(item.get("scheduled_date") or item.get("due_date") or "9999"),
@@ -868,6 +878,281 @@ class TaskService:
         rows = self.repository.list_rows("planner_tasks", filters)
         rows.sort(key=lambda row: (str(row.get("due_date") or "9999"), str(row.get("created_at") or "")))
         return _envelope(True, f"{len(rows)} tasks", {"tasks": rows})
+
+
+
+HABIT_CADENCES = {"daily", "weekly"}
+HABIT_PREFIX = "habit:"
+
+
+def _habit_item_id(habit_id: str, on_date: date) -> str:
+    """Occurrences have no row of their own, so the day view gives them an id
+    the clients can hand straight back when one is ticked or moved."""
+    return f"{HABIT_PREFIX}{habit_id}:{on_date.isoformat()}"
+
+
+def parse_habit_item_id(item_id: str) -> tuple[str, date] | None:
+    """The inverse. Returns None for an ordinary task id."""
+    if not str(item_id).startswith(HABIT_PREFIX):
+        return None
+    try:
+        _, habit_id, stamp = str(item_id).split(":", 2)
+        return habit_id, date.fromisoformat(stamp)
+    except ValueError:
+        return None
+
+
+class HabitService:
+    """Things you do repeatedly, where missing a day costs a streak and
+    nothing else. A habit is a rule; its occurrences are worked out on read,
+    so nothing accumulates and nothing can go overdue."""
+
+    def __init__(self, repository: PlannerCoreRepository, timezone: str = "UTC") -> None:
+        self.repository = repository
+        self.timezone = timezone
+
+    # ── rules ─────────────────────────────────────────────────────────────
+    def add_habit(
+        self,
+        title: str,
+        *,
+        recurrence_key: str | None = None,
+        cadence: str = "daily",
+        days_of_week: list[int] | None = None,
+        start_time: str | None = None,
+        estimated_minutes: int | None = None,
+        project_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        if not title.strip():
+            raise PlannerCoreError("Habit title is required")
+        if cadence not in HABIT_CADENCES:
+            raise PlannerCoreError(f"Invalid cadence: {cadence}; use one of {sorted(HABIT_CADENCES)}")
+        days = sorted({int(d) for d in (days_of_week or [])})
+        if any(d < 0 or d > 6 for d in days):
+            raise PlannerCoreError("days_of_week must be 0 (Sunday) to 6 (Saturday)")
+        if cadence == "weekly" and not days:
+            raise PlannerCoreError("A weekly habit needs at least one day in days_of_week")
+        _parse_time(start_time)
+        row = self.repository.insert_row(
+            "habits",
+            {
+                "title": title.strip(),
+                "recurrence_key": (recurrence_key or _slug(title)),
+                "cadence": cadence,
+                "days_of_week": days,
+                "start_time": start_time,
+                "estimated_minutes": estimated_minutes,
+                "project_id": project_id,
+                "start_date": start_date or _local_today(self.timezone).isoformat(),
+                "end_date": end_date,
+            },
+        )
+        return _envelope(True, f"Habit created: {row['title']}", {"habit": row})
+
+    def list_habits(self, *, include_inactive: bool = False) -> dict[str, Any]:
+        rows = self.repository.list_rows("habits")
+        if not include_inactive:
+            rows = [row for row in rows if row.get("is_active")]
+        return _envelope(True, f"{len(rows)} habits", {"habits": rows})
+
+    def update_habit(self, habit_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "title", "recurrence_key", "cadence", "days_of_week", "start_time",
+            "estimated_minutes", "project_id", "start_date", "end_date", "is_active",
+        }
+        payload = {k: v for k, v in updates.items() if k in allowed}
+        if not payload:
+            raise PlannerCoreError(f"No valid habit fields in update; allowed: {sorted(allowed)}")
+        if payload.get("cadence") and payload["cadence"] not in HABIT_CADENCES:
+            raise PlannerCoreError(f"Invalid cadence: {payload['cadence']}")
+        if "start_time" in payload:
+            _parse_time(payload["start_time"])
+        row = self.repository.update_row("habits", habit_id, payload)
+        return _envelope(True, f"Habit updated: {row['title']}", {"habit": row})
+
+    def delete_habit(self, habit_id: str) -> dict[str, Any]:
+        row = self.repository.get_row("habits", habit_id)
+        if row is None:
+            raise PlannerCoreError(f"Habit was not found: {habit_id}")
+        self.repository.delete_row("habits", habit_id)
+        return _envelope(True, f"Habit deleted: {row['title']}", {"habit": row})
+
+    # ── occurrences ───────────────────────────────────────────────────────
+    @staticmethod
+    def _falls_on(habit: Mapping[str, Any], day: date) -> bool:
+        start = _parse_date(habit.get("start_date"))
+        end = _parse_date(habit.get("end_date"))
+        if start and day < start:
+            return False
+        if end and day > end:
+            return False
+        days = list(habit.get("days_of_week") or [])
+        if not days:
+            return True
+        # Python weekday() is Monday=0; the column is Sunday=0 to match JS.
+        return ((day.weekday() + 1) % 7) in {int(d) for d in days}
+
+    def occurrences(self, start: date, end: date) -> list[dict[str, Any]]:
+        """Every habit occurrence between two dates, overrides applied and
+        completions marked. One query per table however wide the window."""
+        habits = [row for row in self.repository.list_rows("habits") if row.get("is_active")]
+        if not habits:
+            return []
+        by_id = {str(row["id"]): row for row in habits}
+
+        # An override can move an occurrence into or out of the window, so the
+        # lookup has to be wider than the window itself.
+        overrides: dict[tuple[str, str], dict[str, Any]] = {}
+        moved_in: list[dict[str, Any]] = []
+        for row in self.repository.list_rows("habit_overrides"):
+            overrides[(str(row["habit_id"]), str(row["on_date"])[:10])] = row
+            landing = _parse_date(row.get("moved_to"))
+            if landing and start <= landing <= end and not row.get("skipped"):
+                moved_in.append(row)
+
+        keys = {str(row.get("recurrence_key")) for row in habits}
+        done: set[tuple[str, str]] = set()
+        for row in self.repository.list_rows(
+            "task_completions",
+            columns="recurrence_key,completed_on",
+            query_string=f"completed_on=gte.{start.isoformat()}&completed_on=lte.{end.isoformat()}",
+        ):
+            if row.get("recurrence_key") in keys:
+                done.add((str(row["recurrence_key"]), str(row["completed_on"])[:10]))
+
+        items: list[dict[str, Any]] = []
+
+        def emit(habit: Mapping[str, Any], rule_day: date, shown_on: date, override: Mapping[str, Any] | None) -> None:
+            start_time = (override or {}).get("start_time") or habit.get("start_time")
+            minutes = (override or {}).get("estimated_minutes") or habit.get("estimated_minutes")
+            key = str(habit.get("recurrence_key"))
+            items.append(
+                {
+                    "id": _habit_item_id(str(habit["id"]), rule_day),
+                    "title": habit["title"],
+                    "status": "done" if (key, shown_on.isoformat()) in done else "todo",
+                    "done": (key, shown_on.isoformat()) in done,
+                    "start_time": start_time,
+                    "estimated_minutes": minutes,
+                    "priority": "medium",
+                    "due_date": None,
+                    "scheduled_date": shown_on.isoformat(),
+                    "notes": None,
+                    "project_id": habit.get("project_id"),
+                    "parent_task_id": None,
+                    "is_habit": True,
+                    "recurrence_key": key,
+                }
+            )
+
+        day = start
+        while day <= end:
+            for habit in habits:
+                if not self._falls_on(habit, day):
+                    continue
+                override = overrides.get((str(habit["id"]), day.isoformat()))
+                if override:
+                    if override.get("skipped"):
+                        continue
+                    landing = _parse_date(override.get("moved_to"))
+                    if landing and landing != day:
+                        continue  # emitted below, on the day it moved to
+                emit(habit, day, day, override)
+            day += timedelta(days=1)
+
+        for override in moved_in:
+            habit = by_id.get(str(override["habit_id"]))
+            rule_day = _parse_date(override.get("on_date"))
+            landing = _parse_date(override.get("moved_to"))
+            if habit and rule_day and landing and rule_day != landing:
+                emit(habit, rule_day, landing, override)
+
+        return items
+
+    # ── acting on one occurrence ──────────────────────────────────────────
+    def _habit_for(self, habit_id: str) -> dict[str, Any]:
+        habit = self.repository.get_row("habits", habit_id)
+        if habit is None:
+            raise PlannerCoreError(f"Habit was not found: {habit_id}")
+        return habit
+
+    def _shown_on(self, habit_id: str, rule_day: date) -> date:
+        """Where the occurrence actually sits once any override is applied."""
+        for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id}):
+            if str(row.get("on_date"))[:10] == rule_day.isoformat():
+                landing = _parse_date(row.get("moved_to"))
+                return landing or rule_day
+        return rule_day
+
+    def complete_occurrence(self, habit_id: str, rule_day: date, *, source: str = "pwa") -> dict[str, Any]:
+        habit = self._habit_for(habit_id)
+        on_date = self._shown_on(habit_id, rule_day)
+        key = str(habit.get("recurrence_key"))
+        for row in self.repository.list_rows("task_completions", {"recurrence_key": key}):
+            if str(row.get("completed_on"))[:10] == on_date.isoformat():
+                return _envelope(True, f"Already done: {habit['title']}", {"habit": habit})
+        self.repository.insert_row(
+            "task_completions",
+            {
+                "task_id": None,
+                "recurrence_key": key,
+                "completed_on": on_date.isoformat(),
+                "source": source,
+                "note": None,
+            },
+        )
+        return _envelope(True, f"Done: {habit['title']}", {"habit": habit})
+
+    def reopen_occurrence(self, habit_id: str, rule_day: date) -> dict[str, Any]:
+        habit = self._habit_for(habit_id)
+        on_date = self._shown_on(habit_id, rule_day)
+        key = str(habit.get("recurrence_key"))
+        for row in self.repository.list_rows("task_completions", {"recurrence_key": key}):
+            if str(row.get("completed_on"))[:10] == on_date.isoformat():
+                self.repository.delete_row("task_completions", str(row["id"]))
+        return _envelope(True, f"Reopened: {habit['title']}", {"habit": habit})
+
+    def _upsert_override(self, habit_id: str, rule_day: date, patch: dict[str, Any]) -> dict[str, Any]:
+        for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id}):
+            if str(row.get("on_date"))[:10] == rule_day.isoformat():
+                return self.repository.update_row("habit_overrides", str(row["id"]), patch)
+        return self.repository.insert_row(
+            "habit_overrides",
+            {"habit_id": habit_id, "on_date": rule_day.isoformat(), "skipped": False, **patch},
+        )
+
+    def reschedule_occurrence(
+        self,
+        habit_id: str,
+        rule_day: date,
+        *,
+        moved_to: str | None = None,
+        start_time: str | None = None,
+        estimated_minutes: int | None = None,
+    ) -> dict[str, Any]:
+        """Move or retime one day of a habit without touching the rule, so
+        skipping Tuesday's gym to Wednesday leaves every other week alone."""
+        habit = self._habit_for(habit_id)
+        patch: dict[str, Any] = {}
+        if moved_to is not None:
+            _parse_date(moved_to)
+            patch["moved_to"] = moved_to
+        if start_time is not None:
+            _parse_time(start_time)
+            patch["start_time"] = start_time
+        if estimated_minutes is not None:
+            patch["estimated_minutes"] = estimated_minutes
+        if not patch:
+            raise PlannerCoreError("Nothing to change on this occurrence")
+        row = self._upsert_override(habit_id, rule_day, patch)
+        return _envelope(True, f"Moved: {habit['title']}", {"override": row})
+
+    def skip_occurrence(self, habit_id: str, rule_day: date) -> dict[str, Any]:
+        habit = self._habit_for(habit_id)
+        row = self._upsert_override(habit_id, rule_day, {"skipped": True, "moved_to": None})
+        return _envelope(True, f"Skipped: {habit['title']}", {"override": row})
 
 
 class MetricsService:

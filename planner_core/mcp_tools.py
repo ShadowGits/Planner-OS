@@ -45,13 +45,14 @@ class _CoreBundle:
 
     def __init__(self, repository: Any, timezone: str) -> None:
         from planner_core.services import (
-            FinanceService, GoalService, MetricsService,
+            FinanceService, GoalService, HabitService, MetricsService,
             ProjectService, ReminderService, TaskService,
         )
 
         self.repository = repository
         self.timezone = timezone
-        self.tasks = TaskService(repository, timezone)
+        self.habits = HabitService(repository, timezone)
+        self.tasks = TaskService(repository, timezone, habits=self.habits)
         self.projects = ProjectService(repository)
         self.metrics = MetricsService(repository, timezone)
         self.reminders = ReminderService(repository, self.metrics, self.tasks, timezone)
@@ -305,6 +306,88 @@ def register_core_tools(server: Any) -> None:
         return json.dumps(result)
 
     # ---------- personal finance ----------
+
+    # ── habits ────────────────────────────────────────────────────────────
+
+    @server.tool(name="core_add_habit")
+    async def core_add_habit(
+        title: str,
+        cadence: str = "daily",
+        days_of_week: list[int] | None = None,
+        start_time: str | None = None,
+        estimated_minutes: int | None = None,
+        recurrence_key: str | None = None,
+        project_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict:
+        """Create a habit — something repeated where missing a day costs a streak and nothing else, like gym or sleep. Habits never appear in overdue and are never counted as open work; use core_create_task for anything that stays owed when you miss it. cadence is daily or weekly; a weekly habit needs days_of_week as numbers with 0=Sunday. Occurrences are worked out on read, so no rows are generated and none can go stale."""
+        return _core().habits.add_habit(
+            title,
+            cadence=cadence,
+            days_of_week=days_of_week,
+            start_time=start_time,
+            estimated_minutes=estimated_minutes,
+            recurrence_key=recurrence_key,
+            project_id=project_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    @server.tool(name="core_list_habits")
+    async def core_list_habits(include_inactive: bool = False) -> dict:
+        """List habits and their rules. Streak counts come from core_metrics."""
+        return _core().habits.list_habits(include_inactive=include_inactive)
+
+    @server.tool(name="core_update_habit")
+    async def core_update_habit(habit_id: str, updates: dict) -> dict:
+        """Change a habit's rule for good: title, cadence, days_of_week, start_time, estimated_minutes, project_id, start_date, end_date, is_active. Set is_active false to retire a habit while keeping its history. To change one day only, use core_reschedule_habit_day."""
+        return _core().habits.update_habit(habit_id, updates)
+
+    @server.tool(name="core_delete_habit")
+    async def core_delete_habit(habit_id: str) -> dict:
+        """Delete a habit and its per-day changes. Completions already recorded stay, so past streaks survive."""
+        return _core().habits.delete_habit(habit_id)
+
+    @server.tool(name="core_reschedule_habit_day")
+    async def core_reschedule_habit_day(
+        habit_id: str,
+        on_date: str,
+        moved_to: str | None = None,
+        start_time: str | None = None,
+        estimated_minutes: int | None = None,
+    ) -> dict:
+        """Move or retime a single day of a habit, leaving the rule and every other day untouched — Tuesday's gym pushed to Wednesday, or today's session shortened. on_date is the day the rule put it on, YYYY-MM-DD."""
+        from datetime import date as _date
+
+        return _core().habits.reschedule_occurrence(
+            habit_id,
+            _date.fromisoformat(on_date),
+            moved_to=moved_to,
+            start_time=start_time,
+            estimated_minutes=estimated_minutes,
+        )
+
+    @server.tool(name="core_skip_habit_day")
+    async def core_skip_habit_day(habit_id: str, on_date: str) -> dict:
+        """Drop one day of a habit from the plan, e.g. no gym on a rest day. The streak still shows the day as missed; this only stops it appearing."""
+        from datetime import date as _date
+
+        return _core().habits.skip_occurrence(habit_id, _date.fromisoformat(on_date))
+
+    @server.tool(name="core_complete_habit_day")
+    async def core_complete_habit_day(habit_id: str, on_date: str) -> dict:
+        """Tick one day of a habit, which is what feeds its streak."""
+        from datetime import date as _date
+
+        return _core().habits.complete_occurrence(habit_id, _date.fromisoformat(on_date), source="mcp")
+
+    @server.tool(name="core_reopen_habit_day")
+    async def core_reopen_habit_day(habit_id: str, on_date: str) -> dict:
+        """Un-tick one day of a habit."""
+        from datetime import date as _date
+
+        return _core().habits.reopen_occurrence(habit_id, _date.fromisoformat(on_date))
 
     @server.tool(name="core_log_expense")
     def core_log_expense(
