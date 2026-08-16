@@ -733,20 +733,51 @@
   $("sheet-backdrop").addEventListener("click", closeSheet);
 
 
+  // Split the block in half: half stays where it is, half goes to the Inbox
+  // for you to place. The total time is unchanged — an hour split twice is
+  // still an hour, not two.
   $("sheet-split").addEventListener("click", async () => {
     if (!state.editing) return;
-    const parentTask = state.items.find(t => t.id === state.editing);
-    if (!parentTask) return;
-    
-    // Create a new child task with the same properties but no start_time (puts it in Inbox)
+    const task = state.items.find(t => t.id === state.editing);
+    if (!task) return;
+
+    const date = task.scheduled_date || iso(state.selected);
+    const total = task.estimated_minutes || 30;
+    const keep = Math.round(total / 2);
+    const moved = total - keep;
+    if (moved < 1) { toast("Too short to split"); return; }
+
     try {
-      await api("POST", "/v2/day/tasks", {
-        title: parentTask.title,
-        project_id: parentTask.project_id || null,
-        scheduled_date: parentTask.scheduled_date || iso(state.selected),
-        estimated_minutes: parentTask.estimated_minutes,
-        parent_task_id: parentTask.parent_task_id || parentTask.id // if splitting a child, point to ultimate parent
-      });
+      if (task.parent_task_id) {
+        // Already a slot: shrink it and put a sibling alongside.
+        await api("PATCH", "/v2/day/tasks/" + task.id, { estimated_minutes: keep });
+        await api("POST", "/v2/day/tasks", {
+          title: task.title,
+          project_id: task.project_id || null,
+          date: date,
+          estimated_minutes: moved,
+          parent_task_id: task.parent_task_id
+        });
+      } else {
+        // First split. The task itself stops appearing on the timeline once it
+        // has slots, so one slot has to inherit its time or the block would
+        // simply vanish from the day.
+        await api("POST", "/v2/day/tasks", {
+          title: task.title,
+          project_id: task.project_id || null,
+          date: date,
+          start_time: task.start_time || null,
+          estimated_minutes: keep,
+          parent_task_id: task.id
+        });
+        await api("POST", "/v2/day/tasks", {
+          title: task.title,
+          project_id: task.project_id || null,
+          date: date,
+          estimated_minutes: moved,
+          parent_task_id: task.id
+        });
+      }
       closeSheet();
       await loadDay({ keepScroll: true });
     } catch(e) {

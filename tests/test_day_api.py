@@ -300,3 +300,50 @@ def test_static_shell_is_served(client) -> None:
     assert client.get("/app/styles.css").status_code == 200
     assert client.get("/app/manifest.webmanifest").status_code == 200
     assert client.get("/app/icon-180.png").status_code == 200
+
+
+def test_a_slot_lands_on_the_day_it_was_split_from(client) -> None:
+    """The PWA's split button posts `date`; an earlier version posted
+    `scheduled_date`, which the model dropped, so every slot it made was
+    created with no date and showed up nowhere."""
+    created = client.post(
+        "/v2/day/tasks",
+        json={"title": "Limits", "date": "2026-07-22", "start_time": "09:00", "estimated_minutes": 90},
+        headers=APP_KEY,
+    )
+    task_id = created.json()["data"]["task"]["id"]
+
+    first = client.post(
+        "/v2/day/tasks",
+        json={
+            "title": "Limits",
+            "date": "2026-07-22",
+            "start_time": "09:00",
+            "estimated_minutes": 45,
+            "parent_task_id": task_id,
+        },
+        headers=APP_KEY,
+    )
+    second = client.post(
+        "/v2/day/tasks",
+        json={
+            "title": "Limits",
+            "date": "2026-07-22",
+            "estimated_minutes": 45,
+            "parent_task_id": task_id,
+        },
+        headers=APP_KEY,
+    )
+
+    assert first.json()["data"]["task"]["scheduled_date"] == "2026-07-22"
+    assert second.json()["data"]["task"]["scheduled_date"] == "2026-07-22"
+
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+
+    # The task it was split from steps off the timeline, and the halves add
+    # back up to the original 90 minutes rather than tripling it.
+    assert [item["id"] for item in items] == [
+        first.json()["data"]["task"]["id"],
+        second.json()["data"]["task"]["id"],
+    ]
+    assert sum(item["estimated_minutes"] for item in items) == 90
