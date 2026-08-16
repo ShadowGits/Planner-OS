@@ -128,7 +128,7 @@ def register_core_tools(server: Any) -> None:
         parent_task_id: str | None = None,
         depends_on: str | None = None,
     ) -> dict:
-        """Create a task, optionally under a project/milestone, with due/scheduled YYYY-MM-DD dates, an HH:MM start_time for the day timeline, and a recurrence_key for habit streaks. To create a subtask/time-slot, pass the main task's ID as parent_task_id."""
+        """Create a task, optionally under a project/milestone, with due/scheduled YYYY-MM-DD dates, an HH:MM start_time for the day timeline, and a recurrence_key for habit streaks. To split a task across several sittings, pass the original task's ID as parent_task_id; each slot keeps its own day and time, and finishing them all finishes the original."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.create_task(
             title,

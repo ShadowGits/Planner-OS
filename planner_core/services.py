@@ -341,9 +341,6 @@ class TaskService:
         _parse_date(due_date)
         _parse_date(scheduled_date)
         _parse_time(start_time)
-        
-        self._align_with_parent(parent_task_id, scheduled_date)
-
 
         row = self.repository.insert_row(
             "planner_tasks",
@@ -401,23 +398,47 @@ class TaskService:
         created = self.repository.insert_rows("planner_tasks", payloads)
         return _envelope(True, f"Created {len(created)} tasks", {"tasks": created})
 
-    def _align_with_parent(self, parent_task_id: str | None, scheduled_date: str | None) -> None:
-        """A time-slot child lives on its parent's day. If the parent has no
-        day yet, it takes the child's."""
-        if not parent_task_id or not scheduled_date:
+    def _settle_group(self, task: Mapping[str, Any], *, done: bool) -> None:
+        """Split slots and the row that stands for them in the counts stay in
+        agreement: finishing every slot finishes the task, reopening any slot
+        reopens it, and ticking the task itself carries its slots along.
+
+        `parent_task_id` marks which row leads a split group; the slots are
+        otherwise peers, free to sit on whatever day and time suits them.
+        """
+        task_id = str(task["id"])
+        leader_id = str(task.get("parent_task_id") or task_id)
+        slots = self.repository.list_rows(
+            "planner_tasks", {"parent_task_id": leader_id}, columns="id,status"
+        )
+        if not slots:  # the overwhelmingly common case: a task that never split
             return
-        parent = self.repository.get_row("planner_tasks", parent_task_id)
-        if parent is None:
-            return
-        parent_date = parent.get("scheduled_date")
-        if parent_date and str(parent_date)[:10] != str(scheduled_date)[:10]:
-            raise PlannerCoreError(
-                f"Cannot schedule child on {scheduled_date}; parent is on {parent_date}"
+
+        if done:
+            patch = {
+                "status": "done",
+                "completed_at": datetime.now(ZoneInfo(self.timezone)).isoformat(),
+            }
+        else:
+            patch = {"status": "todo", "completed_at": None}
+
+        if task_id == leader_id:
+            targets = [
+                str(slot["id"])
+                for slot in slots
+                if (slot.get("status") in CLOSED_TASK_STATUSES) != done
+            ]
+        elif done:
+            every_slot_closed = all(
+                str(slot["id"]) == task_id or slot.get("status") in CLOSED_TASK_STATUSES
+                for slot in slots
             )
-        if not parent_date:
-            self.repository.update_row(
-                "planner_tasks", parent_task_id, {"scheduled_date": scheduled_date}
-            )
+            targets = [leader_id] if every_slot_closed else []
+        else:
+            targets = [leader_id]
+
+        for target in targets:
+            self.repository.update_row("planner_tasks", target, patch)
 
     def update_task(self, task_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         allowed = {
@@ -444,27 +465,7 @@ class TaskService:
         if "start_time" in payload:
             _parse_time(payload["start_time"])
 
-        # Creation forces a child onto its parent's day; without the same check
-        # here an edit could quietly move it off again.
-        if "scheduled_date" in payload or "parent_task_id" in payload:
-            existing = self.repository.get_row("planner_tasks", task_id) or {}
-            parent_id = payload.get("parent_task_id", existing.get("parent_task_id"))
-            new_date = payload.get("scheduled_date", existing.get("scheduled_date"))
-            self._align_with_parent(parent_id, new_date)
-
         row = self.repository.update_row("planner_tasks", task_id, payload)
-
-        # Moving a parent takes its time slots along, so the group never splits
-        # across two days.
-        if "scheduled_date" in payload and payload["scheduled_date"]:
-            for child in self.repository.list_rows(
-                "planner_tasks", {"parent_task_id": task_id}, columns="id,scheduled_date"
-            ):
-                if str(child.get("scheduled_date") or "")[:10] != str(payload["scheduled_date"])[:10]:
-                    self.repository.update_row(
-                        "planner_tasks", str(child["id"]), {"scheduled_date": payload["scheduled_date"]}
-                    )
-
         return _envelope(True, f"Task updated: {row['title']}", {"task": row})
 
     def delete_task(self, task_id: str) -> dict[str, Any]:
@@ -521,6 +522,7 @@ class TaskService:
                 "note": note,
             },
         )
+        self._settle_group(task, done=True)
         return _envelope(True, f"Done: {completed['title']}", {"task": completed})
 
     def complete_by_title(self, text: str, *, source: str = "mcp") -> dict[str, Any]:
@@ -663,12 +665,8 @@ class TaskService:
         for completion in self.repository.list_rows("task_completions", {"task_id": task_id}):
             if _parse_date(completion.get("completed_on")) == today:
                 self.repository.delete_row("task_completions", str(completion["id"]))
-                
-        # Auto-reopen parent if it was completed
-        pid = task.get("parent_task_id")
-        if pid:
-            self.repository.update_row("planner_tasks", pid, {"status": "todo", "completed_at": None})
-            
+
+        self._settle_group(task, done=False)
         return _envelope(True, f"Reopened: {row['title']}", {"task": row})
 
     def sync_calendar(self, client: Any, days: int = 7) -> dict[str, Any]:
@@ -702,13 +700,8 @@ class TaskService:
         next_day_str = next_day.isoformat()
         qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},and(scheduled_date.eq.{next_day_str},start_time.lt.04:00:00))"
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
-        parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
-        
+
         for row in all_rows:
-            # If this is a parent and it has children scheduled today, hide it!
-            if row["id"] in parent_ids:
-                continue
-                
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             
@@ -742,6 +735,8 @@ class TaskService:
                     "scheduled_date": row.get("scheduled_date"),
                     "notes": row.get("notes"),
                     "project_id": row.get("project_id"),
+                    # lets the timeline tag a slot as part of a split task
+                    "parent_task_id": row.get("parent_task_id"),
                 }
             )
         items.sort(
@@ -784,16 +779,11 @@ class TaskService:
             query_string=qs,
             columns=(
                 "id,title,status,start_time,estimated_minutes,priority,"
-                "due_date,scheduled_date,notes,project_id,parent_task_id"
+                "due_date,scheduled_date,notes,project_id"
             ),
         )
-        parent_ids = {r.get("parent_task_id") for r in all_rows if r.get("parent_task_id")}
-        
+
         for row in all_rows:
-            # If this is a parent and it has children scheduled today, hide it!
-            if row["id"] in parent_ids:
-                continue
-                
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             if planned:

@@ -801,7 +801,7 @@ def test_week_view_ignores_tasks_outside_the_week(services):
     assert titles == ["This week"]
 
 
-def test_week_view_still_hides_a_parent_whose_slots_are_this_week(services):
+def test_split_slots_and_their_task_all_show_in_the_week(services):
     tasks, _, _, _ = services
     day = (_today() - timedelta(days=_today().weekday())).isoformat()
 
@@ -810,33 +810,96 @@ def test_week_view_still_hides_a_parent_whose_slots_are_this_week(services):
         "German slot", scheduled_date=day, start_time="09:00", parent_task_id=parent["id"]
     )
 
-    titles = [item["title"] for item in tasks.week_view()["data"]["items"]]
+    titles = sorted(item["title"] for item in tasks.week_view()["data"]["items"])
 
-    assert titles == ["German slot"]
+    assert titles == ["German slot", "Learn German"]
 
 
-def test_child_cannot_be_moved_off_its_parents_day(services):
+def test_a_slot_can_be_moved_to_any_day(services):
+    """Slots are peers, not dependents — moving one leaves the rest where
+    they are instead of raising or dragging them along."""
     tasks, _, _, _ = services
     parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
     child = tasks.create_task(
         "Slot", scheduled_date="2027-03-01", parent_task_id=parent["id"]
     )["data"]["task"]
 
-    with pytest.raises(PlannerCoreError, match="parent is on 2027-03-01"):
-        tasks.update_task(child["id"], {"scheduled_date": "2027-03-05"})
+    tasks.update_task(child["id"], {"scheduled_date": "2027-03-05"})
+
+    by_id = {t["id"]: t for t in tasks.list_tasks()["data"]["tasks"]}
+    assert by_id[child["id"]]["scheduled_date"] == "2027-03-05"
+    assert by_id[parent["id"]]["scheduled_date"] == "2027-03-01"
 
 
-def test_moving_a_parent_takes_its_slots_along(services):
+def test_finishing_every_slot_finishes_the_task_it_was_split_from(services):
     tasks, _, _, _ = services
     parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
-    child = tasks.create_task(
-        "Slot", scheduled_date="2027-03-01", parent_task_id=parent["id"]
+    first = tasks.create_task(
+        "Slot A", scheduled_date="2027-03-01", parent_task_id=parent["id"]
+    )["data"]["task"]
+    second = tasks.create_task(
+        "Slot B", scheduled_date="2027-03-02", parent_task_id=parent["id"]
     )["data"]["task"]
 
-    tasks.update_task(parent["id"], {"scheduled_date": "2027-03-08"})
+    tasks.complete_task(first["id"])
+    by_id = {t["id"]: t for t in tasks.list_tasks()["data"]["tasks"]}
+    assert by_id[parent["id"]]["status"] == "todo"  # one slot left
 
-    moved = [t for t in tasks.list_tasks()["data"]["tasks"] if t["id"] == child["id"]][0]
-    assert moved["scheduled_date"] == "2027-03-08"
+    tasks.complete_task(second["id"])
+    by_id = {t["id"]: t for t in tasks.list_tasks()["data"]["tasks"]}
+    assert by_id[parent["id"]]["status"] == "done"
+
+    # ...and un-ticking either slot reopens it again
+    tasks.reopen_task(second["id"])
+    by_id = {t["id"]: t for t in tasks.list_tasks()["data"]["tasks"]}
+    assert by_id[parent["id"]]["status"] == "todo"
+
+
+def test_ticking_a_split_task_closes_all_of_its_slots(services):
+    tasks, _, _, _ = services
+    parent = tasks.create_task("Learn German", scheduled_date="2027-03-01")["data"]["task"]
+    for name in ("Slot A", "Slot B"):
+        tasks.create_task(name, scheduled_date="2027-03-01", parent_task_id=parent["id"])
+
+    tasks.complete_task(parent["id"])
+
+    statuses = {t["title"]: t["status"] for t in tasks.list_tasks()["data"]["tasks"]}
+    assert statuses == {"Learn German": "done", "Slot A": "done", "Slot B": "done"}
+
+
+def test_a_split_task_counts_once_and_clears_when_its_slots_are_done(services):
+    """The counts follow the task, not its slots, so splitting work into three
+    sittings does not turn one job into three."""
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Germany Move")["data"]["project"]
+    parent = tasks.create_task(
+        "Learn German", project_id=project["id"], scheduled_date="2027-03-01"
+    )["data"]["task"]
+    slots = [
+        tasks.create_task(
+            name,
+            project_id=project["id"],
+            scheduled_date="2027-03-01",
+            parent_task_id=parent["id"],
+        )["data"]["task"]
+        for name in ("Slot A", "Slot B")
+    ]
+
+    snapshot = metrics.snapshot()
+    card = snapshot["projects"][0]
+    assert card["total_tasks"] == 1 and card["open_tasks"] == 1
+    assert snapshot["totals"]["open_tasks"] == 1
+
+    for slot in slots:
+        tasks.complete_task(slot["id"])
+
+    snapshot = metrics.snapshot()
+    card = snapshot["projects"][0]
+    assert card["total_tasks"] == 1
+    assert card["open_tasks"] == 0
+    assert card["completion_pct"] == 100.0
+    assert snapshot["totals"]["open_tasks"] == 0
+    assert snapshot["totals"]["overdue_tasks"] == 0
 
 
 def test_metrics_counts_match_between_the_rollup_and_a_full_scan(services):
