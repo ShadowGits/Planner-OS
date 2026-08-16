@@ -801,7 +801,7 @@ def test_week_view_ignores_tasks_outside_the_week(services):
     assert titles == ["This week"]
 
 
-def test_split_slots_and_their_task_all_show_in_the_week(services):
+def test_the_week_shows_slots_and_leaves_out_the_task_they_came_from(services):
     tasks, _, _, _ = services
     day = (_today() - timedelta(days=_today().weekday())).isoformat()
 
@@ -810,9 +810,50 @@ def test_split_slots_and_their_task_all_show_in_the_week(services):
         "German slot", scheduled_date=day, start_time="09:00", parent_task_id=parent["id"]
     )
 
-    titles = sorted(item["title"] for item in tasks.week_view()["data"]["items"])
+    titles = [item["title"] for item in tasks.week_view()["data"]["items"]]
 
-    assert titles == ["German slot", "Learn German"]
+    assert titles == ["German slot"]
+
+
+def test_a_task_with_no_slots_is_its_own_slot(services):
+    """Splitting is opt-in: an ordinary task still shows on the timeline and
+    the calendar without needing a slot created under it."""
+    tasks, _, _, _ = services
+    day = _today().isoformat()
+
+    tasks.create_task("Call the landlord", scheduled_date=day, start_time="10:00")
+
+    titles = [item["title"] for item in tasks.day_view(day)["data"]["items"]]
+
+    assert titles == ["Call the landlord"]
+
+
+def test_the_day_shows_a_split_task_as_its_sittings_only(services):
+    """Mirrors the study plan: a 90 minute task split into two 45 minute
+    sittings must read as 90 minutes, not 180, and must not put a spare
+    block on the calendar."""
+    tasks, _, _, _ = services
+    day = _today().isoformat()
+
+    task = tasks.create_task(
+        "Limits: limit laws", scheduled_date=day, start_time="16:00", estimated_minutes=90
+    )["data"]["task"]
+    for name, at in (("Session 1", "11:35"), ("Session 2", "15:00")):
+        tasks.create_task(
+            f"Limits: limit laws ({name})",
+            scheduled_date=day,
+            start_time=at,
+            estimated_minutes=45,
+            parent_task_id=task["id"],
+        )
+
+    items = tasks.day_view(day)["data"]["items"]
+
+    assert [item["title"] for item in items] == [
+        "Limits: limit laws (Session 1)",
+        "Limits: limit laws (Session 2)",
+    ]
+    assert sum(item["estimated_minutes"] for item in items) == 90
 
 
 def test_a_slot_can_be_moved_to_any_day(services):

@@ -622,7 +622,10 @@ class TaskService:
             if str(r["id"]) not in seen:
                 seen.add(str(r["id"]))
                 unique_rows.append(r)
-        
+
+        umbrellas = self._umbrella_ids(unique_rows)
+        unique_rows = [row for row in unique_rows if str(row["id"]) not in umbrellas]
+
         for row in unique_rows:
             due = _parse_date(row.get("due_date"))
             planned = _parse_date(row.get("scheduled_date"))
@@ -690,6 +693,31 @@ class TaskService:
         )
         return _envelope(True, message, {**totals, "errors": errors, "days": days})
 
+    def _umbrella_ids(self, rows: list[dict[str, Any]]) -> set[str]:
+        """Which of these rows have been split into slots.
+
+        Splitting leaves the original holding the whole task's time — a 90
+        minute task becomes two 45 minute slots plus a 90 minute original —
+        so the timeline shows the slots and keeps the original out of it.
+        Otherwise the day reads as 180 minutes of work and the spare block
+        goes to Google Calendar.
+
+        Scoped to the rows on screen, so this stays a small lookup however
+        long the task list gets.
+        """
+        ids = [str(row["id"]) for row in rows]
+        if not ids:
+            return set()
+        return {
+            str(row["parent_task_id"])
+            for row in self.repository.list_rows(
+                "planner_tasks",
+                columns="parent_task_id",
+                query_string=f"parent_task_id=in.({','.join(ids)})",
+            )
+            if row.get("parent_task_id")
+        }
+
     def day_view(self, on_date: str | None = None) -> dict[str, Any]:
         """Tasks belonging to one date, shaped for a timeline: tasks with a
         start_time carry their slot, the rest form the unscheduled tray."""
@@ -700,11 +728,14 @@ class TaskService:
         next_day_str = next_day.isoformat()
         qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},and(scheduled_date.eq.{next_day_str},start_time.lt.04:00:00))"
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        umbrellas = self._umbrella_ids(all_rows)
 
         for row in all_rows:
+            if str(row["id"]) in umbrellas:
+                continue
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
-            
+
             is_next_day_spillover = False
             if planned:
                 if planned != target:
@@ -782,8 +813,11 @@ class TaskService:
                 "due_date,scheduled_date,notes,project_id"
             ),
         )
+        umbrellas = self._umbrella_ids(all_rows)
 
         for row in all_rows:
+            if str(row["id"]) in umbrellas:
+                continue
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
             if planned:

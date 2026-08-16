@@ -535,7 +535,14 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
     @api.get("/v2/projects/{project_id}/tasks")
     def get_project_tasks(project_id: str, user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)
-        tasks = core.repository.list_rows("planner_tasks", {"project_id": project_id})
+        # Tasks only. Slots are how a task gets onto the timeline and the
+        # calendar; the dashboard lists the work itself, so a task split into
+        # three sittings appears once rather than four times.
+        tasks = core.repository.list_rows(
+            "planner_tasks",
+            {"project_id": project_id},
+            query_string="parent_task_id=is.null",
+        )
         return _envelope(True, "Project tasks retrieved", {"tasks": tasks})
 
     # ── Milestones ────────────────────────────────────────────────────────
