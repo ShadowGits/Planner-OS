@@ -333,6 +333,7 @@ class TaskService:
         notes: str | None = None,
         parent_task_id: str | None = None,
         depends_on: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not title.strip():
             raise PlannerCoreError("Task title is required")
@@ -357,6 +358,7 @@ class TaskService:
                 "notes": notes,
                 "parent_task_id": parent_task_id,
                 "depends_on": depends_on,
+                "metadata": metadata,
             },
         )
         return _envelope(True, f"Task created: {row['title']}", {"task": row})
@@ -392,6 +394,7 @@ class TaskService:
                 "recurrence_key": item.get("recurrence_key"),
                 "notes": item.get("notes"),
                 "parent_task_id": item.get("parent_task_id"),
+                "metadata": item.get("metadata"),
                 "depends_on": item.get("depends_on"),
             })
             
@@ -455,6 +458,9 @@ class TaskService:
             "notes",
             "parent_task_id",
             "depends_on",
+            # free-form columns a project brings with it: the study plan's
+            # Subject and Source, for instance
+            "metadata",
         }
         payload = {key: value for key, value in updates.items() if key in allowed}
         if not payload:

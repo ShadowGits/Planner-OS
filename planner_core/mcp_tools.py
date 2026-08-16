@@ -127,8 +127,9 @@ def register_core_tools(server: Any) -> None:
         notes: str | None = None,
         parent_task_id: str | None = None,
         depends_on: str | None = None,
+        metadata: dict | None = None,
     ) -> dict:
-        """Create a task, optionally under a project/milestone, with due/scheduled YYYY-MM-DD dates, an HH:MM start_time for the day timeline, and a recurrence_key for habit streaks. To split a task across several sittings, pass the original task's ID as parent_task_id; each slot keeps its own day and time, and finishing them all finishes the original."""
+        """Create a task, optionally under a project/milestone, with due/scheduled YYYY-MM-DD dates, an HH:MM start_time for the day timeline, and a recurrence_key for habit streaks. To split a task across several sittings, pass the original task's ID as parent_task_id; each slot keeps its own day and time, and finishing them all finishes the original. metadata holds any extra columns the project tracks — the study plan uses {"Subject": "Linear algebra", "Source": "Strang"} — and the project view renders whatever keys it finds as table columns."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.create_task(
             title,
@@ -143,17 +144,18 @@ def register_core_tools(server: Any) -> None:
             notes=notes,
             parent_task_id=parent_task_id,
             depends_on=depends_on,
+            metadata=metadata,
         )
 
     @server.tool(name="core_create_tasks_batch")
     async def core_create_tasks_batch(items: list[dict]) -> dict:
-        """Create many tasks in one call. Each item takes the same fields as core_create_task: title (required), project_id, milestone_id, due_date, scheduled_date, start_time (HH:MM), priority, estimated_minutes, recurrence_key, notes, parent_task_id, depends_on. All items are validated before any task is created."""
+        """Create many tasks in one call. Each item takes the same fields as core_create_task: title (required), project_id, milestone_id, due_date, scheduled_date, start_time (HH:MM), priority, estimated_minutes, recurrence_key, notes, parent_task_id, depends_on, metadata. All items are validated before any task is created."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.create_tasks_batch(items)
 
     @server.tool(name="core_update_task")
     async def core_update_task(task_id: str, updates: dict) -> dict:
-        """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes, parent_task_id, depends_on."""
+        """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes, parent_task_id, depends_on, and metadata (extra project columns, replaced wholesale)."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.update_task(task_id, updates)
 

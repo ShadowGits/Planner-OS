@@ -1008,3 +1008,21 @@ def test_upcoming_deadlines_only_reach_the_horizon(services):
     names = [d["name"] for d in metrics.snapshot()["upcoming_deadlines"] if d["kind"] == "task"]
 
     assert names == ["Soon"]
+
+
+def test_a_task_carries_its_projects_own_columns(services):
+    """The study plan tracks Subject and Source, which no fixed field covers.
+    They ride along on the task so the project view can read them back."""
+    tasks, _, _, _ = services
+
+    task = tasks.create_task(
+        "Limits: limit laws",
+        metadata={"Subject": "Calculus refresh", "Source": "Paul's Online Math Notes"},
+    )["data"]["task"]
+
+    assert task["metadata"]["Subject"] == "Calculus refresh"
+
+    tasks.update_task(task["id"], {"metadata": {"Subject": "Linear algebra"}})
+    stored = [t for t in tasks.list_tasks()["data"]["tasks"] if t["id"] == task["id"]][0]
+
+    assert stored["metadata"] == {"Subject": "Linear algebra"}
