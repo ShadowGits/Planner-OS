@@ -219,7 +219,14 @@
       const detail = await res.json().catch(() => ({}));
       throw new Error(detail.message || `Request failed (${res.status})`);
     }
-    return res.json();
+    const payload = await res.json();
+    // Some endpoints report trouble in the body with a 200 — a Drive failure,
+    // for one. Treating that as success let the screen claim a save that never
+    // happened, so take the envelope at its word.
+    if (payload && payload.success === false) {
+      throw new Error(payload.message || "Request failed");
+    }
+    return payload;
   }
 
   // A tiny per-day cache so swiping through the week is instant. Each entry
@@ -634,8 +641,13 @@
     task.done = next;
     row.classList.toggle("done", next);
     const ring = row.querySelector(".ring");
-    ring.classList.toggle("checked", next);
-    row.querySelector(".icon").textContent = next ? "" : emojiFor(task.title);
+    if (ring) ring.classList.toggle("checked", next);
+    // Two layouts, two class names: a normal row has .icon, a row sharing
+    // its time with another has .ov-icon. A missing element must not throw —
+    // the catch below reads any failure as the save failing and puts the tick
+    // back, so a null here silently undid a tick that was never even sent.
+    const icon = row.querySelector(".icon, .ov-icon");
+    if (icon) icon.textContent = next ? "" : emojiFor(task.title);
     if (navigator.vibrate) navigator.vibrate(10);
     renderHeader();
     try {
