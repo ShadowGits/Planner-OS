@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any, Callable
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 
 from adapters.supabase import SupabaseWorkspaceRepository
 from planner_core.repository import PlannerCoreRepository
@@ -535,14 +535,26 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             raise HTTPException(status_code=500, detail={"code": "CREATE_FAILED", "message": str(e)})
 
     @api.get("/v2/projects/{project_id}/tasks")
-    def get_project_tasks(project_id: str, user=Depends(current_user)):
+    def get_project_tasks(
+        project_id: str,
+        fields: str | None = Query(default=None),
+        user=Depends(current_user),
+    ):
         core = build_core(cloud.service_client, user.user_id)
         # Tasks only. Slots are how a task gets onto the timeline and the
         # calendar; the dashboard lists the work itself, so a task split into
         # three sittings appears once rather than four times.
+        #
+        # fields lets a caller that only needs a column or two say so. A task
+        # row carries notes and a metadata blob, so a screen wanting nothing
+        # but tick state was pulling hundreds of times what it read.
+        columns = ",".join(
+            part.strip() for part in fields.split(",") if part.strip()
+        ) if fields else "*"
         tasks = core.repository.list_rows(
             "planner_tasks",
             {"project_id": project_id},
+            columns=columns,
             query_string="parent_task_id=is.null",
         )
         return _envelope(True, "Project tasks retrieved", {"tasks": tasks})
