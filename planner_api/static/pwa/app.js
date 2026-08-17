@@ -441,28 +441,45 @@
     row.style.setProperty("--ring", ringFor(task.title));
     row.style.setProperty("--task-bg", pastelFor(task.title));
 
-    if (isOverlap) {
-      row.style.zIndex = layout.col;
-    }
-
     const recur = task.recurrence_key ? " ↻" : "";
     const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
-    const overlapNotice = layout && layout.col > 0
-      ? `<div style="color: var(--wine); font-size: 12px; font-weight: 600; margin-bottom: 6px; position: absolute; top: -16px;">Tasks are overlapping</div>`
-      : "";
-      
-    row.innerHTML = `
+
+    if (isOverlap) {
+      // Side by side, each in its own column of the shared time span. Every
+      // card keeps its own tick, and the colours and the gap between them do
+      // the work the old "Tasks are overlapping" caption was doing.
+      // Columns live to the right of the hour labels and the spine, and stop
+      // short of the right padding, so they never sit under the clock gutter.
+      const LEFT = 60, RIGHT = 12;
+      const share = `((100% - ${LEFT + RIGHT}px) / ${layout.totalCols})`;
+      row.style.left = `calc(${LEFT}px + ${layout.col} * ${share} + 3px)`;
+      row.style.width = `calc(${share} - 6px)`;
+      row.style.zIndex = layout.col + 1;
+      if (layout.totalCols > 2) row.classList.add("tight");
+      // a hairline between neighbours, so the last column has none
+      if (layout.col < layout.totalCols - 1) row.classList.add("divided");
+      row.innerHTML = `
+        <div class="ov-item">
+          <div class="ov-icon" style="background:${pastelFor(task.title)}">${emojiFor(task.title)}</div>
+          <div class="ov-text">
+            <div class="ov-time">${layout.totalCols > 2 ? fmtClock(start) : `${fmtClock(start)} · ${fmtDur(dur)}`}${recur}</div>
+            <div class="ov-title">${escapeHtml(task.title)}</div>
+          </div>
+          <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>
+        </div>`;
+    } else {
+      row.innerHTML = `
       <div class="rail" style="position: relative; width: 100%; height: 100%; display: flex; justify-content: center; z-index: 1;">
         <div class="time-shape" style="width: 42px; height: 100%; min-height: 42px; border-radius: 21px; background: ${pastelFor(task.title)}; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 4px var(--bg);">
           <div class="icon" style="font-size: 20px; line-height: 1;">${emojiFor(task.title)}</div>
         </div>
       </div>
       <div class="body" style="padding-left: 4px; display: flex; flex-direction: column; justify-content: center; height: 100%; position: relative;">
-        ${overlapNotice}
         <div class="meta" style="color: var(--ink-2); font-size: 12.5px; margin-bottom: 2px; font-weight: 500;">${timeLabel}</div>
         <div class="title">${escapeHtml(task.title)}</div>
       </div>
       <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
+    }
 
     row.querySelector(".ring").addEventListener("click", (e) => {
       e.stopPropagation();

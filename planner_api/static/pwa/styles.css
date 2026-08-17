@@ -164,7 +164,50 @@ body {
   box-shadow: var(--shadow-lift);
 }
 
-/* overlapping tasks: side-by-side compact columns */
+/* Overlapping tasks sit side by side, one column each, rather than stacking
+   on top of one another. Same language as a normal row — a coloured circle on
+   the left, the text plain beside it — so the only thing that changes when two
+   things clash is the width. A thin tint marks the shared span. */
+.row.overlap {
+  right: auto;              /* left and width are set per column in JS */
+  display: block;
+  padding: 0;
+}
+.row.overlap .ov-item {
+  height: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 2px;
+}
+/* A hairline marks where one column ends and the next begins; the last one
+   needs none, so it is only drawn between neighbours. */
+.row.overlap.divided .ov-item { border-right: 1px solid var(--line); }
+.row.overlap .ov-icon {
+  width: 34px; height: 34px; border-radius: 12px;
+  display: grid; place-items: center; font-size: 18px;
+  box-shadow: 0 0 0 3px var(--bg);
+}
+/* Without this the title refuses to shrink and pushes the tick off the row. */
+.row.overlap .ov-text { min-width: 0; overflow: hidden; }
+.row.overlap .ov-time {
+  font-size: 11px; font-weight: 600; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.row.overlap .ov-title {
+  font-size: 14px; font-weight: 700; letter-spacing: -0.2px; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.row.overlap .ring { grid-column: 3; width: 22px; height: 22px; font-size: 13px; }
+.row.overlap.done .ov-title { text-decoration: line-through; color: var(--ink-2); }
+.row.overlap.done .ov-icon { filter: grayscale(0.4); opacity: 0.7; }
+
+/* Three or more at once: the circle goes, the words stay. */
+.row.overlap.tight .ov-icon { display: none; }
+.row.overlap.tight .ov-item { padding: 0 4px 0 6px; gap: 6px; }
+.row.overlap.tight .ov-title { font-size: 13px; }
+
 .row .time {
   grid-column: 1; text-align: right; padding-right: 6px;
   font-size: 11px; font-weight: 600; color: var(--ink-3);
