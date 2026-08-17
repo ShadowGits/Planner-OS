@@ -1170,12 +1170,7 @@ class MetricsService:
         counts = self._task_counts(today)
         deadline_tasks = self._tasks_due_by(today + timedelta(days=DEADLINE_HORIZON_DAYS))
         overdue_list = self._overdue_tasks(today)
-        cutoff = (today - timedelta(days=90)).isoformat()
-        completions = self.repository.list_rows(
-            "task_completions",
-            columns="id,task_id,completed_on,recurrence_key",
-            query_string=f"completed_on=gte.{cutoff}",
-        )
+        completion_summary = self._completion_summary(today)
         monthly_goals = self.repository.list_rows("monthly_goals")
         project_files = self.repository.list_rows("project_files")
 
@@ -1205,14 +1200,12 @@ class MetricsService:
             pm["files"] = p_files
             project_metrics.append(pm)
         deadlines = self._upcoming_deadlines(milestones, deadline_tasks, today)
-        streaks = self._streaks(completions, today)
-        completed_today = [row for row in completions if _parse_date(row.get("completed_on")) == today]
         return {
             "generated_on": today.isoformat(),
             "timezone": self.timezone,
             "projects": project_metrics,
             "upcoming_deadlines": deadlines,
-            "streaks": streaks,
+            "streaks": completion_summary["streaks"],
             "totals": {
                 "open_tasks": sum(bucket["open"] for bucket in counts.values()),
                 # Counted across every overdue task; the list below is capped
@@ -1220,15 +1213,8 @@ class MetricsService:
                 "overdue_tasks": sum(bucket["overdue"] for bucket in counts.values()),
                 "overdue_list": overdue_list,
                 "overdue_list_truncated": len(overdue_list) >= OVERDUE_LIST_LIMIT,
-                "completed_today": len(completed_today),
-                "completions_last_7_days": len(
-                    [
-                        row
-                        for row in completions
-                        if (done := _parse_date(row.get("completed_on"))) is not None
-                        and today - timedelta(days=6) <= done <= today
-                    ]
-                ),
+                "completed_today": completion_summary["completed_today"],
+                "completions_last_7_days": completion_summary["completions_last_7_days"],
             },
         }
 
@@ -1300,6 +1286,55 @@ class MetricsService:
                 if _is_overdue(task, today):
                     bucket["overdue"] += 1
         return buckets
+
+    def _completion_summary(self, today: date) -> dict[str, Any]:
+        """Streaks and the two completion counts, rolled up by Postgres.
+
+        This used to fetch ninety days of task_completions on every render to
+        produce a handful of numbers, which made it the heaviest read on the
+        dashboard. Falls back to that full scan when the function has not been
+        installed yet, so a deploy landing before the migration still serves
+        correct figures."""
+        try:
+            summary = self.repository.call_function(
+                "planner_completion_summary", {"p_today": today.isoformat()}
+            )
+        except Exception:
+            summary = None
+
+        # rpc may hand back the single jsonb value or a one-row list of it
+        if isinstance(summary, list):
+            summary = summary[0] if summary else None
+        if not isinstance(summary, dict):
+            return self._completion_summary_by_scan(today)
+
+        return {
+            "streaks": {str(k): int(v) for k, v in (summary.get("streaks") or {}).items()},
+            "completed_today": int(summary.get("completed_today") or 0),
+            "completions_last_7_days": int(summary.get("completions_last_7_days") or 0),
+        }
+
+    def _completion_summary_by_scan(self, today: date) -> dict[str, Any]:
+        cutoff = (today - timedelta(days=90)).isoformat()
+        completions = self.repository.list_rows(
+            "task_completions",
+            columns="id,task_id,completed_on,recurrence_key",
+            query_string=f"completed_on=gte.{cutoff}",
+        )
+        return {
+            "streaks": self._streaks(completions, today),
+            "completed_today": len(
+                [row for row in completions if _parse_date(row.get("completed_on")) == today]
+            ),
+            "completions_last_7_days": len(
+                [
+                    row
+                    for row in completions
+                    if (done := _parse_date(row.get("completed_on"))) is not None
+                    and today - timedelta(days=6) <= done <= today
+                ]
+            ),
+        }
 
     def _tasks_due_by(self, horizon: date) -> list[dict[str, Any]]:
         """Only the open tasks with a deadline inside the window the dashboard

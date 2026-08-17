@@ -78,9 +78,11 @@ class MemoryGateway:
         return rows[:limit] if limit else rows
 
     def rpc(self, function, payload):
-        """Only the rollup the metrics snapshot calls. Mirrors the SQL in
-        migration 0019 so the tests cover the real path, not just the
-        fallback."""
+        """Only the rollups the metrics snapshot calls. Mirrors the SQL in
+        migrations 0019 and 0024 so the tests cover the real path, not just
+        the fallback."""
+        if function == "planner_completion_summary":
+            return self._completion_summary(payload)
         if function != "planner_task_counts":
             raise NotImplementedError(function)
 
@@ -110,6 +112,45 @@ class MemoryGateway:
                 if (due and str(due) < today) or (not due and planned and str(planned) < today):
                     bucket["overdue_count"] += 1
         return list(buckets.values())
+
+    def _completion_summary(self, payload):
+        """Mirrors migration 0024: streaks walked back from an anchor of today,
+        or yesterday when today is not ticked yet."""
+        from datetime import date as _date, timedelta as _td
+
+        today = _date.fromisoformat(str(payload["p_today"]))
+        mine = [
+            row
+            for row in self.tables.get("task_completions", [])
+            if str(row.get("user_id")) == str(payload["p_user_id"])
+            and str(row.get("workspace_id")) == str(payload["p_workspace_id"])
+            and row.get("completed_on")
+        ]
+
+        by_key: dict[str, set] = {}
+        for row in mine:
+            key = row.get("recurrence_key")
+            day = _date.fromisoformat(str(row["completed_on"])[:10])
+            if key and day <= today:
+                by_key.setdefault(str(key), set()).add(day)
+
+        streaks = {}
+        for key, days in by_key.items():
+            cursor = today if today in days else today - _td(days=1)
+            streak = 0
+            while cursor in days:
+                streak += 1
+                cursor -= _td(days=1)
+            streaks[key] = streak
+
+        stamps = [_date.fromisoformat(str(row["completed_on"])[:10]) for row in mine]
+        return {
+            "streaks": streaks,
+            "completed_today": len([d for d in stamps if d == today]),
+            "completions_last_7_days": len(
+                [d for d in stamps if today - _td(days=6) <= d <= today]
+            ),
+        }
 
     @staticmethod
     def _split_top(text):
@@ -324,6 +365,56 @@ def test_complete_task_records_completion_and_streak(services) -> None:
     snapshot = metrics.snapshot()
     assert snapshot["streaks"]["german"] == 1
     assert snapshot["totals"]["completed_today"] == 1
+
+
+def _seed_completions(repo, days, key="gym"):
+    for offset in days:
+        repo.insert_row(
+            "task_completions",
+            {
+                "recurrence_key": key,
+                "completed_on": (date.today() - timedelta(days=offset)).isoformat(),
+                "source": "test",
+            },
+        )
+
+
+def test_completion_summary_rollup_and_scan_agree(services, repo) -> None:
+    """The rollup is an optimisation, so it has to produce exactly what the
+    full scan produced. A run broken by a missed day stops at the gap."""
+    _, _, metrics, _ = services
+    # yesterday, and the three days before it — then a gap at day 5
+    _seed_completions(repo, [1, 2, 3, 4, 6, 7])
+
+    rolled = metrics._completion_summary(date.today())
+    scanned = metrics._completion_summary_by_scan(date.today())
+
+    assert rolled == scanned
+    # today is unticked, so the streak is measured from yesterday and stops
+    # at the missing fifth day
+    assert rolled["streaks"]["gym"] == 4
+    assert rolled["completed_today"] == 0
+    # the window spans today and the six days before it, so day 7 is outside
+    assert rolled["completions_last_7_days"] == 5
+
+
+def test_completion_summary_falls_back_when_function_is_missing(services, repo) -> None:
+    """A deploy can land before the migration does, and the dashboard still
+    has to show the right numbers."""
+    _, _, metrics, _ = services
+    _seed_completions(repo, [0, 1, 2])
+
+    original = repo.gateway.rpc
+    repo.gateway.rpc = lambda function, payload: (_ for _ in ()).throw(
+        RuntimeError("function does not exist")
+    )
+    try:
+        summary = metrics._completion_summary(date.today())
+    finally:
+        repo.gateway.rpc = original
+
+    assert summary["streaks"]["gym"] == 3
+    assert summary["completed_today"] == 1
 
 
 def test_complete_by_title_fuzzy_matching(services) -> None:
