@@ -236,6 +236,16 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                     "estimated_minutes": body.estimated_minutes,
                 }
                 moved = {k: v for k, v in moved.items() if k.replace("moved_to", "scheduled_date") in body.model_fields_set}
+                # The day view runs past midnight, so a small-hours slot arrives
+                # as 24:30 meaning "half past midnight, still tonight". Tasks
+                # already translate that into the next date; habits have to as
+                # well, or the clock parser rejects hour 24.
+                if moved.get("start_time"):
+                    base = body.scheduled_date or rule_day.isoformat()
+                    norm_date, norm_time = _normalize_spillover(base, moved["start_time"])
+                    if norm_time != moved["start_time"]:
+                        moved["start_time"] = norm_time
+                        moved["moved_to"] = norm_date
                 if moved:
                     result = core.habits.reschedule_occurrence(habit_id, rule_day, **moved)
                 if result is None:

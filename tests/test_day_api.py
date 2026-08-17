@@ -371,6 +371,35 @@ def test_a_slot_lands_on_the_day_it_was_split_from(client) -> None:
     assert sum(item["estimated_minutes"] for item in items) == 90
 
 
+def test_dragging_a_habit_past_midnight_lands_on_the_next_day(client, runtime) -> None:
+    """The day view runs past midnight, so dragging something to half past
+    midnight sends 24:30 — still tonight, as far as the screen is concerned.
+    Tasks already understood that; habits rejected it as an impossible hour."""
+    from planner_api.v2 import build_core
+
+    core = build_core(runtime.service_client, USER_ID)
+    core.habits.add_habit(
+        "Wind down", recurrence_key="winddown", start_time="23:00",
+        estimated_minutes=60, start_date="2026-07-20",
+    )
+
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    occurrence = [i for i in items if i["title"] == "Wind down"][0]
+
+    res = client.patch(
+        f"/v2/day/tasks/{occurrence['id']}", json={"start_time": "24:30"}, headers=APP_KEY
+    )
+    assert res.status_code == 200, res.json()
+
+    # it belongs to the small hours of the 23rd now, and the screen for the
+    # 22nd still shows it because that day runs to 04:00
+    on_23rd = [
+        i for i in client.get("/v2/day?date=2026-07-23", headers=APP_KEY).json()["data"]["items"]
+        if i["title"] == "Wind down" and i["start_time"] == "00:30"
+    ]
+    assert len(on_23rd) == 1
+
+
 def test_the_pwa_can_tick_move_and_skip_a_habit_day(client, runtime) -> None:
     """A habit occurrence has no row, so the day view hands out a synthetic id
     and the PWA sends it straight back to the same endpoints."""
