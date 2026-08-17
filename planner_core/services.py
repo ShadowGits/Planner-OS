@@ -687,25 +687,51 @@ class TaskService:
         return _envelope(True, f"Reopened: {row['title']}", {"task": row})
 
     def sync_calendar(self, client: Any, days: int = 7) -> dict[str, Any]:
+        """Mirror the next `days` of scheduled work onto Google Calendar.
+
+        Reconciled in one pass over the whole window rather than a pass per
+        day. Each pass costs a Google listing, a read of every calendar link
+        and a decision log write, so doing it daily meant a month's sync made
+        over two hundred round trips and timed out before it finished.
+        """
         today = datetime.now(ZoneInfo(self.timezone)).date()
-        totals = {"created": 0, "updated": 0, "deleted": 0, "unchanged": 0}
-        errors: list[str] = []
+        last_day = today + timedelta(days=days - 1)
+
+        # One lookup for the whole window instead of three per day.
+        habits_by_day: dict[str, list[dict[str, Any]]] = {}
+        for occurrence in self.habits.occurrences(today, last_day):
+            habits_by_day.setdefault(str(occurrence["scheduled_date"]), []).append(occurrence)
+
+        blocks: list[ScheduledBlock] = []
+        seen: set[str] = set()
         for offset in range(days):
             on_date = today + timedelta(days=offset)
-            items = self.day_view(on_date.isoformat())["data"]["items"]
-            plan = DailyPlan(date=on_date, blocks=_blocks_for_day(items, on_date, self.timezone), conflicts=[])
-            result = client.sync_plan(plan, start=on_date, end=on_date + timedelta(days=1))
-            totals["created"] += result.created
-            totals["updated"] += result.updated
-            totals["deleted"] += result.deleted
-            totals["unchanged"] += result.unchanged
-            errors.extend(result.errors)
+            items = self.day_view(
+                on_date.isoformat(), habit_items=habits_by_day.get(on_date.isoformat(), [])
+            )["data"]["items"]
+            for block in _blocks_for_day(items, on_date, self.timezone):
+                # A task timed just after midnight is shown on the previous
+                # evening as well as its own day, so it would otherwise be
+                # collected twice for the same calendar slot.
+                block_id = str(block.metadata.get("planner_block_id"))
+                if block_id in seen:
+                    continue
+                seen.add(block_id)
+                blocks.append(block)
 
+        plan = DailyPlan(date=today, blocks=blocks, conflicts=[])
+        result = client.sync_plan(plan, start=today, end=last_day + timedelta(days=1))
+        totals = {
+            "created": result.created,
+            "updated": result.updated,
+            "deleted": result.deleted,
+            "unchanged": result.unchanged,
+        }
         message = (
             f"{totals['created']} created, {totals['updated']} updated, "
             f"{totals['deleted']} removed over {days} day(s)"
         )
-        return _envelope(True, message, {**totals, "errors": errors, "days": days})
+        return _envelope(True, message, {**totals, "errors": list(result.errors), "days": days})
 
     def _umbrella_ids(self, rows: list[dict[str, Any]]) -> set[str]:
         """Which of these rows have been split into slots.
@@ -732,9 +758,15 @@ class TaskService:
             if row.get("parent_task_id")
         }
 
-    def day_view(self, on_date: str | None = None) -> dict[str, Any]:
+    def day_view(
+        self, on_date: str | None = None, habit_items: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """Tasks belonging to one date, shaped for a timeline: tasks with a
-        start_time carry their slot, the rest form the unscheduled tray."""
+        start_time carry their slot, the rest form the unscheduled tray.
+
+        habit_items lets a caller that already worked out a whole range of
+        occurrences hand this day's share in, instead of every day querying
+        the habit tables again for itself."""
         target = _parse_date(on_date) or _local_today(self.timezone)
         items: list[dict[str, Any]] = []
         target_str = target.isoformat()
@@ -784,7 +816,9 @@ class TaskService:
                     "parent_task_id": row.get("parent_task_id"),
                 }
             )
-        items.extend(self.habits.occurrences(target, target))
+        items.extend(
+            habit_items if habit_items is not None else self.habits.occurrences(target, target)
+        )
         items.sort(
             key=lambda item: (
                 item["start_time"] is None,

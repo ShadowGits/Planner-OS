@@ -153,11 +153,14 @@ def test_sync_reports_google_not_connected(monkeypatch) -> None:
     assert "GOOGLE_NOT_CONNECTED" in res.json()["errors"]
 
 
-def test_sync_runs_once_per_day_in_window(monkeypatch) -> None:
+def test_sync_reconciles_the_whole_window_in_one_pass(monkeypatch) -> None:
+    """Each reconcile costs a Google listing, a read of every calendar link
+    and a decision log write, so a pass per day made a month's sync time out
+    before it finished."""
     fake = FakeCalendarClient()
     client = _client(monkeypatch, lambda context: fake)
     res = client.post("/v2/calendar/sync?days=3", headers=CRON)
     assert res.status_code == 200
     body = res.json()
     assert body["data"]["days"] == 3
-    assert fake.calls == 3  # one reconcile per day in the window
+    assert fake.calls == 1
