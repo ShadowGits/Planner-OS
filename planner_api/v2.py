@@ -538,6 +538,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
     def get_project_tasks(
         project_id: str,
         fields: str | None = Query(default=None),
+        milestone_id: str | None = Query(default=None),
         user=Depends(current_user),
     ):
         core = build_core(cloud.service_client, user.user_id)
@@ -551,9 +552,15 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         columns = ",".join(
             part.strip() for part in fields.split(",") if part.strip()
         ) if fields else "*"
+        # milestone_id narrows it to one group, so a screen showing collapsed
+        # milestones can fetch the rows for the one you opened instead of every
+        # task in the project.
+        filters = {"project_id": project_id}
+        if milestone_id:
+            filters["milestone_id"] = milestone_id
         tasks = core.repository.list_rows(
             "planner_tasks",
-            {"project_id": project_id},
+            filters,
             columns=columns,
             query_string="parent_task_id=is.null",
         )
