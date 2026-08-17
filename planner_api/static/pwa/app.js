@@ -7,7 +7,7 @@
   "use strict";
 
   const SNAP_MIN = 5;
-  const GAP_MIN = 45;
+  const GAP_MIN = 30;
   const PX_PER_MIN = 1.8; // proportional: an hour is a real, scrollable hour
   const MIN_ROW_PX = 52;
   const KEY_STORE = "day-planner-key";
@@ -416,11 +416,16 @@
       }
     }
 
+    // The gap starts where everything so far has finished, not where this row
+    // finishes. A long task overlapped by a short one ends after it, so using
+    // this row's end offered a slot in the middle of the longer task.
+    let busyUntil = -Infinity;
     for (let i = 0; i < timed.length; i++) {
       list.appendChild(taskRow(timed[i], top0, overlapLayout.get(timed[i].id)));
+      busyUntil = Math.max(busyUntil, ends[i]);
       const nextStart = i + 1 < timed.length ? mins[i + 1] : null;
-      if (nextStart !== null && nextStart - ends[i] >= GAP_MIN) {
-        list.appendChild(gapRow(ends[i], nextStart, top0));
+      if (nextStart !== null && nextStart - busyUntil >= GAP_MIN) {
+        list.appendChild(gapRow(busyUntil, nextStart, top0));
       }
     }
   }
@@ -488,7 +493,9 @@
         <div class="gap-note">🕐 Use <b>${fmtDur(free)}</b> wisely. ${note}</div>
         <button class="gap-add">＋ Add Task</button>
       </div>`;
-    const slot = Math.round(fromMin / SNAP_MIN) * SNAP_MIN;
+    // Round up, never down: rounding to the nearest could start the task a
+    // few minutes before the free window actually opens.
+    const slot = Math.ceil(fromMin / SNAP_MIN) * SNAP_MIN;
     el.querySelector(".gap-add").addEventListener("click", () => openSheet(slot));
     return el;
   }
@@ -673,7 +680,6 @@
     }
     candidate = Math.min(candidate, 27 * 60);
     // Instead of auto-saving, open the modal with the calculated candidate time prefilled
-    prefillMin = null;
     $("new-id").value = task.id;
     $("new-title").value = task.title;
     $("new-date").value = task.scheduled_date || iso(state.selected);
