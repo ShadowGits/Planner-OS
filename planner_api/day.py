@@ -416,4 +416,22 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             return _envelope(True, result["message"], result["data"])
         except PlannerCoreError as e:
             raise HTTPException(status_code=400, detail=str(e))
-    api.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="day-planner")
+    class RevalidatingStaticFiles(StaticFiles):
+        """Serve the PWA with no-cache.
+
+        Without a Cache-Control header a browser applies its own guess at how
+        long a file stays fresh, and can keep serving an old app.js without
+        ever asking the server. The service worker fetches through that same
+        cache, so a deploy could not reach the phone at all.
+
+        no-cache does not mean no caching: the copy is still stored and still
+        reused, the browser just has to ask first. The reply is a 304 with an
+        empty body whenever the file has not moved on.
+        """
+
+        def file_response(self, *args, **kwargs):
+            response = super().file_response(*args, **kwargs)
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
+
+    api.mount("/app", RevalidatingStaticFiles(directory=STATIC_DIR, html=True), name="day-planner")

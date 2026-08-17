@@ -1,7 +1,7 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v21";
+const CACHE = "day-planner-v22";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -22,8 +22,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.pathname.startsWith("/v2/")) return;
   // Network-first: always try the latest, fall back to cache when offline.
+  // cache:"reload" skips the browser's own HTTP cache, which could otherwise
+  // hand back a stale app.js and hide a deploy from the phone entirely.
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "reload" })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(event.request, copy));
