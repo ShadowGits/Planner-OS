@@ -354,6 +354,11 @@
         .catch(() => {});
       schedulePrefetch(state.selected);
     } else {
+      // Nothing cached for this day: clear the old day off the screen first.
+      // Leaving it there means a slow or failed fetch shows yesterday's tasks
+      // under today's heading, which reads as the app being stuck.
+      state.items = [];
+      render();
       loadDay().catch(showError);
     }
   }
@@ -945,16 +950,23 @@
     }
   }, 60000);
 
+  // Coming back to the app should show the new day if you left it open
+  // overnight, but must not undo a day you deliberately chose. This fires on
+  // every foreground — resuming, dismissing the keyboard, a glance at another
+  // app — so it only jumps when the date has genuinely rolled over since the
+  // last time the app was on screen.
+  let lastSeenToday = iso(getLogicalToday());
+
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && key()) {
-      const today = getLogicalToday();
-      if (!sameDay(state.selected, today)) {
-        state.selected = today;
-        loadDay({ keepScroll: false }).catch(showError);
-      } else {
-        loadDay({ keepScroll: true }).catch(showError);
-      }
+    if (document.hidden || !key()) return;
+    const today = getLogicalToday();
+    const rolledOver = iso(today) !== lastSeenToday;
+    lastSeenToday = iso(today);
+    if (rolledOver && !sameDay(state.selected, today)) {
+      goToDate(today);
+      return;
     }
+    loadDay({ keepScroll: true }).catch(showError);
   });
 
   if (!key()) {
