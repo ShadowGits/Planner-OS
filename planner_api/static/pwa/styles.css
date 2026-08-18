@@ -165,9 +165,9 @@ body {
 }
 
 /* Overlapping tasks sit side by side, one column each, rather than stacking
-   on top of one another. Same language as a normal row — a coloured circle on
-   the left, the text plain beside it — so the only thing that changes when two
-   things clash is the width. A thin tint marks the shared span. */
+   on top of one another. They keep the normal row's visual language: a
+   duration-height coloured pill with the text outside it. Only the available
+   horizontal space changes when tasks clash. */
 .row.overlap {
   right: auto;              /* left and width are set per column in JS */
   display: block;
@@ -176,21 +176,34 @@ body {
 .row.overlap .ov-item {
   height: 100%;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 2px;
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 5px 0 0;
 }
 /* A hairline marks where one column ends and the next begins; the last one
    needs none, so it is only drawn between neighbours. */
 .row.overlap.divided .ov-item { border-right: 1px solid var(--line); }
-.row.overlap .ov-icon {
-  width: 34px; height: 34px; border-radius: 12px;
-  display: grid; place-items: center; font-size: 18px;
+.row.overlap .ov-rail {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+}
+.row.overlap .ov-time-shape {
+  width: 42px; height: 100%; min-height: 42px; border-radius: 21px;
+  display: flex; align-items: center; justify-content: center;
   box-shadow: 0 0 0 3px var(--bg);
 }
-/* Without this the title refuses to shrink and pushes the tick off the row. */
-.row.overlap .ov-text { min-width: 0; overflow: hidden; }
+.row.overlap .ov-icon {
+  font-size: 20px; line-height: 1;
+}
+/* Without this the outside text refuses to shrink and pushes the tick off the
+   narrowed row. */
+.row.overlap .ov-body {
+  min-width: 0; overflow: hidden;
+  padding: 2px 2px 0 3px;
+  display: flex; flex-direction: column; justify-content: center;
+}
 .row.overlap .ov-time {
   font-size: 11px; font-weight: 600; color: var(--ink-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -199,13 +212,21 @@ body {
   font-size: 14px; font-weight: 700; letter-spacing: -0.2px; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.row.overlap .ring { grid-column: 3; width: 22px; height: 22px; font-size: 13px; }
+.row.overlap .ring {
+  grid-column: 3; align-self: center;
+  width: 22px; height: 22px; font-size: 13px;
+}
 .row.overlap.done .ov-title { text-decoration: line-through; color: var(--ink-2); }
 .row.overlap.done .ov-icon { filter: grayscale(0.4); opacity: 0.7; }
 
-/* Three or more at once: the circle goes, the words stay. */
+/* Three or more at once: the pill remains so duration is still visible, while
+   the emoji yields its space to the words. */
 .row.overlap.tight .ov-icon { display: none; }
-.row.overlap.tight .ov-item { padding: 0 4px 0 6px; gap: 6px; }
+.row.overlap.tight .ov-item {
+  grid-template-columns: 28px minmax(0, 1fr) 20px;
+  padding: 0 3px 0 0; gap: 2px;
+}
+.row.overlap.tight .ov-time-shape { width: 24px; border-radius: 12px; }
 .row.overlap.tight .ov-title { font-size: 13px; }
 
 .row .time {

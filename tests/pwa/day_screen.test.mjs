@@ -95,6 +95,30 @@ test("tasks at the same time get their own column and their own tick", async (t)
   assert.equal(maths.classList.contains("divided"), false);
 });
 
+test("overlapping tasks keep their duration-height pill and outside text", async (t) => {
+  const { doc, close } = await boot({
+    items: [
+      task({ id: "college", title: "Sort college sheet", start_time: "18:30", estimated_minutes: 120 }),
+      task({ id: "ice", title: "Ice ankle", start_time: "19:55", estimated_minutes: 20 }),
+    ],
+  });
+  t.after(close);
+
+  const college = rowFor(doc, "Sort college sheet");
+  const ice = rowFor(doc, "Ice ankle");
+
+  assert.equal(college.style.height, "216px", "the two-hour task must keep its full timeline height");
+  assert.equal(ice.style.height, "52px", "short tasks keep the normal minimum touch height");
+
+  for (const row of [college, ice]) {
+    const pill = row.querySelector(".ov-time-shape");
+    const copy = row.querySelector(".ov-body");
+    assert.ok(pill, "the normal coloured duration pill should remain visible");
+    assert.ok(copy, "the time and title should remain outside the pill");
+    assert.equal(pill.contains(copy), false, "text must not be placed inside the coloured pill");
+  }
+});
+
 test("the overlapping caption is gone", async (t) => {
   const { doc, close } = await boot({
     items: [

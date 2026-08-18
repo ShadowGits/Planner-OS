@@ -452,9 +452,9 @@
     const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
 
     if (isOverlap) {
-      // Side by side, each in its own column of the shared time span. Every
-      // card keeps its own tick, and the colours and the gap between them do
-      // the work the old "Tasks are overlapping" caption was doing.
+      // Side by side, each in its own column of the shared time span. The
+      // duration-height pill and outside text stay the same as a normal task;
+      // only the horizontal room changes while the tasks clash.
       // Columns live to the right of the hour labels and the spine, and stop
       // short of the right padding, so they never sit under the clock gutter.
       const LEFT = 60, RIGHT = 12;
@@ -467,8 +467,12 @@
       if (layout.col < layout.totalCols - 1) row.classList.add("divided");
       row.innerHTML = `
         <div class="ov-item">
-          <div class="ov-icon" style="background:${pastelFor(task.title)}">${emojiFor(task.title)}</div>
-          <div class="ov-text">
+          <div class="ov-rail">
+            <div class="ov-time-shape" style="background:${pastelFor(task.title)}">
+              <div class="ov-icon">${emojiFor(task.title)}</div>
+            </div>
+          </div>
+          <div class="ov-body">
             <div class="ov-time">${layout.totalCols > 2 ? fmtClock(start) : `${fmtClock(start)} · ${fmtDur(dur)}`}${recur}</div>
             <div class="ov-title">${escapeHtml(task.title)}</div>
           </div>
