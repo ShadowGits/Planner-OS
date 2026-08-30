@@ -227,7 +227,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             try:
                 result = None
                 if body.done is True:
-                    result = core.habits.complete_occurrence(habit_id, rule_day, source="pwa")
+                    result = core.habits.complete_occurrence(habit_id, rule_day, source="dashboard")
                 elif body.done is False:
                     result = core.habits.reopen_occurrence(habit_id, rule_day)
                 moved = {

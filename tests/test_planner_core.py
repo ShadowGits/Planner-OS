@@ -238,9 +238,25 @@ class MemoryGateway:
                 rows = rows[: int(value)]
         return rows
 
+    # Check constraints the real database enforces. Without these the fake
+    # accepts values Postgres refuses, which is exactly how a habit tick
+    # shipped writing a source the constraint rejects — every test passed and
+    # the phone got a 500.
+    CHECKS = {
+        "task_completions": {"source": {"mcp", "telegram", "dashboard", "api"}},
+        "planner_tasks": {"status": {"todo", "in_progress", "blocked", "done", "skipped"}},
+    }
+
     def insert(self, table, payload):
         if isinstance(payload, list):
             return [self.insert(table, p)[0] for p in payload]
+        for column, allowed in self.CHECKS.get(table, {}).items():
+            value = dict(payload).get(column)
+            if value is not None and value not in allowed:
+                raise ValueError(
+                    f"{table}.{column} violates its check constraint: {value!r} "
+                    f"not in {sorted(allowed)}"
+                )
         row = {"id": str(uuid4()), **TABLE_DEFAULTS.get(table, {}), **dict(payload)}
         self.tables.setdefault(table, []).append(row)
         return [dict(row)]
@@ -374,7 +390,7 @@ def _seed_completions(repo, days, key="gym"):
             {
                 "recurrence_key": key,
                 "completed_on": (date.today() - timedelta(days=offset)).isoformat(),
-                "source": "test",
+                "source": "api",
             },
         )
 

@@ -24,6 +24,10 @@ PRIORITIES = {"low", "medium", "high", "critical"}
 DEADLINE_WINDOW_DAYS = 7
 DEADLINE_HORIZON_DAYS = 30
 OVERDUE_LIST_LIMIT = 200
+# task_completions.source carries a check constraint in the database listing
+# exactly these. Naming them here means an unknown value is refused with a
+# clear message instead of the insert failing with a 500 nobody can read.
+COMPLETION_SOURCES = {"mcp", "telegram", "dashboard", "api"}
 
 
 def _envelope(success: bool, message: str, data: dict[str, Any] | None = None, errors: list[str] | None = None) -> dict[str, Any]:
@@ -518,6 +522,11 @@ class TaskService:
         return _envelope(True, f"{len(updated_tasks)} tasks updated", {"updated": updated_tasks})
 
     def complete_task(self, task_id: str, *, source: str = "mcp", note: str | None = None) -> dict[str, Any]:
+        if source not in COMPLETION_SOURCES:
+            raise PlannerCoreError(
+                f"Unknown completion source: {source!r}. "
+                f"Expected one of {', '.join(sorted(COMPLETION_SOURCES))}"
+            )
         task = self.repository.get_row("planner_tasks", task_id)
         if task is None:
             raise PlannerCoreError(f"Task was not found: {task_id}")
@@ -1120,7 +1129,12 @@ class HabitService:
                 return landing or rule_day
         return rule_day
 
-    def complete_occurrence(self, habit_id: str, rule_day: date, *, source: str = "pwa") -> dict[str, Any]:
+    def complete_occurrence(self, habit_id: str, rule_day: date, *, source: str = "api") -> dict[str, Any]:
+        if source not in COMPLETION_SOURCES:
+            raise PlannerCoreError(
+                f"Unknown completion source: {source!r}. "
+                f"Expected one of {', '.join(sorted(COMPLETION_SOURCES))}"
+            )
         habit = self._habit_for(habit_id)
         on_date = self._shown_on(habit_id, rule_day)
         key = str(habit.get("recurrence_key"))
