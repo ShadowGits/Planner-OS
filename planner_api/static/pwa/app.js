@@ -614,16 +614,26 @@
       }
       const cur = task.start_time ? task.start_time.slice(0, 5) : null;
       if (save && newStart !== null && minToTime(newStart) !== cur) {
+        // Move it where it was dropped straight away and tell the server
+        // afterwards. Waiting for the round trip first left the row sitting at
+        // its old time for as long as the server took to answer, which on a
+        // cold start is seconds.
+        const wasTime = task.start_time;
+        const wasDate = task.scheduled_date;
+        task.start_time = minToTime(newStart);
+        task.scheduled_date = iso(state.selected);
+        render();
         try {
-          await api("PATCH", `/v2/day/tasks/${task.id}`, { 
+          await api("PATCH", `/v2/day/tasks/${task.id}`, {
             scheduled_date: iso(state.selected),
-            start_time: minToTime(newStart) 
+            start_time: minToTime(newStart)
           });
-          task.start_time = minToTime(newStart);
-          render();
         } catch (e) {
+          // Put it back where it came from; the move never happened.
+          task.start_time = wasTime;
+          task.scheduled_date = wasDate;
+          render();
           showError(e);
-          loadDay({ keepScroll: true }).catch(() => {});
         }
       } else {
         render();

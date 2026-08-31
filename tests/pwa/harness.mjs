@@ -67,6 +67,9 @@ export async function boot({ items = [], onRequest = null } = {}) {
     calls.push({ method, path, body });
 
     const custom = onRequest && onRequest({ method, path, body });
+    // "pending" holds the response open for ever, so a test can check what the
+    // screen shows while a request is still in flight.
+    if (custom === "pending") return new Promise(() => {});
     if (custom) return reply(custom);
 
     if (method === "GET" && path.startsWith("/v2/day")) {
@@ -95,6 +98,25 @@ export async function boot({ items = [], onRequest = null } = {}) {
     addListener() {},
     removeListener() {},
   });
+
+  // jsdom implements no PointerEvent, which is what the drag handler listens
+  // for. This is a faithful enough stand-in: a MouseEvent carrying the pointer
+  // fields the handler reads.
+  if (!window.PointerEvent) {
+    window.PointerEvent = class PointerEvent extends window.MouseEvent {
+      constructor(type, init = {}) {
+        super(type, init);
+        this.pointerId = init.pointerId ?? 1;
+        this.pointerType = init.pointerType ?? "touch";
+        this.isPrimary = init.isPrimary ?? true;
+      }
+    };
+  }
+  // Pointer capture is a no-op here; the app already guards these in try/catch.
+  const proto = window.Element.prototype;
+  proto.setPointerCapture ||= function () {};
+  proto.releasePointerCapture ||= function () {};
+  proto.hasPointerCapture ||= function () { return false; };
 
   const errors = [];
   window.addEventListener("error", (e) => errors.push(e.error || e.message));

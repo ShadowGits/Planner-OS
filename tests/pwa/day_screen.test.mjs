@@ -274,3 +274,30 @@ test("a habit cannot be split", async (t) => {
 
   assert.equal(calls.filter((c) => c.method === "POST").length, 0);
 });
+
+/* ---------- dragging ---------- */
+
+test("a dropped task moves before the server has answered", async (t) => {
+  // The drop used to await the save and only then repaint, so on a cold
+  // server the row sat at its old time for seconds after being let go.
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00", estimated_minutes: 60 })],
+    onRequest: ({ method }) => (method === "PATCH" ? "pending" : null),
+  });
+  t.after(close);
+
+  const row = rowFor(doc, "Gym");
+  const before = row.style.top;
+
+  const at = (y) => ({ bubbles: true, pointerId: 1, clientX: 20, clientY: y });
+  row.dispatchEvent(new window.PointerEvent("pointerdown", at(100)));
+  await new Promise((r) => window.setTimeout(r, 320)); // the press-and-hold
+  row.dispatchEvent(new window.PointerEvent("pointermove", at(280)));
+  row.dispatchEvent(new window.PointerEvent("pointerup", at(280)));
+  await settle(window);
+
+  // The save is deliberately still unanswered, so anything visible now is
+  // the optimistic move.
+  const moved = rowFor(doc, "Gym");
+  assert.notEqual(moved.style.top, before, "the row did not move until the server replied");
+});
