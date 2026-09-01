@@ -301,3 +301,71 @@ test("a dropped task moves before the server has answered", async (t) => {
   const moved = rowFor(doc, "Gym");
   assert.notEqual(moved.style.top, before, "the row did not move until the server replied");
 });
+
+test("a new task appears before the server has answered", async (t) => {
+  const { doc, window, close } = await boot({
+    items: [],
+    onRequest: ({ method }) => (method === "POST" ? "pending" : null),
+  });
+  t.after(close);
+
+  doc.getElementById("fab").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  doc.getElementById("new-title").value = "Call the bank";
+  doc.getElementById("new-time").value = "11:00";
+  doc.getElementById("sheet-save").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  const row = rowFor(doc, "Call the bank");
+  assert.ok(row, "the new task did not appear until the server replied");
+  // It has no real id yet, so it must not be tickable.
+  assert.ok(row.classList.contains("pending"));
+  assert.ok(doc.getElementById("sheet").classList.contains("hidden"), "the sheet should close at once");
+});
+
+test("an edited task moves before the server has answered", async (t) => {
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00", estimated_minutes: 60 })],
+    onRequest: ({ method }) => (method === "PATCH" ? "pending" : null),
+  });
+  t.after(close);
+
+  rowFor(doc, "Gym").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  doc.getElementById("new-time").value = "15:00";
+  doc.getElementById("sheet-save").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  assert.match(rowFor(doc, "Gym").textContent, /3:00|15:00/, "the new time is not on screen yet");
+});
+
+test("a deleted task disappears before the server has answered", async (t) => {
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00" })],
+    onRequest: ({ method }) => (method === "DELETE" ? "pending" : null),
+  });
+  t.after(close);
+
+  rowFor(doc, "Gym").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  doc.getElementById("sheet-delete").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  assert.equal(rowFor(doc, "Gym"), undefined, "the row stayed until the server replied");
+});
+
+test("a delete the server refuses puts the task back", async (t) => {
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00" })],
+    onRequest: ({ method }) =>
+      method === "DELETE" ? { success: false, message: "nope", data: {} } : null,
+  });
+  t.after(close);
+
+  rowFor(doc, "Gym").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  doc.getElementById("sheet-delete").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  assert.ok(rowFor(doc, "Gym"), "a refused delete must not lose the task");
+});

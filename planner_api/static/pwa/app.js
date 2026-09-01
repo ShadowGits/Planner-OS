@@ -492,12 +492,18 @@
       <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
     }
 
+    if (task.pending) row.classList.add("pending");
+
     row.querySelector(".ring").addEventListener("click", (e) => {
       e.stopPropagation();
+      // Still being created: it has no real id yet, so anything sent about it
+      // would be about a task the server has never heard of.
+      if (task.pending) return;
       toggleDone(task, row);
     });
     row.addEventListener("click", (e) => {
       if (e.target.closest(".ring")) return;
+      if (task.pending) return;
       if (row._suppressClick) {
         row._suppressClick = false;
         return;
@@ -535,6 +541,8 @@
      moves the event instead of the page. A quick move before the hold is a
      normal scroll and is left to the browser. */
   function attachDrag(row, task, top0) {
+    // A task still being created cannot be moved; the server has no id for it.
+    if (task.pending) return;
     let holdTimer = null;
     let lifted = false;
     let originY = 0;
@@ -869,27 +877,90 @@
     e.target.disabled = true;
     const time = $("new-time").value || null;
     const dateVal = $("new-date").value || iso(state.selected);
-    try {
-      if (state.editing) {
-        await api("PATCH", `/v2/day/tasks/${state.editing}`, {
+    const editing = state.editing;
+    const staysHere = dateVal === iso(state.selected);
+
+    // Paint the change and close the sheet before asking the server. Waiting
+    // for the save and then reloading the whole day meant two round trips
+    // before anything moved, which on a cold start is several seconds.
+    closeSheet();
+
+    if (editing) {
+      const item = state.items.find((t) => t.id === editing);
+      const before = item ? { ...item } : null;
+      if (item) {
+        item.title = title;
+        item.scheduled_date = dateVal;
+        item.start_time = time;
+        item.estimated_minutes = sheetMinutes;
+      }
+      render();
+      toast("Saved ✓");
+      try {
+        await api("PATCH", `/v2/day/tasks/${editing}`, {
           title,
           scheduled_date: dateVal,
           start_time: time,
           estimated_minutes: sheetMinutes,
         });
-      } else {
-        await api("POST", "/v2/day/tasks", {
-          title,
-          date: dateVal,
-          start_time: time,
-          estimated_minutes: sheetMinutes,
-        });
+        // Moved to another day: it belongs on that screen now, not this one.
+        if (!staysHere) await loadDay({ keepScroll: true });
+      } catch (err) {
+        if (item && before) Object.assign(item, before);
+        render();
+        showError(err);
+      } finally {
+        $("sheet-save").disabled = false;
       }
-      closeSheet();
-      toast(state.editing ? "Saved ✓" : "Added ✓");
-      await loadDay({ keepScroll: true });
-    } catch (e) {
-      showError(e);
+      return;
+    }
+
+    // A new task has no id until the server gives it one. Show it straight
+    // away under a temporary id, and mark it pending so it cannot be ticked or
+    // dragged before it exists.
+    const draft = {
+      id: `pending:${Date.now()}`,
+      title,
+      status: "todo",
+      done: false,
+      start_time: time,
+      estimated_minutes: sheetMinutes,
+      priority: "medium",
+      due_date: null,
+      scheduled_date: dateVal,
+      notes: null,
+      project_id: null,
+      parent_task_id: null,
+      pending: true,
+    };
+    if (staysHere) {
+      state.items.push(draft);
+      render();
+    }
+    toast("Added ✓");
+    try {
+      const created = await api("POST", "/v2/day/tasks", {
+        title,
+        date: dateVal,
+        start_time: time,
+        estimated_minutes: sheetMinutes,
+      });
+      const row = created && created.data && created.data.task;
+      const at = state.items.indexOf(draft);
+      if (staysHere && at !== -1) {
+        if (row) {
+          state.items[at] = { ...draft, ...row, done: ["done", "skipped"].includes(row.status), pending: false };
+        } else {
+          state.items.splice(at, 1);
+        }
+        render();
+        if (!row) await loadDay({ keepScroll: true });
+      }
+    } catch (err) {
+      const at = state.items.indexOf(draft);
+      if (at !== -1) state.items.splice(at, 1);
+      render();
+      showError(err);
     } finally {
       $("sheet-save").disabled = false;
     }
@@ -899,11 +970,19 @@
     if (!state.editing) return;
     const id = state.editing;
     closeSheet();
+    // Take it off the screen now and tell the server after; put it back in
+    // its old place if the delete does not go through.
+    const at = state.items.findIndex((t) => t.id === id);
+    const removed = at !== -1 ? state.items.splice(at, 1)[0] : null;
+    render();
+    toast("Deleted");
     try {
       await api("DELETE", `/v2/day/tasks/${id}`);
-      toast("Deleted");
-      await loadDay({ keepScroll: true });
     } catch (e) {
+      if (removed) {
+        state.items.splice(at, 0, removed);
+        render();
+      }
       showError(e);
     } finally {
       $("sheet-save").disabled = false;
