@@ -322,6 +322,34 @@ body {
 }
 .fab:active { transform: scale(0.92); }
 
+/* A count of unscheduled tasks that floats above the timeline so it does not
+   scroll away with the inbox tray. Tapping it jumps to the tray. */
+.unsched-pill {
+  position: fixed;
+  left: max(20px, env(safe-area-inset-left));
+  bottom: calc(env(safe-area-inset-bottom) + 24px);
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 16px 0 12px; height: 44px; border-radius: 22px;
+  border: none; background: var(--wine); color: #fff;
+  font-size: 14px; font-weight: 700; letter-spacing: -0.2px;
+  box-shadow: 0 8px 24px rgba(141, 44, 78, 0.45);
+  cursor: pointer; z-index: 40; transition: transform 0.15s;
+}
+.unsched-pill:active { transform: scale(0.94); }
+.unsched-pill .u-count {
+  display: inline-grid; place-items: center;
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+  background: rgba(255, 255, 255, 0.25); font-size: 13px; font-weight: 800;
+}
+
+/* A brief highlight on the inbox after the pill jumps to it, so it is obvious
+   where you landed. */
+.inbox.flash { animation: inbox-flash 1.1s ease; }
+@keyframes inbox-flash {
+  0%, 100% { background: transparent; }
+  25% { background: var(--wine-soft); }
+}
+
 /* ---------- add / edit sheet ---------- */
 
 .sheet-backdrop { position: fixed; inset: 0; background: rgba(10, 12, 18, 0.45); z-index: 50; }

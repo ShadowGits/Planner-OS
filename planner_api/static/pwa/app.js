@@ -383,6 +383,7 @@
     const overlapLayout = computeOverlapLayout(timed);
 
     renderInbox(inbox);
+    renderUnscheduledPill(inbox);
 
     const list = $("list");
     list.innerHTML = "";
@@ -680,6 +681,28 @@
       loadDay({ keepScroll: true }).catch(() => {});
     }
   }
+
+  /* ---------- unscheduled pill ---------- */
+
+  // A floating count of tasks with no time yet. The inbox tray sits at the top
+  // and scrolls off, so this stays put and jumps you back to it.
+  function renderUnscheduledPill(inbox) {
+    const pending = inbox.filter((t) => !t.done).length;
+    const pill = $("unsched-pill");
+    pill.classList.toggle("hidden", pending === 0);
+    if (pending > 0) {
+      pill.innerHTML = `<span class="u-count">${pending}</span> to schedule`;
+    }
+  }
+
+  $("unsched-pill").addEventListener("click", () => {
+    const box = $("inbox");
+    box.scrollIntoView({ behavior: "smooth", block: "start" });
+    box.classList.remove("flash");
+    // reflow so the animation restarts if it is tapped again
+    void box.offsetWidth;
+    box.classList.add("flash");
+  });
 
   /* ---------- inbox tray ---------- */
 

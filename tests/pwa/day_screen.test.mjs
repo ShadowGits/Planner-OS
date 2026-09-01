@@ -369,3 +369,44 @@ test("a delete the server refuses puts the task back", async (t) => {
 
   assert.ok(rowFor(doc, "Gym"), "a refused delete must not lose the task");
 });
+
+/* ---------- unscheduled pill ---------- */
+
+test("the pill counts unscheduled tasks and jumps to the tray", async (t) => {
+  const { doc, window, close } = await boot({
+    items: [
+      task({ id: "a", title: "Timed", start_time: "09:00" }),
+      task({ id: "b", title: "Loose one", start_time: null }),
+      task({ id: "c", title: "Loose two", start_time: null }),
+    ],
+  });
+  t.after(close);
+
+  const pill = doc.getElementById("unsched-pill");
+  assert.equal(pill.classList.contains("hidden"), false, "the pill should show when tasks are unscheduled");
+  assert.equal(pill.querySelector(".u-count").textContent, "2");
+
+  let jumped = false;
+  doc.getElementById("inbox").scrollIntoView = () => { jumped = true; };
+  pill.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  assert.ok(jumped, "clicking the pill should scroll to the inbox");
+});
+
+test("the pill hides when everything has a time", async (t) => {
+  const { doc, close } = await boot({
+    items: [task({ id: "a", title: "Timed", start_time: "09:00" })],
+  });
+  t.after(close);
+  assert.ok(doc.getElementById("unsched-pill").classList.contains("hidden"));
+});
+
+test("a done unscheduled task is not counted", async (t) => {
+  const { doc, close } = await boot({
+    items: [
+      task({ id: "a", title: "Loose done", start_time: null, status: "done", done: true }),
+      task({ id: "b", title: "Loose open", start_time: null }),
+    ],
+  });
+  t.after(close);
+  assert.equal(doc.getElementById("unsched-pill").querySelector(".u-count").textContent, "1");
+});
