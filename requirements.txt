@@ -1,5 +1,5 @@
-mcp[cli]>=1.2.0
-fastmcp>=0.1.0
+mcp[cli]==1.29.0
+fastmcp<3  # v3 removed FastMCP(streamable_http_path=...); the mcp bundle above is the one we use
 google-api-python-client>=2.0.0
 google-auth-httplib2>=0.2.0
 google-auth-oauthlib>=1.0.0
