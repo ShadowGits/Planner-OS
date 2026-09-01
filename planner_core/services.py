@@ -66,15 +66,23 @@ def _local_today(timezone: str) -> date:
 
 
 def _is_overdue(task: Mapping[str, Any], today: date) -> bool:
-    """A task is overdue if its deadline has passed, or — when it has no
-    deadline — if it was planned for a past day and never finished. A due date
-    always governs when present so a task due today is never called overdue.
-    Shared by TaskService.today and MetricsService so both agree."""
+    """Whether an open task needs attention now rather than later.
+
+    Overdue when its deadline has passed; when it has no deadline, when the day
+    it was planned for has passed; and when it has neither a deadline nor a
+    planned day at all — a loose task with no date has been sitting unhandled,
+    and treating it as overdue is the only way it gets tracked instead of
+    silently floating. A date in the future is genuinely not-yet-due and is
+    never overdue. Shared by TaskService.today and MetricsService so both
+    agree."""
     due = _parse_date(task.get("due_date"))
     if due is not None:
         return due < today
     planned = _parse_date(task.get("scheduled_date"))
-    return planned is not None and planned < today
+    if planned is not None:
+        return planned < today
+    # No date of any kind: unplanned and unhandled, so it counts.
+    return True
 
 
 class ProjectService:
@@ -1399,19 +1407,34 @@ class MetricsService:
 
     def _overdue_tasks(self, today: date) -> list[dict[str, Any]]:
         """Overdue open tasks, oldest deadline first. Capped: the dashboard
-        shows this as a list, and nobody reads past a couple of hundred."""
+        shows this as a list, and nobody reads past a couple of hundred.
+
+        Three cases count: a past due date, no due date but a past planned day,
+        and no date of any kind (a loose task that has been sitting unhandled).
+        The dated-and-late ones are shown first, oldest at the top; the dateless
+        ones sit below them, since they have no deadline to be measured against.
+        """
         stamp = today.isoformat()
-        return self.repository.list_rows(
+        rows = self.repository.list_rows(
             "planner_tasks",
             columns="id,title,project_id,status,scheduled_date,due_date,priority",
             query_string=(
                 "parent_task_id=is.null"
                 f"&status=in.({self.OPEN_STATUS_LIST})"
-                f"&or=(due_date.lt.{stamp},and(due_date.is.null,scheduled_date.lt.{stamp}))"
-                "&order=due_date.asc.nullsfirst,scheduled_date.asc"
+                f"&or=(due_date.lt.{stamp},"
+                f"and(due_date.is.null,scheduled_date.lt.{stamp}),"
+                "and(due_date.is.null,scheduled_date.is.null))"
                 f"&limit={OVERDUE_LIST_LIMIT}"
             ),
         )
+
+        def sort_key(task: Mapping[str, Any]) -> tuple[int, str]:
+            date_str = task.get("due_date") or task.get("scheduled_date")
+            # dateless tasks have no deadline, so they sort after every dated
+            # one; among dated tasks the oldest comes first.
+            return (1, "") if not date_str else (0, str(date_str))
+
+        return sorted(rows, key=sort_key)
 
     def _project_metrics(
         self,

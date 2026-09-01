@@ -109,7 +109,12 @@ class MemoryGateway:
             if status in {"todo", "in_progress", "blocked"}:
                 bucket["open_count"] += 1
                 due, planned = row.get("due_date"), row.get("scheduled_date")
-                if (due and str(due) < today) or (not due and planned and str(planned) < today):
+                # Mirrors migration 0025: past due, past planned, or no date.
+                if (
+                    (due and str(due) < today)
+                    or (not due and planned and str(planned) < today)
+                    or (not due and not planned)
+                ):
                     bucket["overdue_count"] += 1
         return list(buckets.values())
 
@@ -1097,7 +1102,8 @@ def test_metrics_counts_match_between_the_rollup_and_a_full_scan(services):
     assert rolled_up[str(pid)]["done"] == 1
     assert rolled_up[str(pid)]["open"] == 2  # Open one + Stale
     assert rolled_up[str(pid)]["total"] == 3  # the skipped one does not count
-    assert rolled_up[str(pid)]["overdue"] == 1  # the 2020 one
+    # Both count: the 2020 one is past, and Open one has no date at all.
+    assert rolled_up[str(pid)]["overdue"] == 2
 
 
 def test_metrics_snapshot_totals_survive_the_rollup(services):
@@ -1111,10 +1117,56 @@ def test_metrics_snapshot_totals_survive_the_rollup(services):
     snapshot = metrics.snapshot()
 
     assert snapshot["totals"]["open_tasks"] == 2
+    # "Fine" is scheduled today, so it is not overdue; "Old and open" is.
     assert snapshot["totals"]["overdue_tasks"] == 1
     assert [t["title"] for t in snapshot["totals"]["overdue_list"]] == ["Old and open"]
     assert snapshot["totals"]["overdue_list_truncated"] is False
     assert snapshot["projects"][0]["total_tasks"] == 2
+
+
+def test_a_task_with_no_date_at_all_is_overdue(services):
+    """A loose task with neither a due date nor a planned day used to float:
+    never overdue, never surfaced. It now counts, so nothing goes missing."""
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Loose")["data"]["project"]
+    pid = project["id"]
+
+    tasks.create_task("No date at all", project_id=pid)  # no due, no scheduled
+
+    snapshot = metrics.snapshot()
+    assert snapshot["totals"]["overdue_tasks"] == 1
+    assert [t["title"] for t in snapshot["totals"]["overdue_list"]] == ["No date at all"]
+    assert metrics._task_counts(_today()) == metrics._task_counts_by_scan(_today())
+
+
+def test_a_future_task_is_never_overdue(services):
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Future")["data"]["project"]
+    pid = project["id"]
+
+    tasks.create_task("Next week", project_id=pid,
+                      scheduled_date=(_today() + timedelta(days=7)).isoformat())
+    tasks.create_task("Due next month", project_id=pid,
+                      due_date=(_today() + timedelta(days=30)).isoformat())
+
+    snapshot = metrics.snapshot()
+    assert snapshot["totals"]["overdue_tasks"] == 0
+    assert snapshot["totals"]["overdue_list"] == []
+
+
+def test_dateless_overdue_tasks_sort_below_the_dated_ones(services):
+    """A genuinely late task has a deadline to measure; a dateless one does
+    not, so the dated-and-late tasks are shown first with the oldest on top."""
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Mixed")["data"]["project"]
+    pid = project["id"]
+
+    tasks.create_task("Loose", project_id=pid)
+    tasks.create_task("Newer miss", project_id=pid, scheduled_date="2021-06-01")
+    tasks.create_task("Oldest miss", project_id=pid, due_date="2020-01-01")
+
+    titles = [t["title"] for t in metrics.snapshot()["totals"]["overdue_list"]]
+    assert titles == ["Oldest miss", "Newer miss", "Loose"]
 
 
 def test_overdue_list_is_capped_but_the_count_is_not(services):
