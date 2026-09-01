@@ -1051,6 +1051,24 @@
     { passive: false }
   );
 
+  // Safety valve. "dragging" being true is what blocks the page from
+  // scrolling, and it is reset inside a single row's pointerup handler. If
+  // that row is re-rendered out from under the lift, or iOS never delivers
+  // the pointerup after a system gesture, or the app is backgrounded
+  // mid-drag, the flag would stay stuck and the whole screen would freeze —
+  // no scroll, no swipe, nothing. So any pointer ending at all, and any
+  // return to the app, forces the drag state back to rest. It is a no-op
+  // during a normal drag, whose own handler has already cleared everything.
+  function releaseDrag() {
+    if (!dragging) return;
+    dragging = false;
+    document.querySelectorAll(".row.lifted").forEach((r) => r.classList.remove("lifted"));
+    document.querySelectorAll(".drag-badge").forEach((b) => b.remove());
+  }
+  window.addEventListener("pointerup", releaseDrag);
+  window.addEventListener("pointercancel", releaseDrag);
+  window.addEventListener("lostpointercapture", releaseDrag);
+
   // Swipe left/right anywhere on the day to step to the next/previous date.
   (function enableDateSwipe() {
     const surface = document.querySelector("main");
@@ -1109,6 +1127,9 @@
   let lastSeenToday = iso(getLogicalToday());
 
   document.addEventListener("visibilitychange", () => {
+    // A drag interrupted by backgrounding the app must never leave the screen
+    // frozen when you come back.
+    releaseDrag();
     if (document.hidden || !key()) return;
     const today = getLogicalToday();
     const rolledOver = iso(today) !== lastSeenToday;

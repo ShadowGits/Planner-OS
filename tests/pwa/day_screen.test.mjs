@@ -410,3 +410,49 @@ test("a done unscheduled task is not counted", async (t) => {
   t.after(close);
   assert.equal(doc.getElementById("unsched-pill").querySelector(".u-count").textContent, "1");
 });
+
+/* ---------- freeze safety valve ---------- */
+
+async function liftRow(window, row) {
+  const at = (y) => ({ bubbles: true, pointerId: 1, clientX: 20, clientY: y });
+  row.dispatchEvent(new window.PointerEvent("pointerdown", at(100)));
+  await new Promise((r) => window.setTimeout(r, 300)); // press-and-hold
+  row.dispatchEvent(new window.PointerEvent("pointermove", at(160)));
+}
+
+test("a pointer end that misses the row does not freeze the screen", async (t) => {
+  // The freeze: "dragging" blocks all scrolling and is cleared only in the
+  // row's own pointerup. If the row is re-rendered away or iOS routes the
+  // pointerup elsewhere, the flag stuck on and the whole page locked. A
+  // window-level release valve now clears it however the drag ends.
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00", estimated_minutes: 60 })],
+  });
+  t.after(close);
+
+  const row = rowFor(doc, "Gym");
+  await liftRow(window, row);
+  assert.ok(doc.querySelector(".row.lifted"), "the row should be lifted for drag");
+  assert.ok(doc.querySelector(".drag-badge"), "the drag badge should be showing");
+
+  // The pointer ends anywhere but on the row.
+  window.dispatchEvent(new window.PointerEvent("pointercancel", { pointerId: 1 }));
+
+  assert.equal(doc.querySelector(".row.lifted"), null, "the lift was never released — screen would stay frozen");
+  assert.equal(doc.querySelector(".drag-badge"), null, "the drag badge was left behind");
+});
+
+test("returning to the app clears a drag left mid-lift", async (t) => {
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00", estimated_minutes: 60 })],
+  });
+  t.after(close);
+
+  await liftRow(window, rowFor(doc, "Gym"));
+  assert.ok(doc.querySelector(".row.lifted"));
+
+  doc.dispatchEvent(new window.Event("visibilitychange"));
+  await settle(window);
+
+  assert.equal(doc.querySelector(".row.lifted"), null, "backgrounding mid-drag left the screen frozen");
+});
