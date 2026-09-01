@@ -1124,6 +1124,23 @@ def test_metrics_snapshot_totals_survive_the_rollup(services):
     assert snapshot["projects"][0]["total_tasks"] == 2
 
 
+def test_dateless_overdue_tasks_survive_a_full_dated_backlog(services):
+    """The whole point of counting dateless tasks is not to lose them. Even
+    with more dated-overdue tasks than the list can hold, the loose ones must
+    still appear — a server-side limit applied before sorting used to drop
+    them."""
+    tasks, projects, metrics, _ = services
+    project = projects.create_project("Backlog")["data"]["project"]
+    pid = project["id"]
+
+    for i in range(OVERDUE_LIST_LIMIT + 5):
+        tasks.create_task(f"Old {i}", project_id=pid, scheduled_date="2020-01-01")
+    tasks.create_task("Loose one", project_id=pid)  # no date at all
+
+    titles = [t["title"] for t in metrics._overdue_tasks(_today())]
+    assert "Loose one" in titles, "a dateless task was lost behind the dated backlog"
+
+
 def test_a_task_with_no_date_at_all_is_overdue(services):
     """A loose task with neither a due date nor a planned day used to float:
     never overdue, never surfaced. It now counts, so nothing goes missing."""

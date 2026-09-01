@@ -1415,26 +1415,40 @@ class MetricsService:
         ones sit below them, since they have no deadline to be measured against.
         """
         stamp = today.isoformat()
-        rows = self.repository.list_rows(
+        cols = "id,title,project_id,status,scheduled_date,due_date,priority"
+
+        # Dated and late: a past due date, or a past planned day with no due
+        # date. Ordered so the server keeps the oldest when it has to truncate,
+        # rather than an arbitrary slice.
+        dated = self.repository.list_rows(
             "planner_tasks",
-            columns="id,title,project_id,status,scheduled_date,due_date,priority",
+            columns=cols,
             query_string=(
                 "parent_task_id=is.null"
                 f"&status=in.({self.OPEN_STATUS_LIST})"
-                f"&or=(due_date.lt.{stamp},"
-                f"and(due_date.is.null,scheduled_date.lt.{stamp}),"
-                "and(due_date.is.null,scheduled_date.is.null))"
+                f"&or=(due_date.lt.{stamp},and(due_date.is.null,scheduled_date.lt.{stamp}))"
+                "&order=due_date.asc.nullslast,scheduled_date.asc.nullslast"
                 f"&limit={OVERDUE_LIST_LIMIT}"
             ),
         )
 
-        def sort_key(task: Mapping[str, Any]) -> tuple[int, str]:
-            date_str = task.get("due_date") or task.get("scheduled_date")
-            # dateless tasks have no deadline, so they sort after every dated
-            # one; among dated tasks the oldest comes first.
-            return (1, "") if not date_str else (0, str(date_str))
+        # Dateless loose tasks are the whole reason for this: a task with no
+        # date has been sitting unhandled and must not be lost. They are few,
+        # so they get their own fetch and are always included — never at the
+        # mercy of the limit above — and shown after the dated ones, since they
+        # have no deadline to be ranked by.
+        dateless = self.repository.list_rows(
+            "planner_tasks",
+            columns=cols,
+            query_string=(
+                "parent_task_id=is.null"
+                f"&status=in.({self.OPEN_STATUS_LIST})"
+                "&due_date=is.null&scheduled_date=is.null"
+                f"&limit={OVERDUE_LIST_LIMIT}"
+            ),
+        )
 
-        return sorted(rows, key=sort_key)
+        return dated + dateless
 
     def _project_metrics(
         self,
