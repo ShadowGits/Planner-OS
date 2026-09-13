@@ -584,6 +584,26 @@ def test_event_reminders_fire_at_30_and_5_minutes_once_each(services) -> None:
     assert reminders._event_reminders(at(13, 0), set()) == []
 
 
+def test_event_reminder_fires_once_across_cron_ticks(services) -> None:
+    """The real dedup path: due_reminders reads the reminder log to decide what
+    is already sent. Recording a fire must stop the next tick re-sending it —
+    the bug was that the log write was rejected, so it fired every tick."""
+    tasks, _, _, reminders = services
+    local = _today()
+    tasks.create_task("Dentist", scheduled_date=local.isoformat(), start_time="14:25")
+    # 14:00 is outside the morning/evening digest windows, so only the event
+    # reminder is in play; the task is 25 minutes out -> the 30-minute one.
+    now = datetime(local.year, local.month, local.day, 14, 0, tzinfo=ZoneInfo(TZ))
+
+    first = [r for r in reminders.due_reminders(now) if r["kind"].startswith("event30:")]
+    assert len(first) == 1, "the 30-minute reminder should fire once"
+
+    # Record it exactly as the cron does, then run again: it must not repeat.
+    reminders.record_sent(first[0]["kind"], "push", {"message": first[0]["message"]})
+    again = [r for r in reminders.due_reminders(now) if r["kind"].startswith("event30:")]
+    assert again == [], "the reminder re-fired — dedup is broken"
+
+
 def test_event_reminders_skip_done_and_untimed(services) -> None:
     tasks, _, _, reminders = services
     local = _today()
