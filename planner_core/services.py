@@ -831,6 +831,32 @@ class TaskService:
             if row.get("parent_task_id")
         }
 
+    def timed_items(self, on_date: date) -> list[dict[str, Any]]:
+        """Just the timed, open items on a day — for the reminder cron.
+
+        Deliberately narrow: only id, title and start_time are read, not the
+        whole task row with its notes and metadata blob, because this runs
+        every few minutes and only needs enough to word a reminder. Split
+        umbrellas are dropped in favour of their slots, and habit occurrences
+        are folded in, so it covers everything on the timeline.
+        """
+        stamp = on_date.isoformat()
+        rows = self.repository.list_rows(
+            "planner_tasks",
+            query_string=f"scheduled_date=eq.{stamp}&status=in.(todo,in_progress,blocked)",
+            columns="id,title,start_time,parent_task_id",
+        )
+        umbrellas = self._umbrella_ids(rows)
+        items: list[dict[str, Any]] = [
+            {"id": str(r["id"]), "title": r.get("title"), "start_time": r.get("start_time"), "done": False}
+            for r in rows
+            if r.get("start_time") and str(r["id"]) not in umbrellas
+        ]
+        for occ in self.habits.occurrences(on_date, on_date):
+            if occ.get("start_time") and not occ.get("done"):
+                items.append(occ)
+        return items
+
     def day_view(
         self, on_date: str | None = None, habit_items: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:
@@ -1657,7 +1683,7 @@ class ReminderService:
         now_min = current.hour * 60 + current.minute
         out: list[dict[str, Any]] = []
         try:
-            items = self.tasks.day_view(today.isoformat())["data"]["items"]
+            items = self.tasks.timed_items(today)
         except Exception:
             return out
         for item in items:

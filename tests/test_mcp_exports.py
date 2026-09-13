@@ -29,6 +29,7 @@ class TestMCPExports(unittest.TestCase):
             "due_reminders", # mapped to core_today
             "today_checklist", # mapped to core_today
             "week_view", # not an MCP tool
+            "timed_items", # reminder cron only: lean read of today's timed items
             "project_tree", # not an MCP tool
             "snapshot", # mapped to core_metrics
             "flat_snapshot",
