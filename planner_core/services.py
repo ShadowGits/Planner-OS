@@ -421,6 +421,62 @@ class TaskService:
         created = self.repository.insert_rows("planner_tasks", payloads)
         return _envelope(True, f"Created {len(created)} tasks", {"tasks": created})
 
+    def import_ics(
+        self,
+        ics_text: str,
+        *,
+        project_id: str | None = None,
+        window_days: int = 30,
+        today: date | None = None,
+    ) -> dict[str, Any]:
+        """Turn the one-off events of a public calendar feed into tasks.
+
+        One-directional: events become tasks, keyed by the calendar event's UID
+        so re-running never creates a duplicate. Recurring events are left out —
+        they belong in the habit engine. Events outside the window (today to
+        window_days ahead) are ignored so a long feed does not flood the list.
+        """
+        from planner_integrations.ics import parse_ics, occurrence_in_window
+
+        start = today or _local_today(self.timezone)
+        end = start + timedelta(days=window_days)
+
+        # Every UID already imported, so a re-run only adds what is new. Read
+        # just the metadata column and match in Python — this runs on an
+        # infrequent cron, and it avoids depending on a JSON-path filter.
+        seen: set[str] = set()
+        for row in self.repository.list_rows("planner_tasks", columns="metadata"):
+            uid = (row.get("metadata") or {}).get("apple_uid")
+            if uid:
+                seen.add(str(uid))
+
+        created = 0
+        skipped = 0
+        for event in parse_ics(ics_text):
+            if event.uid in seen:
+                skipped += 1
+                continue
+            placed = occurrence_in_window(event, start, end, self.timezone)
+            if placed is None:
+                continue
+            scheduled_date, start_time, minutes = placed
+            self.create_task(
+                event.summary or "(no title)",
+                project_id=project_id,
+                scheduled_date=scheduled_date.isoformat(),
+                start_time=start_time,
+                estimated_minutes=minutes,
+                metadata={"apple_uid": event.uid, "source": "apple_calendar"},
+            )
+            seen.add(event.uid)
+            created += 1
+
+        return _envelope(
+            True,
+            f"{created} imported, {skipped} already there",
+            {"created": created, "skipped": skipped},
+        )
+
     def _settle_group(self, task: Mapping[str, Any], *, done: bool) -> None:
         """Split slots and the row that stands for them in the counts stay in
         agreement: finishing every slot finishes the task, reopening any slot

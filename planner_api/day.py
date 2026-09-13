@@ -426,6 +426,83 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             return _envelope(True, result["message"], result["data"])
         except PlannerCoreError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    # ── Web push subscriptions (PWA notifications) ────────────────────────
+    # The PWA authenticates with the app key everywhere, so these live here
+    # rather than on the v2 endpoints that expect a login. The browser gets the
+    # VAPID public key from the unauthenticated GET /v2/push/vapid-key.
+
+    @api.post("/v2/day/push/subscribe")
+    def day_push_subscribe(body: dict, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        endpoint = body.get("endpoint")
+        keys = body.get("keys") or {}
+        p256dh, auth = keys.get("p256dh"), keys.get("auth")
+        if not endpoint or not p256dh or not auth:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "PUSH_INVALID", "message": "Missing endpoint or keys"},
+            )
+        core = _core()
+        user_id = _configured_user_id()
+        # Upsert on endpoint: a browser re-subscribing must not pile up rows.
+        try:
+            existing = cloud.service_client.select(
+                "push_subscriptions",
+                filters={"user_id": str(user_id), "endpoint": endpoint},
+            )
+            for row in existing or []:
+                cloud.service_client.delete("push_subscriptions", filters={"id": row["id"]})
+        except Exception:
+            pass
+        cloud.service_client.insert(
+            "push_subscriptions",
+            {
+                "user_id": str(user_id),
+                "workspace_id": str(core.repository.workspace_id),
+                "endpoint": endpoint,
+                "p256dh": p256dh,
+                "auth": auth,
+                "device_label": body.get("device_label", ""),
+            },
+        )
+        return _envelope(True, "Notifications on")
+
+    @api.post("/v2/day/push/unsubscribe")
+    def day_push_unsubscribe(body: dict, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        endpoint = body.get("endpoint")
+        if not endpoint:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "PUSH_INVALID", "message": "Missing endpoint"},
+            )
+        user_id = _configured_user_id()
+        try:
+            cloud.service_client.delete(
+                "push_subscriptions",
+                filters={"user_id": str(user_id), "endpoint": endpoint},
+            )
+        except Exception:
+            pass
+        return _envelope(True, "Notifications off")
+
+    @api.post("/v2/day/push/test")
+    def day_push_test(x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        from planner_core.push import send_push_to_all
+
+        user_id = _configured_user_id()
+        core = _core()
+        result = send_push_to_all(
+            cloud.service_client,
+            str(user_id),
+            str(core.repository.workspace_id),
+            "Planner OS",
+            "Notifications are working ✓",
+            url="/app/",
+        )
+        return _envelope(True, f"Sent to {result.get('sent', 0)} device(s)", result)
+
     class RevalidatingStaticFiles(StaticFiles):
         """Serve the PWA with no-cache.
 

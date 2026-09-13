@@ -430,3 +430,13 @@ body {
    Slightly faded, and it ignores taps until it is real. */
 .row.pending { opacity: 0.55; }
 .row.pending .ring { pointer-events: none; }
+
+/* Notification bell in the header. Muted until on, then it fills in. */
+.top-right { display: flex; align-items: center; gap: 10px; }
+.notif-btn {
+  border: none; background: none; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 2px; opacity: 0.4;
+  filter: grayscale(1);
+}
+.notif-btn.on { opacity: 1; filter: none; }
+.notif-btn:active { transform: scale(0.9); }

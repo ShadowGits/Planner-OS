@@ -1032,6 +1032,99 @@
 
   if ("serviceWorker" in navigator) {
     let reloadedForUpdate = false;
+  /* ---------- push notifications ---------- */
+
+  // iOS only allows web push for an installed (home-screen) PWA, and only over
+  // a service worker with a push subscription. The bell shows when the browser
+  // can do it at all; tapping asks permission, subscribes, and registers the
+  // subscription with the server. Tapping again turns it off.
+
+  function pushSupported() {
+    return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  async function refreshNotifButton() {
+    const btn = $("notif-btn");
+    if (!btn) return;
+    if (!pushSupported()) { btn.classList.add("hidden"); return; }
+    btn.classList.remove("hidden");
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      const on = !!sub && Notification.permission === "granted";
+      btn.classList.toggle("on", on);
+      btn.title = on ? "Notifications on — tap to turn off" : "Turn on notifications";
+    } catch (_) {}
+  }
+
+  async function enableNotifications() {
+    if (!pushSupported()) { toast("Notifications aren't supported here"); return; }
+    // On iOS this must be the installed app, not a Safari tab.
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("Notifications were blocked"); return; }
+    try {
+      const res = await api("GET", "/v2/push/vapid-key");
+      const publicKey = res && res.data && res.data.public_key;
+      if (!publicKey) { toast("Server has no notification key set"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      const json = sub.toJSON();
+      await api("POST", "/v2/day/push/subscribe", {
+        endpoint: json.endpoint,
+        keys: json.keys,
+        device_label: navigator.userAgent.slice(0, 80),
+      });
+      toast("Notifications on");
+      refreshNotifButton();
+      // Immediate proof it works end to end, rather than waiting for a reminder.
+      api("POST", "/v2/day/push/test").catch(() => {});
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  async function disableNotifications() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await api("POST", "/v2/day/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
+        await sub.unsubscribe().catch(() => {});
+      }
+      toast("Notifications off");
+      refreshNotifButton();
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  {
+    const btn = $("notif-btn");
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        const reg = await navigator.serviceWorker.ready.catch(() => null);
+        const sub = reg && (await reg.pushManager.getSubscription().catch(() => null));
+        if (sub && Notification.permission === "granted") disableNotifications();
+        else enableNotifications();
+      });
+    }
+    if (pushSupported()) {
+      navigator.serviceWorker.ready.then(refreshNotifButton).catch(() => {});
+    }
+  }
+
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (reloadedForUpdate) return;
       reloadedForUpdate = true;

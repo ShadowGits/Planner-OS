@@ -78,3 +78,57 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
         tasks = TaskService(PlannerCoreRepository(cloud.service_client, user_id, workspace.id), timezone)
         result = tasks.sync_calendar(client, days)
         return _envelope(True, result["message"], result["data"])
+
+    @api.post("/v2/calendar/import-apple")
+    def import_apple_calendar(
+        days: int = Query(default=30, ge=1, le=90),
+        x_cron_key: str | None = Header(default=None),
+        x_app_key: str | None = Header(default=None),
+    ):
+        # Runnable by the cron and by hand from the app, so accept either key.
+        pwa_key = os.environ.get("PWA_ACCESS_KEY", "")
+        cron_ok = x_cron_key and os.environ.get("CRON_SECRET", "") and secrets.compare_digest(
+            x_cron_key, os.environ["CRON_SECRET"]
+        )
+        app_ok = x_app_key and pwa_key and secrets.compare_digest(x_app_key, pwa_key)
+        if not (cron_ok or app_ok):
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "UNAUTHORIZED", "message": "X-Cron-Key or X-App-Key required"},
+            )
+
+        ics_url = os.environ.get("APPLE_ICS_URL", "")
+        if not ics_url:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "APPLE_ICS_NOT_CONFIGURED",
+                        "message": "Set APPLE_ICS_URL to your published iCloud calendar link"},
+            )
+
+        user_id = _configured_user_id()
+        workspace = SupabaseWorkspaceRepository(cloud.service_client).get_active(user_id)
+        if workspace is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "WORKSPACE_NOT_FOUND", "message": "No active Planner OS workspace"},
+            )
+
+        # webcal:// is just https for fetching; normalise it.
+        url = ics_url.strip()
+        if url.startswith("webcal://"):
+            url = "https://" + url[len("webcal://"):]
+
+        import urllib.request
+        try:
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                ics_text = resp.read().decode("utf-8", errors="replace")
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "APPLE_ICS_FETCH_FAILED", "message": str(error)},
+            ) from error
+
+        repository = PlannerCoreRepository(cloud.service_client, user_id, workspace.id)
+        tasks = TaskService(repository, workspace.timezone)
+        result = tasks.import_ics(ics_text, window_days=days)
+        return _envelope(True, result["message"], result["data"])

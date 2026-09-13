@@ -456,3 +456,16 @@ test("returning to the app clears a drag left mid-lift", async (t) => {
 
   assert.equal(doc.querySelector(".row.lifted"), null, "backgrounding mid-drag left the screen frozen");
 });
+
+/* ---------- notifications ---------- */
+
+test("the notification bell stays hidden where push is unsupported", async (t) => {
+  // jsdom has no PushManager, so this stands in for a browser that cannot do
+  // web push (e.g. an iOS Safari tab). The bell must hide, not error.
+  const { doc, errors, close } = await boot({ items: [] });
+  t.after(close);
+  assert.deepEqual(errors, [], "the app errored while wiring notifications");
+  const bell = doc.getElementById("notif-btn");
+  assert.ok(bell, "the bell element should exist in the header");
+  assert.ok(bell.classList.contains("hidden"), "the bell must hide when push is unsupported");
+});

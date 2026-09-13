@@ -1,7 +1,7 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v25";
+const CACHE = "day-planner-v26";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -32,5 +32,41 @@ self.addEventListener("fetch", (event) => {
         return res;
       })
       .catch(() => caches.match(event.request))
+  );
+});
+
+/* ---------- push notifications ---------- */
+
+// A reminder arrives as a push message. Show it as a system notification.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (_) {
+    data = { title: "Planner OS", body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "Planner OS";
+  const options = {
+    body: data.body || "",
+    icon: "icon-180.png",
+    badge: "icon-180.png",
+    tag: data.tag || undefined,        // same tag replaces, never stacks duplicates
+    data: { url: data.url || "/app/" },
+    requireInteraction: false,
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Tapping a notification focuses an open app window, or opens one.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "/app/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url.includes("/app") && "focus" in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
   );
 });
