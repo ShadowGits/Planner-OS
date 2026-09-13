@@ -1642,7 +1642,58 @@ class ReminderService:
             message = self._deadline_alert()
             if message:
                 due.append({"kind": "deadline_alert", "message": message})
+        due.extend(self._event_reminders(current, sent_today))
         return due
+
+    # Two reminders per timed item today: one 30 minutes ahead (🟡) and one at
+    # 5 minutes to go (🟢). Each fires once — the dedup key is the item and the
+    # kind for the day. The cron must run often enough to catch the windows;
+    # every five minutes keeps the 5-minute one on time.
+    LEAD_YELLOW = 30
+    LEAD_GREEN = 5
+
+    def _event_reminders(self, current: datetime, sent_today: set[str]) -> list[dict[str, Any]]:
+        today = current.date()
+        now_min = current.hour * 60 + current.minute
+        out: list[dict[str, Any]] = []
+        try:
+            items = self.tasks.day_view(today.isoformat())["data"]["items"]
+        except Exception:
+            return out
+        for item in items:
+            if item.get("done"):
+                continue
+            start = item.get("start_time")
+            if not start:
+                continue
+            hh, mm = (int(x) for x in str(start).split(":")[:2])
+            if hh >= 24:      # a small-hours spillover slot; skip the edge case
+                continue
+            until = hh * 60 + mm - now_min
+            clock = f"{hh:02d}:{mm:02d}"
+            title = item.get("title", "Task")
+            item_id = str(item.get("id"))
+            tag = f"event-{item_id}"
+
+            yellow = f"event30:{item_id}"
+            if self.LEAD_GREEN < until <= self.LEAD_YELLOW and yellow not in sent_today:
+                out.append({
+                    "kind": yellow,
+                    "title": "🟡 In 30 minutes",
+                    "message": f"{title} at {clock}",
+                    "url": "/app/",
+                    "tag": tag,
+                })
+            green = f"event5:{item_id}"
+            if -self.LEAD_GREEN <= until <= self.LEAD_GREEN and green not in sent_today:
+                out.append({
+                    "kind": green,
+                    "title": "🟢 Starting now",
+                    "message": f"{title} at {clock}",
+                    "url": "/app/",
+                    "tag": tag,
+                })
+        return out
 
     def record_sent(self, kind: str, channel: str, payload: dict[str, Any]) -> None:
         self.repository.insert_row(

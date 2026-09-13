@@ -556,6 +556,45 @@ def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
     assert "Write SOP" in nudge[0]["message"]
 
 
+def test_event_reminders_fire_at_30_and_5_minutes_once_each(services) -> None:
+    tasks, _, _, reminders = services
+    local = _today()
+    tasks.create_task("Dentist", scheduled_date=local.isoformat(), start_time="15:00")
+
+    def at(hour, minute):
+        return datetime(local.year, local.month, local.day, hour, minute, tzinfo=ZoneInfo(TZ))
+
+    # 14:30 — exactly 30 minutes ahead → the yellow reminder, not the green one.
+    due = reminders._event_reminders(at(14, 30), set())
+    assert [d["kind"].split(":")[0] for d in due] == ["event30"]
+    assert due[0]["title"] == "🟡 In 30 minutes"
+    assert "Dentist at 15:00" in due[0]["message"]
+
+    # 14:57 — inside 5 minutes → the green reminder.
+    green = reminders._event_reminders(at(14, 57), set())
+    assert [d["kind"].split(":")[0] for d in green] == ["event5"]
+    assert green[0]["title"] == "🟢 Starting now"
+
+    # Already recorded for today → never fires twice.
+    sent = {due[0]["kind"], green[0]["kind"]}
+    assert reminders._event_reminders(at(14, 30), sent) == []
+    assert reminders._event_reminders(at(14, 57), sent) == []
+
+    # Well before (an hour out) → nothing yet.
+    assert reminders._event_reminders(at(13, 0), set()) == []
+
+
+def test_event_reminders_skip_done_and_untimed(services) -> None:
+    tasks, _, _, reminders = services
+    local = _today()
+    done = tasks.create_task("Gym", scheduled_date=local.isoformat(), start_time="15:00")["data"]["task"]
+    tasks.complete_task(done["id"])
+    tasks.create_task("Someday", scheduled_date=local.isoformat())  # no start_time
+
+    when = datetime(local.year, local.month, local.day, 14, 30, tzinfo=ZoneInfo(TZ))
+    assert reminders._event_reminders(when, set()) == []
+
+
 def test_evening_nudge_skipped_after_a_completion(services) -> None:
     tasks, _, _, reminders = services
     created = tasks.create_task("Anything", scheduled_date=_today().isoformat())

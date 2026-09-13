@@ -149,7 +149,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         sent, failed = [], []
         for reminder in due:
             # Send via push notifications (macOS/iOS/iPadOS popups)
-            push_title = {
+            push_title = reminder.get("title") or {
                 "morning_brief": "☀️ Morning Brief",
                 "evening_nudge": "🌙 Evening Nudge",
                 "deadline_alert": "⚠️ Deadline Alert",
@@ -161,7 +161,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                     str(core.repository.workspace_id),
                     push_title,
                     reminder["message"],
-                    url="/",
+                    url=reminder.get("url", "/"),
                 )
                 if push_result["sent"] > 0:
                     core.reminders.record_sent(reminder["kind"], "push", {"message": reminder["message"], **push_result})
