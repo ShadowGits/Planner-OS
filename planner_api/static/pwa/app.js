@@ -1028,10 +1028,6 @@
     if (String(e.message) !== "unauthorized") toast(e.message || "Something failed");
   }
 
-  /* ---------- boot ---------- */
-
-  if ("serviceWorker" in navigator) {
-    let reloadedForUpdate = false;
   /* ---------- push notifications ---------- */
 
   // iOS only allows web push for an installed (home-screen) PWA, and only over
@@ -1055,8 +1051,14 @@
   async function refreshNotifButton() {
     const btn = $("notif-btn");
     if (!btn) return;
-    if (!pushSupported()) { btn.classList.add("hidden"); return; }
+    // Always visible so it can be found and can explain itself; only "on" when
+    // a subscription actually exists.
     btn.classList.remove("hidden");
+    if (!pushSupported()) {
+      btn.classList.remove("on");
+      btn.title = "Notifications — add to Home Screen first";
+      return;
+    }
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
@@ -1067,7 +1069,10 @@
   }
 
   async function enableNotifications() {
-    if (!pushSupported()) { toast("Notifications aren't supported here"); return; }
+    if (!pushSupported()) {
+      toast("On iPhone: Share → Add to Home Screen, open that app, then tap the bell");
+      return;
+    }
     // On iOS this must be the installed app, not a Safari tab.
     const perm = await Notification.requestPermission();
     if (perm !== "granted") { toast("Notifications were blocked"); return; }
@@ -1120,10 +1125,19 @@
         else enableNotifications();
       });
     }
+    // Reveal it right away; refresh its on/off state once the worker is ready.
+    if (btn) btn.classList.remove("hidden");
     if (pushSupported()) {
       navigator.serviceWorker.ready.then(refreshNotifButton).catch(() => {});
+    } else if (btn) {
+      btn.title = "Notifications — add to Home Screen first";
     }
   }
+
+  /* ---------- boot ---------- */
+
+  if ("serviceWorker" in navigator) {
+    let reloadedForUpdate = false;
 
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (reloadedForUpdate) return;

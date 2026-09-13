@@ -44,6 +44,21 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
                 detail={"code": "CRON_KEY_INVALID", "message": "X-Cron-Key header is missing or wrong"},
             )
 
+    def _run_apple_import(tasks: TaskService, days: int) -> dict[str, Any] | None:
+        """Fetch APPLE_ICS_URL and import its events, or None if not set.
+
+        Shared by the standalone endpoint and the calendar sync, so one sync
+        run pulls Google out and Apple in together.
+        """
+        ics_url = os.environ.get("APPLE_ICS_URL", "").strip()
+        if not ics_url:
+            return None
+        url = "https://" + ics_url[len("webcal://"):] if ics_url.startswith("webcal://") else ics_url
+        import urllib.request
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            ics_text = resp.read().decode("utf-8", errors="replace")
+        return tasks.import_ics(ics_text, window_days=days)["data"]
+
     @api.post("/v2/calendar/sync")
     def sync_calendar(
         days: int = Query(default=7, ge=1, le=31),
@@ -77,7 +92,19 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
 
         tasks = TaskService(PlannerCoreRepository(cloud.service_client, user_id, workspace.id), timezone)
         result = tasks.sync_calendar(client, days)
-        return _envelope(True, result["message"], result["data"])
+        data = dict(result["data"])
+
+        # Same run also pulls Apple calendar events in. Never let an Apple
+        # problem fail the Google sync — record it and carry on.
+        try:
+            imported = _run_apple_import(tasks, 30)
+            if imported is not None:
+                data["apple_imported"] = imported.get("created", 0)
+                data["apple_skipped"] = imported.get("skipped", 0)
+        except Exception as error:
+            data["apple_error"] = str(error)
+
+        return _envelope(True, result["message"], data)
 
     @api.post("/v2/calendar/import-apple")
     def import_apple_calendar(
@@ -113,22 +140,15 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
                 detail={"code": "WORKSPACE_NOT_FOUND", "message": "No active Planner OS workspace"},
             )
 
-        # webcal:// is just https for fetching; normalise it.
-        url = ics_url.strip()
-        if url.startswith("webcal://"):
-            url = "https://" + url[len("webcal://"):]
-
-        import urllib.request
+        repository = PlannerCoreRepository(cloud.service_client, user_id, workspace.id)
+        tasks = TaskService(repository, workspace.timezone)
         try:
-            with urllib.request.urlopen(url, timeout=30) as resp:
-                ics_text = resp.read().decode("utf-8", errors="replace")
+            imported = _run_apple_import(tasks, days)
         except Exception as error:
             raise HTTPException(
                 status_code=502,
                 detail={"code": "APPLE_ICS_FETCH_FAILED", "message": str(error)},
             ) from error
-
-        repository = PlannerCoreRepository(cloud.service_client, user_id, workspace.id)
-        tasks = TaskService(repository, workspace.timezone)
-        result = tasks.import_ics(ics_text, window_days=days)
-        return _envelope(True, result["message"], result["data"])
+        created = imported.get("created", 0)
+        skipped = imported.get("skipped", 0)
+        return _envelope(True, f"{created} imported, {skipped} already there", imported)
