@@ -209,7 +209,9 @@ class ProjectService:
 
     def list_project_widgets(self, project_id: str) -> dict[str, Any]:
         widgets = self.repository.list_rows("project_widgets", {"project_id": project_id})
-        widgets_sorted = sorted(widgets, key=lambda w: w.get("order_index", 0))
+        # A widget that has never been reordered carries a NULL order_index,
+        # which cannot be compared against an int — fall back to 0 for those.
+        widgets_sorted = sorted(widgets, key=lambda w: w.get("order_index") or 0)
         return _envelope(True, f"Fetched {len(widgets_sorted)} widgets", {"widgets": widgets_sorted})
 
     def add_project_widget(self, project_id: str, widget_type: str, title: str | None = None, file_id: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
