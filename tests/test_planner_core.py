@@ -1563,3 +1563,27 @@ def test_a_habit_item_id_survives_a_round_trip(habits):
 
     assert parse_habit_item_id(item["id"]) == (habit["id"], date(2026, 9, 1))
     assert parse_habit_item_id("not-a-habit-id") is None
+
+
+def test_the_small_hours_of_the_next_day_still_belong_to_todays_view(services):
+    """A day runs past midnight, so something rescheduled to 4am tomorrow has
+    to stay on tonight's screen. 04:00 exactly used to fall out: the cutoff was
+    a strict `< 04:00`, so dragging (which lands earlier) worked while editing
+    the date to 4am made the task vanish from today.
+    """
+    tasks, _, _, _ = services
+    tasks.create_task("Late night edit", scheduled_date="2026-09-15", start_time="04:00:00")
+    tasks.create_task("Deep night", scheduled_date="2026-09-15", start_time="01:30:00")
+    tasks.create_task("Properly tomorrow", scheduled_date="2026-09-15", start_time="09:00:00")
+
+    items = tasks.day_view("2026-09-14")["data"]["items"]
+    by_title = {i["title"]: i for i in items}
+
+    assert "Late night edit" in by_title
+    assert "Deep night" in by_title
+    # Morning belongs to the next day alone, not to both.
+    assert "Properly tomorrow" not in by_title
+    # Spillover reads as hour + 24 so it sorts after the evening, not before
+    # breakfast.
+    assert by_title["Late night edit"]["start_time"] == "28:00:00"
+    assert by_title["Deep night"]["start_time"] == "25:30:00"

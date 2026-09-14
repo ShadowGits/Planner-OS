@@ -27,6 +27,12 @@ OVERDUE_LIST_LIMIT = 200
 # How far a milestone's progress may lag the share of its schedule already
 # spent before it is called out. Drift is elapsed minus progress, so at
 # half-time with a quarter done the drift is 0.25 and the milestone is red.
+# A day's view runs past midnight into the small hours, so something planned
+# for 4am on the 15th still belongs on the 14th's screen. Anything earlier than
+# this on the next calendar day is shown as spillover, rendered as hour + 24
+# (4am becomes 28:00). Used by both the query and the filter below it — the two
+# must agree, or a task lands in one and not the other.
+SPILLOVER_CUTOFF = "06:00:00"
 MILESTONE_DRIFT_AMBER = 0.10
 MILESTONE_DRIFT_RED = 0.25
 # task_completions.source carries a check constraint in the database listing
@@ -882,7 +888,10 @@ class TaskService:
         target_str = target.isoformat()
         next_day = target + timedelta(days=1)
         next_day_str = next_day.isoformat()
-        qs = f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},and(scheduled_date.eq.{next_day_str},start_time.lt.04:00:00))"
+        qs = (
+            f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},"
+            f"and(scheduled_date.eq.{next_day_str},start_time.lt.{SPILLOVER_CUTOFF}))"
+        )
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
         umbrellas = self._umbrella_ids(all_rows)
 
@@ -895,7 +904,11 @@ class TaskService:
             is_next_day_spillover = False
             if planned:
                 if planned != target:
-                    if planned == next_day and row.get("start_time") and str(row.get("start_time")) < "04:00:00":
+                    if (
+                        planned == next_day
+                        and row.get("start_time")
+                        and str(row.get("start_time")) < SPILLOVER_CUTOFF
+                    ):
                         is_next_day_spillover = True
                     else:
                         continue
@@ -905,9 +918,12 @@ class TaskService:
                     
             start_time_val = row.get("start_time")
             if is_next_day_spillover and start_time_val:
-                # e.g., "01:30:00" -> "25:30:00"
-                h, m, s = str(start_time_val).split(":")
-                start_time_val = f"{int(h) + 24:02d}:{m}:{s}"
+                # e.g., "01:30:00" -> "25:30:00". Seconds are optional: the
+                # column carries them, but a caller-supplied "01:30" must not
+                # blow up the whole day view.
+                h, m, *rest = str(start_time_val).split(":")
+                seconds = rest[0] if rest else "00"
+                start_time_val = f"{int(h) + 24:02d}:{m}:{seconds}"
 
             items.append(
                 {
