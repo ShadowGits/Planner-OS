@@ -848,6 +848,57 @@ class TaskService:
             if row.get("parent_task_id")
         }
 
+    def _slot_context(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """For every slot on screen, what it is a part of and which part it is.
+
+        A slot's card says only "Calculus refresh — Wk03 Mon"; on its own that
+        gives no clue which task it belongs to. This resolves the parent's name
+        once for the whole day and numbers the siblings by time, so a part can
+        introduce itself as "Part 2 of 3" without the screen guessing.
+        """
+        parent_ids = {
+            str(row["parent_task_id"]) for row in rows if row.get("parent_task_id")
+        }
+        if not parent_ids:
+            return {}
+
+        # Every slot of those parents, not just the ones sharing this day: a
+        # task split across two days still reads as part 1 of 2.
+        siblings = self.repository.list_rows(
+            "planner_tasks",
+            columns="id,parent_task_id,scheduled_date,start_time",
+            query_string=f"parent_task_id=in.({','.join(parent_ids)})",
+        )
+        parents = self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title",
+            query_string=f"id=in.({','.join(parent_ids)})",
+        )
+        titles = {str(p["id"]): p.get("title") for p in parents}
+
+        by_parent: dict[str, list[dict[str, Any]]] = {}
+        for sib in siblings:
+            owner = sib.get("parent_task_id")
+            if owner:
+                by_parent.setdefault(str(owner), []).append(sib)
+
+        context: dict[str, dict[str, Any]] = {}
+        for parent_id, group in by_parent.items():
+            group.sort(
+                key=lambda r: (
+                    str(r.get("scheduled_date") or "9999-12-31"),
+                    str(r.get("start_time") or "99:99:99"),
+                )
+            )
+            for index, sib in enumerate(group, start=1):
+                context[str(sib["id"])] = {
+                    "parent_task_id": parent_id,
+                    "parent_title": titles.get(parent_id),
+                    "part_index": index,
+                    "part_total": len(group),
+                }
+        return context
+
     def timed_items(self, on_date: date) -> list[dict[str, Any]]:
         """Just the timed, open items on a day — for the reminder cron.
 
@@ -894,6 +945,7 @@ class TaskService:
         )
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
         umbrellas = self._umbrella_ids(all_rows)
+        slot_context = self._slot_context(all_rows)
 
         for row in all_rows:
             if str(row["id"]) in umbrellas:
@@ -938,8 +990,14 @@ class TaskService:
                     "scheduled_date": row.get("scheduled_date"),
                     "notes": row.get("notes"),
                     "project_id": row.get("project_id"),
-                    # lets the timeline tag a slot as part of a split task
+                    # lets the timeline tag a slot as part of a split task,
+                    # and name the task it is a part of
                     "parent_task_id": row.get("parent_task_id"),
+                    **{
+                        key: value
+                        for key, value in slot_context.get(str(row["id"]), {}).items()
+                        if key != "parent_task_id"
+                    },
                 }
             )
         items.extend(
