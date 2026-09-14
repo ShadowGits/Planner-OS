@@ -586,6 +586,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                 project_id,
                 name,
                 target_date=body.get("target_date"),
+                start_date=body.get("start_date"),
                 notes=body.get("notes"),
             )
             return _envelope(True, "Milestone created", result["data"])

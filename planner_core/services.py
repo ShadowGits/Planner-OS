@@ -24,6 +24,11 @@ PRIORITIES = {"low", "medium", "high", "critical"}
 DEADLINE_WINDOW_DAYS = 7
 DEADLINE_HORIZON_DAYS = 30
 OVERDUE_LIST_LIMIT = 200
+# How far a milestone's progress may lag the share of its schedule already
+# spent before it is called out. Drift is elapsed minus progress, so at
+# half-time with a quarter done the drift is 0.25 and the milestone is red.
+MILESTONE_DRIFT_AMBER = 0.10
+MILESTONE_DRIFT_RED = 0.25
 # task_completions.source carries a check constraint in the database listing
 # exactly these. Naming them here means an unknown value is refused with a
 # clear message instead of the insert failing with a 500 nobody can read.
@@ -123,26 +128,30 @@ class ProjectService:
         name: str,
         *,
         target_date: str | None = None,
+        start_date: str | None = None,
         sort_order: int = 0,
         notes: str | None = None,
     ) -> dict[str, Any]:
         if self.repository.get_row("projects", project_id) is None:
             raise PlannerCoreError(f"Project was not found: {project_id}")
         _parse_date(target_date)
-        row = self.repository.insert_row(
-            "milestones",
-            {
-                "project_id": project_id,
-                "name": name.strip(),
-                "target_date": target_date,
-                "sort_order": sort_order,
-                "notes": notes,
-            },
-        )
+        _parse_date(start_date)
+        payload: dict[str, Any] = {
+            "project_id": project_id,
+            "name": name.strip(),
+            "target_date": target_date,
+            "sort_order": sort_order,
+            "notes": notes,
+        }
+        # Only sent when actually given, so this still works against a database
+        # where migration 0027 has not added the column yet.
+        if start_date is not None:
+            payload["start_date"] = start_date
+        row = self.repository.insert_row("milestones", payload)
         return _envelope(True, f"Milestone added: {row['name']}", {"milestone": row})
 
     def update_milestone(self, milestone_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"name", "status", "target_date", "sort_order", "notes"}
+        allowed = {"name", "status", "target_date", "start_date", "sort_order", "notes"}
         payload = {key: value for key, value in updates.items() if key in allowed}
         if not payload:
             raise PlannerCoreError(f"No valid milestone fields in update; allowed: {sorted(allowed)}")
@@ -1340,11 +1349,15 @@ class MetricsService:
             pm["files"] = p_files
             project_metrics.append(pm)
         deadlines = self._upcoming_deadlines(milestones, deadline_tasks, today)
+        milestone_health = self._milestone_health(
+            milestones, projects, self._milestone_progress(), today
+        )
         return {
             "generated_on": today.isoformat(),
             "timezone": self.timezone,
             "projects": project_metrics,
             "upcoming_deadlines": deadlines,
+            "milestone_health": milestone_health,
             "streaks": completion_summary["streaks"],
             "totals": {
                 "open_tasks": sum(bucket["open"] for bucket in counts.values()),
@@ -1571,6 +1584,129 @@ class MetricsService:
         pending.sort(key=lambda row: (str(row.get("target_date") or "9999"), row.get("sort_order") or 0))
         head = pending[0]
         return {"name": head["name"], "target_date": head.get("target_date"), "status": head["status"]}
+
+    def _milestone_progress(self) -> dict[str, dict[str, Any]]:
+        """Per-milestone done/total and the span its tasks cover, rolled up by
+        Postgres. Falls back to a scan when the function is not installed yet,
+        so a deploy that lands before the migration still serves a dashboard."""
+        try:
+            rows = self.repository.call_function("planner_milestone_progress")
+        except Exception:
+            rows = None
+
+        if rows is None:
+            tasks = self.repository.list_rows(
+                "planner_tasks",
+                columns="milestone_id,status,scheduled_date,due_date",
+                query_string="parent_task_id=is.null",
+            )
+            out: dict[str, dict[str, Any]] = {}
+            for task in tasks:
+                key = task.get("milestone_id")
+                if not key:
+                    continue
+                bucket = out.setdefault(
+                    str(key), {"done": 0, "total": 0, "first": None, "last": None}
+                )
+                status = task.get("status")
+                if status == "done":
+                    bucket["done"] += 1
+                if status != "skipped":
+                    bucket["total"] += 1
+                when = _parse_date(task.get("scheduled_date")) or _parse_date(task.get("due_date"))
+                if when is not None:
+                    if bucket["first"] is None or when < bucket["first"]:
+                        bucket["first"] = when
+                    if bucket["last"] is None or when > bucket["last"]:
+                        bucket["last"] = when
+            return out
+
+        return {
+            str(row.get("milestone_id")): {
+                "done": int(row.get("done_count") or 0),
+                "total": int(row.get("total_count") or 0),
+                "first": _parse_date(row.get("first_date")),
+                "last": _parse_date(row.get("last_date")),
+            }
+            for row in rows
+        }
+
+    @staticmethod
+    def _milestone_health(
+        milestones: list[dict[str, Any]],
+        projects: list[dict[str, Any]],
+        progress_by_id: dict[str, dict[str, Any]],
+        today: date,
+    ) -> list[dict[str, Any]]:
+        """Open milestones across every project, each rated by how its progress
+        compares with how much of its schedule has been spent.
+
+        Drift is elapsed minus progress, as a share of the whole milestone: at
+        half-time with a third done, drift is 0.17. A small shortfall is normal,
+        so only drift past MILESTONE_DRIFT_AMBER is called out, and past
+        MILESTONE_DRIFT_RED it is at risk.
+        """
+        project_names = {str(p["id"]): p.get("name") for p in projects}
+        items: list[dict[str, Any]] = []
+
+        for row in milestones:
+            if row.get("status") == "done":
+                continue
+            counts = progress_by_id.get(str(row["id"]), {})
+            total = int(counts.get("total") or 0)
+            done = int(counts.get("done") or 0)
+            if total == 0:
+                continue
+
+            progress = done / total
+            target = _parse_date(row.get("target_date")) or counts.get("last")
+            # An explicit start date wins; without one the work's own earliest
+            # scheduled day stands in, so older milestones still rate correctly.
+            start = _parse_date(row.get("start_date")) or counts.get("first")
+
+            elapsed: float | None = None
+            if target is not None and start is not None:
+                span = (target - start).days
+                elapsed = 1.0 if span <= 0 else min(max((today - start).days / span, 0.0), 1.0)
+
+            if progress >= 1.0:
+                status = "complete"
+            elif target is not None and today > target:
+                status = "overdue"
+            elif elapsed is None:
+                status = "no_date"
+            else:
+                drift = elapsed - progress
+                if drift > MILESTONE_DRIFT_RED:
+                    status = "red"
+                elif drift > MILESTONE_DRIFT_AMBER:
+                    status = "amber"
+                else:
+                    status = "green"
+
+            items.append(
+                {
+                    "milestone_id": str(row["id"]),
+                    "name": row["name"],
+                    "project_id": str(row["project_id"]),
+                    "project_name": project_names.get(str(row["project_id"])),
+                    "start_date": start.isoformat() if start else None,
+                    "target_date": target.isoformat() if target else None,
+                    "done": done,
+                    "total": total,
+                    "progress": round(progress, 3),
+                    "elapsed": round(elapsed, 3) if elapsed is not None else None,
+                    "days_left": (target - today).days if target else None,
+                    "status": status,
+                }
+            )
+
+        # Worst first, so what needs attention is at the top.
+        rank = {"overdue": 0, "red": 1, "amber": 2, "green": 3, "no_date": 4, "complete": 5}
+        items.sort(
+            key=lambda i: (rank.get(i["status"], 9), i["target_date"] or "9999-12-31")
+        )
+        return items
 
     @staticmethod
     def _upcoming_deadlines(

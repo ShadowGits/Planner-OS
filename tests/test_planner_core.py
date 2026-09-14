@@ -79,10 +79,12 @@ class MemoryGateway:
 
     def rpc(self, function, payload):
         """Only the rollups the metrics snapshot calls. Mirrors the SQL in
-        migrations 0019 and 0024 so the tests cover the real path, not just
-        the fallback."""
+        migrations 0019, 0024 and 0027 so the tests cover the real path, not
+        just the fallback."""
         if function == "planner_completion_summary":
             return self._completion_summary(payload)
+        if function == "planner_milestone_progress":
+            return self._milestone_progress(payload)
         if function != "planner_task_counts":
             raise NotImplementedError(function)
 
@@ -116,6 +118,39 @@ class MemoryGateway:
                     or (not due and not planned)
                 ):
                     bucket["overdue_count"] += 1
+        return list(buckets.values())
+
+    def _milestone_progress(self, payload):
+        """Mirrors migration 0027: per-milestone done/total plus the span its
+        tasks cover, skipping time-slot children."""
+        buckets: dict = {}
+        for row in self.tables.get("planner_tasks", []):
+            if str(row.get("user_id")) != str(payload["p_user_id"]):
+                continue
+            if str(row.get("workspace_id")) != str(payload["p_workspace_id"]):
+                continue
+            if row.get("parent_task_id"):
+                continue
+            key = row.get("milestone_id")
+            if not key:
+                continue
+            bucket = buckets.setdefault(
+                str(key),
+                {"milestone_id": str(key), "done_count": 0, "total_count": 0,
+                 "first_date": None, "last_date": None},
+            )
+            status = row.get("status")
+            if status == "done":
+                bucket["done_count"] += 1
+            if status != "skipped":
+                bucket["total_count"] += 1
+            when = row.get("scheduled_date") or row.get("due_date")
+            if when:
+                when = str(when)
+                if bucket["first_date"] is None or when < bucket["first_date"]:
+                    bucket["first_date"] = when
+                if bucket["last_date"] is None or when > bucket["last_date"]:
+                    bucket["last_date"] = when
         return list(buckets.values())
 
     def _completion_summary(self, payload):
@@ -1270,6 +1305,112 @@ def test_upcoming_deadlines_only_reach_the_horizon(services):
     names = [d["name"] for d in metrics.snapshot()["upcoming_deadlines"] if d["kind"] == "task"]
 
     assert names == ["Soon"]
+
+
+def _milestone_with_progress(tasks, projects, name, *, start, target, total, done):
+    """A milestone whose tasks span start..target, with `done` of them ticked."""
+    project = projects.create_project(name)["data"]["project"]
+    milestone = projects.add_milestone(
+        project["id"], f"{name} milestone", target_date=target.isoformat(),
+        start_date=start.isoformat(),
+    )["data"]["milestone"]
+    for i in range(total):
+        task = tasks.create_task(
+            f"{name} {i}",
+            project_id=project["id"],
+            milestone_id=milestone["id"],
+            scheduled_date=start.isoformat(),
+        )["data"]["task"]
+        if i < done:
+            tasks.complete_task(task["id"])
+    return milestone
+
+
+def _health_for(metrics, milestone_id):
+    rows = metrics.snapshot()["milestone_health"]
+    return next(r for r in rows if r["milestone_id"] == milestone_id)
+
+
+def test_milestone_health_rates_progress_against_time_spent(services):
+    """Green while progress keeps up with the schedule, amber when it slips,
+    red when it falls badly behind — the thresholds the dashboard rates on."""
+    tasks, projects, metrics, _ = services
+    today = _today()
+    # A 100 day window with 50 days gone: half the schedule spent.
+    start, target = today - timedelta(days=50), today + timedelta(days=50)
+
+    on_track = _milestone_with_progress(
+        tasks, projects, "OnTrack", start=start, target=target, total=4, done=2
+    )
+    slipping = _milestone_with_progress(
+        tasks, projects, "Slipping", start=start, target=target, total=10, done=3
+    )
+    at_risk = _milestone_with_progress(
+        tasks, projects, "AtRisk", start=start, target=target, total=4, done=0
+    )
+
+    # Half done at half time: no drift.
+    assert _health_for(metrics, on_track["id"])["status"] == "green"
+    # 30% done at half time: 0.20 drift, past the amber threshold.
+    assert _health_for(metrics, slipping["id"])["status"] == "amber"
+    # Nothing done at half time: 0.50 drift, well past red.
+    assert _health_for(metrics, at_risk["id"])["status"] == "red"
+
+
+def test_milestone_health_flags_a_passed_target_date_as_overdue(services):
+    tasks, projects, metrics, _ = services
+    today = _today()
+    late = _milestone_with_progress(
+        tasks, projects, "Late",
+        start=today - timedelta(days=30), target=today - timedelta(days=1),
+        total=2, done=1,
+    )
+
+    assert _health_for(metrics, late["id"])["status"] == "overdue"
+
+
+def test_milestone_health_leaves_out_finished_and_empty_milestones(services):
+    """A milestone with every task ticked reads complete rather than overdue,
+    and one with no tasks at all is not rated — there is nothing to measure."""
+    tasks, projects, metrics, _ = services
+    today = _today()
+    finished = _milestone_with_progress(
+        tasks, projects, "Finished",
+        start=today - timedelta(days=30), target=today - timedelta(days=1),
+        total=2, done=2,
+    )
+    empty_project = projects.create_project("Empty")["data"]["project"]
+    empty = projects.add_milestone(
+        empty_project["id"], "No tasks yet", target_date=today.isoformat()
+    )["data"]["milestone"]
+
+    rows = metrics.snapshot()["milestone_health"]
+
+    assert _health_for(metrics, finished["id"])["status"] == "complete"
+    assert all(r["milestone_id"] != empty["id"] for r in rows)
+
+
+def test_milestone_health_prefers_an_explicit_start_date(services):
+    """Without a start date the earliest task stands in, but an explicit one
+    wins — it is what makes the elapsed share meaningful."""
+    tasks, projects, metrics, _ = services
+    today = _today()
+    project = projects.create_project("Explicit")["data"]["project"]
+    milestone = projects.add_milestone(
+        project["id"], "Long run",
+        target_date=(today + timedelta(days=50)).isoformat(),
+        start_date=(today - timedelta(days=50)).isoformat(),
+    )["data"]["milestone"]
+    # The only task sits today, so a derived start would make elapsed 0.
+    tasks.create_task(
+        "Only task", project_id=project["id"], milestone_id=milestone["id"],
+        scheduled_date=today.isoformat(),
+    )
+
+    row = _health_for(metrics, milestone["id"])
+
+    assert row["start_date"] == (today - timedelta(days=50)).isoformat()
+    assert row["elapsed"] == 0.5
 
 
 def test_a_task_carries_its_projects_own_columns(services):
