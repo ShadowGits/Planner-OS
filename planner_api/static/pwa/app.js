@@ -1100,6 +1100,47 @@
     }
   }
 
+  // The browser can rotate a push subscription on its own — a service worker
+  // update is enough to do it. The old endpoint stays registered, so the server
+  // keeps pushing to it and keeps being told it worked, while the phone shows
+  // nothing. Re-sending whatever subscription the browser currently holds, every
+  // time the app opens, keeps the server pointed at the live one without the
+  // bell ever being touched.
+  async function resyncSubscription() {
+    if (!pushSupported() || Notification.permission !== "granted") return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) return;
+      const json = sub.toJSON();
+      if (!json.endpoint || !json.keys) return;
+      await api("POST", "/v2/day/push/subscribe", {
+        endpoint: json.endpoint,
+        keys: json.keys,
+        device_label: navigator.userAgent.slice(0, 80),
+      });
+    } catch (_) {
+      // Best effort: a failed resync must never block the app from loading.
+    }
+  }
+
+  // The worker re-subscribes when the browser retires a subscription, but it
+  // cannot register the replacement itself — the app key it would need lives in
+  // localStorage, which a worker cannot read. So it hands it here instead.
+  if ("serviceWorker" in navigator && navigator.serviceWorker.addEventListener) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (!msg || msg.type !== "push-subscription-changed" || !msg.subscription) return;
+      const json = msg.subscription;
+      if (!json.endpoint || !json.keys) return;
+      api("POST", "/v2/day/push/subscribe", {
+        endpoint: json.endpoint,
+        keys: json.keys,
+        device_label: navigator.userAgent.slice(0, 80),
+      }).catch(() => {});
+    });
+  }
+
   async function disableNotifications() {
     try {
       const reg = await navigator.serviceWorker.ready;
@@ -1128,7 +1169,12 @@
     // Reveal it right away; refresh its on/off state once the worker is ready.
     if (btn) btn.classList.remove("hidden");
     if (pushSupported()) {
-      navigator.serviceWorker.ready.then(refreshNotifButton).catch(() => {});
+      navigator.serviceWorker.ready
+        .then(() => {
+          refreshNotifButton();
+          resyncSubscription();
+        })
+        .catch(() => {});
     } else if (btn) {
       btn.title = "Notifications — add to Home Screen first";
     }

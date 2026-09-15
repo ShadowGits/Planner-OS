@@ -1,7 +1,7 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v29";
+const CACHE = "day-planner-v30";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -55,6 +55,37 @@ self.addEventListener("push", (event) => {
     requireInteraction: false,
   };
   event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// The browser can retire a push subscription by itself — updating this worker
+// is enough to trigger it. Re-subscribe with the same server key and hand the
+// replacement to any open page, which has the app key needed to register it.
+// With no page open there is nothing to send it with, so the app also re-syncs
+// whatever subscription it holds on every launch.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const key =
+          (event.oldSubscription && event.oldSubscription.options &&
+            event.oldSubscription.options.applicationServerKey) || null;
+        if (!key) return;
+        const sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: key,
+        });
+        const clients = await self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        });
+        for (const client of clients) {
+          client.postMessage({ type: "push-subscription-changed", subscription: sub.toJSON() });
+        }
+      } catch (_) {
+        // Nothing useful to do here; the next app launch re-syncs.
+      }
+    })()
+  );
 });
 
 // Tapping a notification focuses an open app window, or opens one.

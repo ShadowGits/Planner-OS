@@ -444,14 +444,25 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             )
         core = _core()
         user_id = _configured_user_id()
-        # Upsert on endpoint: a browser re-subscribing must not pile up rows.
+        device_label = body.get("device_label")
+        # Drop this device's previous subscription before recording the new one.
+        #
+        # Matching on the endpoint alone is not enough: a browser that rotates
+        # its subscription comes back with a *different* endpoint, so the old
+        # row survived. The push service still accepts sends to that dead
+        # endpoint and reports success, so reminders were logged as delivered
+        # while nothing arrived. Clearing the same device's other rows keeps one
+        # live subscription per device.
         try:
             existing = cloud.service_client.select(
                 "push_subscriptions",
-                filters={"user_id": str(user_id), "endpoint": endpoint},
+                filters={"user_id": str(user_id)},
             )
             for row in existing or []:
-                cloud.service_client.delete("push_subscriptions", filters={"id": row["id"]})
+                same_endpoint = row.get("endpoint") == endpoint
+                same_device = device_label and row.get("device_label") == device_label
+                if same_endpoint or same_device:
+                    cloud.service_client.delete("push_subscriptions", filters={"id": row["id"]})
         except Exception:
             pass
         cloud.service_client.insert(
