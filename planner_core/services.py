@@ -466,6 +466,17 @@ class TaskService:
             uid = (row.get("metadata") or {}).get("apple_uid")
             if uid:
                 seen.add(str(uid))
+        # An event deleted here stays deleted. Without this the import has no
+        # way of telling "never imported" from "imported, then thrown away",
+        # and recreates it on the next sync.
+        try:
+            for row in self.repository.list_rows(
+                "apple_event_tombstones", columns="apple_uid"
+            ):
+                if row.get("apple_uid"):
+                    seen.add(str(row["apple_uid"]))
+        except Exception:
+            pass
 
         created = 0
         skipped = 0
@@ -567,16 +578,45 @@ class TaskService:
         row = self.repository.update_row("planner_tasks", task_id, payload)
         return _envelope(True, f"Task updated: {row['title']}", {"task": row})
 
+    def _tombstone_apple_events(self, rows: list[dict[str, Any]]) -> None:
+        """Record that these tasks' calendar events were deleted here.
+
+        The ICS import skips any UID it can already see on a task, so deleting
+        an imported task removed the only evidence it had been imported and the
+        next sync recreated it. Best effort: failing to write a tombstone must
+        never stop a delete the user asked for.
+        """
+        for row in rows:
+            uid = (row.get("metadata") or {}).get("apple_uid")
+            if not uid:
+                continue
+            try:
+                self.repository.insert_row(
+                    "apple_event_tombstones", {"apple_uid": str(uid)}
+                )
+            except Exception:
+                pass
+
     def delete_task(self, task_id: str) -> dict[str, Any]:
         row = self.repository.get_row("planner_tasks", task_id)
         if row is None:
             raise PlannerCoreError(f"Task was not found: {task_id}")
+        self._tombstone_apple_events([row])
         self.repository.delete_row("planner_tasks", task_id)
         return _envelope(True, f"Task deleted: {row['title']}", {"task": row})
 
     def delete_tasks_batch(self, task_ids: list[str]) -> dict[str, Any]:
         if not task_ids:
             return _envelope(True, "No tasks to delete", {"deleted": []})
+        try:
+            doomed = self.repository.list_rows(
+                "planner_tasks",
+                columns="id,metadata",
+                query_string=f"id=in.({','.join(task_ids)})",
+            )
+            self._tombstone_apple_events(doomed)
+        except Exception:
+            pass
         self.repository.delete_rows("planner_tasks", {"id": task_ids})
         return _envelope(True, f"{len(task_ids)} tasks deleted", {"deleted": task_ids})
 

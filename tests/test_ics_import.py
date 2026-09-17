@@ -119,3 +119,36 @@ def test_imported_task_carries_the_event_uid_and_time():
     assert dentist["estimated_minutes"] == 60
     assert dentist["metadata"]["apple_uid"] == "evt-timed@icloud"
     assert dentist["metadata"]["source"] == "apple_calendar"
+
+
+def test_a_deleted_event_is_not_recreated_by_the_next_sync():
+    """Deleting an imported task has to stick.
+
+    The dedup set was read off existing tasks, so deleting one also deleted the
+    only record that its event had ever been imported — and the next sync
+    created it again. The task came back however many times it was deleted.
+    """
+    tasks, gw = _service()
+    tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))
+
+    dentist = [r for r in gw.tables["planner_tasks"] if r["title"] == "Dentist appointment"][0]
+    tasks.delete_task(dentist["id"])
+
+    again = tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))["data"]
+
+    assert again["created"] == 0
+    titles = [r["title"] for r in gw.tables["planner_tasks"]]
+    assert "Dentist appointment" not in titles
+
+
+def test_deleting_a_batch_also_keeps_those_events_away():
+    tasks, gw = _service()
+    tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))
+
+    ids = [r["id"] for r in gw.tables["planner_tasks"]]
+    tasks.delete_tasks_batch(ids)
+
+    again = tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))["data"]
+
+    assert again["created"] == 0
+    assert gw.tables["planner_tasks"] == []
