@@ -709,7 +709,7 @@
     const pill = $("unsched-pill");
     pill.classList.toggle("hidden", pending === 0);
     if (pending > 0) {
-      pill.innerHTML = `<span class="u-count">${pending}</span> to schedule`;
+      pill.innerHTML = `<span class="u-count">${pending}</span> ${pending === 1 ? "todo" : "todos"}`;
     }
   }
 
@@ -737,14 +737,35 @@
         <div class="icon" style="background:${pastelFor(task.title)}">${task.done ? "✓" : emojiFor(task.title)}</div>
         <div class="t"${task.done ? ' style="text-decoration:line-through"' : ""}>${escapeHtml(task.title)}</div>`;
       if (!task.done) {
-        const clock = document.createElement("button");
-        clock.className = "clock";
-        clock.textContent = "Schedule";
-        clock.addEventListener("click", () => scheduleNext(task));
-        card.appendChild(clock);
-        card.querySelector(".icon").addEventListener("click", () =>
-          api("PATCH", `/v2/day/tasks/${task.id}`, { done: true }).then(() => loadDay({ keepScroll: true })).catch(showError)
+        // Two squircles: tick it off, or give it a time. Done used to mean
+        // tapping the emoji, which nothing on screen suggested, so it may as
+        // well not have existed.
+        const acts = document.createElement("div");
+        acts.className = "acts";
+
+        const done = document.createElement("button");
+        done.className = "act done";
+        done.type = "button";
+        done.textContent = "✓";
+        done.title = "Mark done";
+        done.setAttribute("aria-label", `Mark ${task.title} done`);
+        done.addEventListener("click", () =>
+          api("PATCH", `/v2/day/tasks/${task.id}`, { done: true })
+            .then(() => loadDay({ keepScroll: true }))
+            .catch(showError)
         );
+
+        const clock = document.createElement("button");
+        clock.className = "act sched";
+        clock.type = "button";
+        clock.textContent = "🕐";
+        clock.title = "Give it a time";
+        clock.setAttribute("aria-label", `Schedule ${task.title}`);
+        clock.addEventListener("click", () => scheduleNext(task));
+
+        acts.appendChild(done);
+        acts.appendChild(clock);
+        card.appendChild(acts);
         card.querySelector(".t").addEventListener("click", () => openEdit(task));
       }
       list.appendChild(card);

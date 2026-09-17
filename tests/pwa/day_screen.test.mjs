@@ -493,3 +493,28 @@ test("a task the server says is already gone stays gone", async (t) => {
 
   assert.equal(rowFor(doc, "Gym"), undefined, "an already-deleted task came back on screen");
 });
+
+/* ---------- todos tray ---------- */
+
+test("each todo carries its own done and schedule buttons", async (t) => {
+  // Marking a todo done used to mean tapping its emoji, which nothing on
+  // screen suggested. Both actions are now buttons you can see.
+  const { doc, window, calls, close } = await boot({
+    items: [task({ id: "b", title: "Loose one", start_time: null })],
+  });
+  t.after(close);
+
+  const card = doc.querySelector("#inbox-list .inbox-card");
+  assert.ok(card, "the todo should be in the tray");
+  assert.ok(card.querySelector(".act.sched"), "no schedule button on the todo");
+
+  const done = card.querySelector(".act.done");
+  assert.ok(done, "no done button on the todo");
+
+  done.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  const patch = calls.find((c) => c.method === "PATCH" && c.path.includes("/v2/day/tasks/b"));
+  assert.ok(patch, "the done button did not tell the server");
+  assert.equal(patch.body.done, true);
+});
