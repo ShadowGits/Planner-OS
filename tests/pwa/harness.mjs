@@ -131,6 +131,17 @@ export async function boot({ items = [], onRequest = null } = {}) {
 }
 
 function reply(payload) {
+  // A test can ask for a real HTTP failure with { __status, ...body }, so the
+  // difference between "the server refused" and "it is already gone" can be
+  // exercised the way the app sees it.
+  if (payload && typeof payload === "object" && payload.__status) {
+    const { __status, ...body } = payload;
+    return {
+      ok: __status >= 200 && __status < 300,
+      status: __status,
+      json: async () => body,
+    };
+  }
   return {
     ok: true,
     status: 200,

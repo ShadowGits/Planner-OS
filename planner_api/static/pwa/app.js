@@ -216,8 +216,16 @@
       throw new Error("unauthorized");
     }
     if (!res.ok) {
-      const detail = await res.json().catch(() => ({}));
-      throw new Error(detail.message || `Request failed (${res.status})`);
+      const body = await res.json().catch(() => ({}));
+      // FastAPI nests the payload under "detail"; older handlers return it flat.
+      const detail = (body && body.detail && typeof body.detail === "object") ? body.detail : body;
+      const err = new Error(detail.message || `Request failed (${res.status})`);
+      // Callers need to tell "the server said no" from "the request never
+      // landed": a delete of something already gone is a success, not a
+      // failure to undo.
+      err.status = res.status;
+      err.code = detail.code || null;
+      throw err;
     }
     const payload = await res.json();
     // Some endpoints report trouble in the body with a 200 — a Drive failure,
@@ -240,6 +248,16 @@
     const entry = { items: out.data.items, tz: out.data.timezone, at: Date.now() };
     dayCache.set(ds, entry);
     return entry;
+  }
+
+  // Drop a task from every cached day. Used after a delete, so a copy held for
+  // a neighbouring day cannot put it back on screen.
+  function forgetTaskEverywhere(id) {
+    for (const entry of dayCache.values()) {
+      if (!entry || !Array.isArray(entry.items)) continue;
+      const at = entry.items.findIndex((t) => t.id === id);
+      if (at !== -1) entry.items.splice(at, 1);
+    }
   }
 
   function applyDay(entry) {
@@ -997,11 +1015,18 @@
     // its old place if the delete does not go through.
     const at = state.items.findIndex((t) => t.id === id);
     const removed = at !== -1 ? state.items.splice(at, 1)[0] : null;
+    // A task timed just after midnight sits in two days' caches, and the
+    // prefetch holds several days either side. Dropping it from the visible
+    // list alone left the other copy to reappear on the next swipe.
+    forgetTaskEverywhere(id);
     render();
     toast("Deleted");
     try {
       await api("DELETE", `/v2/day/tasks/${id}`);
     } catch (e) {
+      // 404 means it is already gone — the delete has nothing left to do, so
+      // putting the card back would invite deleting it forever.
+      if (e && e.status === 404) return;
       if (removed) {
         state.items.splice(at, 0, removed);
         render();

@@ -472,3 +472,24 @@ test("the notification bell is visible and not on where push is unsupported", as
   assert.equal(bell.classList.contains("hidden"), false, "the bell should be visible");
   assert.equal(bell.classList.contains("on"), false, "it must not read as on without a subscription");
 });
+
+test("a task the server says is already gone stays gone", async (t) => {
+  // Deleting something the backend has already removed answers 404. Treating
+  // that like any other failure put the row back, so the same task could be
+  // deleted over and over and never leave the screen.
+  const { doc, window, close } = await boot({
+    items: [task({ id: "a", title: "Gym", start_time: "09:00" })],
+    onRequest: ({ method }) =>
+      method === "DELETE"
+        ? { __status: 404, detail: { code: "TASK_NOT_FOUND", message: "Task was not found: a" } }
+        : null,
+  });
+  t.after(close);
+
+  rowFor(doc, "Gym").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  doc.getElementById("sheet-delete").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  assert.equal(rowFor(doc, "Gym"), undefined, "an already-deleted task came back on screen");
+});
