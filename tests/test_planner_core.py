@@ -1674,3 +1674,36 @@ def test_a_starred_task_keeps_its_star_when_it_moves_to_another_day(services):
     assert tasks.day_view(today.isoformat())["data"]["starred_total"] == 0
     moved = tasks.day_view(tomorrow)["data"]
     assert moved["starred_total"] == 1
+
+
+def test_milestone_health_ignores_a_start_date_after_its_target(services):
+    """Work that slipped past its deadline leaves the earliest task sitting
+    after the target, so a backfilled start can land the wrong side of it.
+    Read literally that says the whole schedule is gone, which would mark a
+    milestone at risk on the strength of a bad date rather than its progress.
+    """
+    tasks, projects, metrics, _ = services
+    today = _today()
+    project = projects.create_project("Slipped")["data"]["project"]
+    milestone = projects.add_milestone(
+        project["id"],
+        "Ran late",
+        target_date=(today + timedelta(days=20)).isoformat(),
+        # After the target, and after every task below.
+        start_date=(today + timedelta(days=60)).isoformat(),
+    )["data"]["milestone"]
+    for i in range(4):
+        made = tasks.create_task(
+            f"Bit {i}",
+            project_id=project["id"],
+            milestone_id=milestone["id"],
+            scheduled_date=(today - timedelta(days=10)).isoformat(),
+        )["data"]["task"]
+        if i < 2:
+            tasks.complete_task(made["id"])
+
+    row = _health_for(metrics, milestone["id"])
+
+    # Half done, a third of the way through the real span: on track, not red.
+    assert row["status"] == "green"
+    assert row["start_date"] == (today - timedelta(days=10)).isoformat()

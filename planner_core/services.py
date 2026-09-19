@@ -1908,6 +1908,15 @@ class MetricsService:
             # An explicit start date wins; without one the work's own earliest
             # scheduled day stands in, so older milestones still rate correctly.
             start = _parse_date(row.get("start_date")) or counts.get("first")
+            # A start on or after the target describes no span at all. Work
+            # that slipped past its deadline produces exactly that, and reading
+            # it as "all the time has gone" would mark a milestone at risk on
+            # the strength of a nonsense date rather than its progress. Fall
+            # back to when the work actually starts, and if that is no better,
+            # rate on progress alone.
+            if start is not None and target is not None and start >= target:
+                fallback = counts.get("first")
+                start = fallback if fallback is not None and fallback < target else None
 
             elapsed: float | None = None
             if target is not None and start is not None:
