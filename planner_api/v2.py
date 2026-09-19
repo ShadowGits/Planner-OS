@@ -162,6 +162,10 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                     push_title,
                     reminder["message"],
                     url=reminder.get("url", "/"),
+                    # Both warnings for one task share a tag, so the five
+                    # minute one replaces the thirty minute one instead of
+                    # leaving two entries to clear.
+                    tag=reminder.get("tag"),
                 )
                 if push_result["sent"] > 0:
                     core.reminders.record_sent(reminder["kind"], "push", {"message": reminder["message"], **push_result})

@@ -38,8 +38,20 @@ def _vapid_claims() -> dict[str, str]:
     return {"sub": os.environ.get("VAPID_MAILTO", "mailto:planner@example.com")}
 
 
-def send_push(subscription_info: dict[str, Any], title: str, body: str, url: str = "/") -> bool:
-    """Send a single push notification. Returns True on success."""
+def send_push(
+    subscription_info: dict[str, Any],
+    title: str,
+    body: str,
+    url: str = "/",
+    tag: str | None = None,
+) -> bool:
+    """Send a single push notification. Returns True on success.
+
+    tag groups notifications that are about the same thing: sending a second
+    one with the same tag replaces the first rather than adding to the pile. A
+    task's five-minute warning is an update of its thirty-minute one, so it
+    takes the same tag and the phone shows one notification, not two.
+    """
     from pywebpush import webpush, WebPushException
 
     private_key = os.environ.get("VAPID_PRIVATE_KEY", "")
@@ -53,6 +65,7 @@ def send_push(subscription_info: dict[str, Any], title: str, body: str, url: str
         "url": url,
         "icon": "/icon-192.png",
         "badge": "/icon-192.png",
+        **({"tag": tag} if tag else {}),
     })
 
     try:
@@ -84,6 +97,7 @@ def send_push_to_all(
     title: str,
     body: str,
     url: str = "/",
+    tag: str | None = None,
 ) -> dict[str, int]:
     """Send a push notification to all subscriptions for a user. Returns counts."""
     from pywebpush import WebPushException
@@ -100,7 +114,7 @@ def send_push_to_all(
             "keys": {"p256dh": row["p256dh"], "auth": row["auth"]},
         }
         try:
-            if send_push(sub_info, title, body, url):
+            if send_push(sub_info, title, body, url, tag=tag):
                 sent += 1
             else:
                 failed += 1

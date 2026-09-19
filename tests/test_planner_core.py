@@ -602,13 +602,23 @@ def test_event_reminders_fire_at_30_and_5_minutes_once_each(services) -> None:
     # 14:30 — exactly 30 minutes ahead → the yellow reminder, not the green one.
     due = reminders._event_reminders(at(14, 30), set())
     assert [d["kind"].split(":")[0] for d in due] == ["event30"]
-    assert due[0]["title"] == "🟡 In 30 minutes"
-    assert "Dentist at 15:00" in due[0]["message"]
+    # The task's name belongs in the title: a phone shows that line first and
+    # often only that, so "In 30 minutes" alone says nothing worth opening.
+    assert due[0]["title"] == "🟡 IN 30 MINUTES : Dentist"
+    assert "15:00" in due[0]["message"]
 
     # 14:57 — inside 5 minutes → the green reminder.
     green = reminders._event_reminders(at(14, 57), set())
     assert [d["kind"].split(":")[0] for d in green] == ["event5"]
-    assert green[0]["title"] == "🟢 Starting now"
+    assert green[0]["title"] == "🟢 IN 3 MINUTES : Dentist"
+
+    # Both warnings for one task carry the same tag, so the second replaces the
+    # first on the phone rather than stacking up beside it.
+    assert due[0]["tag"] == green[0]["tag"]
+
+    # At the hour itself there is nothing left to count down to.
+    starting = reminders._event_reminders(at(15, 0), set())
+    assert starting[0]["title"] == "🟢 STARTING NOW : Dentist"
 
     # Already recorded for today → never fires twice.
     sent = {due[0]["kind"], green[0]["kind"]}

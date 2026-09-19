@@ -2041,21 +2041,37 @@ class ReminderService:
             item_id = str(item.get("id"))
             tag = f"event-{item_id}"
 
+            # The subject goes in the title, not the body. A phone shows the
+            # title first and loudest, and often only that — "🟡 In 30 minutes"
+            # on its own says nothing about which thing, so it reads as noise
+            # and gets swiped away.
+            minutes = item.get("estimated_minutes")
+            body = f"Starts at {clock}" + (f" · {minutes} min" if minutes else "")
+
             yellow = f"event30:{item_id}"
             if self.LEAD_GREEN < until <= self.LEAD_YELLOW and yellow not in sent_today:
+                # Rounded to the nearest five so it reads as a round number
+                # rather than "in 27 minutes"; the cron's own five minute step
+                # means this almost always lands on the full lead time.
+                lead = max(5, round(until / 5) * 5)
                 out.append({
                     "kind": yellow,
-                    "title": "🟡 In 30 minutes",
-                    "message": f"{title} at {clock}",
+                    "title": f"🟡 IN {lead} MINUTES : {title}",
+                    "message": body,
                     "url": "/app/",
                     "tag": tag,
                 })
             green = f"event5:{item_id}"
             if -self.LEAD_GREEN <= until <= self.LEAD_GREEN and green not in sent_today:
+                headline = (
+                    f"🟢 STARTING NOW : {title}"
+                    if until <= 1
+                    else f"🟢 IN {until} MINUTES : {title}"
+                )
                 out.append({
                     "kind": green,
-                    "title": "🟢 Starting now",
-                    "message": f"{title} at {clock}",
+                    "title": headline,
+                    "message": body,
                     "url": "/app/",
                     "tag": tag,
                 })
