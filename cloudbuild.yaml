@@ -54,6 +54,15 @@ steps:
       # Give the container extra CPU during startup so cold starts boot faster.
       # No extra charge — startup CPU boost is included at the same price.
       - '--cpu-boost'
+      # Refuse to route traffic to a revision whose app did not start.
+      #
+      # Cloud Run otherwise only checks that something is listening on $PORT.
+      # When create_app() fails it still serves a stub, which listens — so a
+      # broken build was marked healthy and took 100% of traffic, and every
+      # route answered "Not Found" until someone noticed. The stub answers 503
+      # here, so this probe fails, the revision is rejected, and the previous
+      # good one keeps serving. Costs nothing and changes no scaling setting.
+      - '--startup-probe=httpGet.path=/api/health,initialDelaySeconds=5,periodSeconds=5,timeoutSeconds=4,failureThreshold=6'
 
 options:
   logging: CLOUD_LOGGING_ONLY

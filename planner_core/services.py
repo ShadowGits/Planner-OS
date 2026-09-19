@@ -1296,10 +1296,20 @@ class HabitService:
         by_id = {str(row["id"]): row for row in habits}
 
         # An override can move an occurrence into or out of the window, so the
-        # lookup has to be wider than the window itself.
+        # lookup covers both the days being drawn and any override landing on
+        # them. Bounded on purpose: this used to read every override ever
+        # written, and it runs on each day the screen shows and on every
+        # reminder tick, so the cost grew with history for no benefit.
+        window_start, window_end = start.isoformat(), end.isoformat()
+        overrides_query = (
+            f"or=(and(on_date.gte.{window_start},on_date.lte.{window_end}),"
+            f"and(moved_to.gte.{window_start},moved_to.lte.{window_end}))"
+        )
         overrides: dict[tuple[str, str], dict[str, Any]] = {}
         moved_in: list[dict[str, Any]] = []
-        for row in self.repository.list_rows("habit_overrides"):
+        for row in self.repository.list_rows(
+            "habit_overrides", query_string=overrides_query
+        ):
             overrides[(str(row["habit_id"]), str(row["on_date"])[:10])] = row
             landing = _parse_date(row.get("moved_to"))
             if landing and start <= landing <= end and not row.get("skipped"):

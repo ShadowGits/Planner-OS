@@ -159,10 +159,18 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
 
     @api.get("/api/health")
     def health_check() -> dict[str, Any]:
-        """Simple health check endpoint."""
-        import os
-        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-        return envelope(True, "Planner OS API is ready", data={"version": api.version, "key_prefix": key[:15]})
+        """Simple health check endpoint.
+
+        Reports only that the service role key is configured, never any part of
+        it. This route is unauthenticated, so the prefix it used to return was
+        a slice of a live secret handed to anyone who asked.
+        """
+        configured = bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+        return envelope(
+            True,
+            "Planner OS API is ready",
+            data={"version": api.version, "service_key_configured": configured},
+        )
 
     @api.get("/api/mcp-status")
     def mcp_status() -> dict[str, Any]:
@@ -397,6 +405,18 @@ except Exception as _e:
 
     @app.get("/api/health")
     def configuration_health():
-        return envelope(False, "Planner OS API configuration is incomplete", errors=[_startup_error or "Unknown startup error"])
+        # 503, not 200. This stub exists only to explain why the real app did
+        # not start; every other route 404s. Answering 200 meant Cloud Run saw
+        # a container listening, marked the revision healthy and sent it all
+        # the traffic — a failed build taking the whole API down instead of
+        # simply failing to deploy.
+        return JSONResponse(
+            status_code=503,
+            content=envelope(
+                False,
+                "Planner OS API configuration is incomplete",
+                errors=[_startup_error or "Unknown startup error"],
+            ),
+        )
 
 
