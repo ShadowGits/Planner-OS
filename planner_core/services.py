@@ -11,6 +11,7 @@ import logging
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from typing import Any
+from uuid import UUID
 from planner_engine.models import DailyPlan, ScheduledBlock
 from zoneinfo import ZoneInfo
 
@@ -441,6 +442,23 @@ class TaskService:
         created = self.repository.insert_rows("planner_tasks", payloads)
         return _envelope(True, f"Created {len(created)} tasks", {"tasks": created})
 
+    def forget_deleted_events(self) -> dict[str, Any]:
+        """Let previously deleted calendar events be imported again.
+
+        Deleting an imported task records its event so the next sync cannot
+        bring it back. That is the right default, but it is also permanent, and
+        a task deleted by mistake could never return even though the event was
+        still sitting on the calendar. Clearing the record is the way back.
+        """
+        rows = self.repository.list_rows("apple_event_tombstones", columns="id")
+        for row in rows:
+            self.repository.delete_row("apple_event_tombstones", str(row["id"]))
+        return _envelope(
+            True,
+            f"{len(rows)} deleted events can be imported again",
+            {"forgotten": len(rows)},
+        )
+
     def import_ics(
         self,
         ics_text: str,
@@ -448,6 +466,7 @@ class TaskService:
         project_id: str | None = None,
         window_days: int = 30,
         today: date | None = None,
+        forget_deletions: bool = False,
     ) -> dict[str, Any]:
         """Turn the one-off events of a public calendar feed into tasks.
 
@@ -455,8 +474,15 @@ class TaskService:
         so re-running never creates a duplicate. Recurring events are left out —
         they belong in the habit engine. Events outside the window (today to
         window_days ahead) are ignored so a long feed does not flood the list.
+
+        forget_deletions clears the record of events deleted here first, so a
+        task removed by mistake can be pulled back from the calendar. Off by
+        default: a deletion is meant to stick.
         """
         from planner_integrations.ics import parse_ics, occurrence_in_window
+
+        if forget_deletions:
+            self.forget_deleted_events()
 
         start = today or _local_today(self.timezone)
         end = start + timedelta(days=window_days)
@@ -618,17 +644,29 @@ class TaskService:
     def delete_tasks_batch(self, task_ids: list[str]) -> dict[str, Any]:
         if not task_ids:
             return _envelope(True, "No tasks to delete", {"deleted": []})
+        # These ids arrive from the caller and are pasted straight into a
+        # PostgREST filter below, where a comma or bracket would change what
+        # the query means. Task ids are uuids, so anything that is not one is a
+        # mistake worth refusing rather than passing through.
+        clean_ids = [str(task_id) for task_id in task_ids]
+        for task_id in clean_ids:
+            try:
+                UUID(task_id)
+            except (ValueError, AttributeError, TypeError):
+                raise PlannerCoreError(f"Not a valid task id: {task_id!r}") from None
         try:
             doomed = self.repository.list_rows(
                 "planner_tasks",
                 columns="id,metadata",
-                query_string=f"id=in.({','.join(task_ids)})",
+                query_string=f"id=in.({','.join(clean_ids)})",
             )
             self._tombstone_apple_events(doomed)
-        except Exception:
-            pass
-        self.repository.delete_rows("planner_tasks", {"id": task_ids})
-        return _envelope(True, f"{len(task_ids)} tasks deleted", {"deleted": task_ids})
+        except Exception as error:
+            # The delete still goes ahead; the cost of losing this is only that
+            # an imported event could return on the next calendar sync.
+            logger.warning("Could not record deletions for the calendar: %s", error)
+        self.repository.delete_rows("planner_tasks", {"id": clean_ids})
+        return _envelope(True, f"{len(clean_ids)} tasks deleted", {"deleted": clean_ids})
 
     def update_task_date_time_batch(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
         if not updates:

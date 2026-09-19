@@ -18,7 +18,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 
 from adapters.supabase import SupabaseWorkspaceRepository
-from planner_core.repository import PlannerCoreRepository
+from planner_core.repository import PlannerCoreError, PlannerCoreRepository
 from planner_core.services import (
     FinanceService,
     HabitService,
@@ -593,6 +593,31 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
         except Exception as e:
             logger.error(f"Failed to create milestone: {e}")
             raise HTTPException(status_code=500, detail={"code": "CREATE_FAILED", "message": str(e)})
+
+    @api.patch("/v2/milestones/{milestone_id}")
+    def update_milestone(milestone_id: str, body: dict, user=Depends(current_user)):
+        """Change a milestone's dates, name, status or notes.
+
+        Milestones had no update route at all, so start_date could be stored
+        but never set from anywhere — the dashboard's health panel was left
+        deriving every start from the earliest task.
+        """
+        core = build_core(cloud.service_client, user.user_id)
+        allowed = {"name", "status", "target_date", "start_date", "sort_order", "notes"}
+        updates = {key: value for key, value in body.items() if key in allowed}
+        if not updates:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "PATCH_EMPTY", "message": f"Nothing to change; allowed: {sorted(allowed)}"},
+            )
+        try:
+            result = core.projects.update_milestone(milestone_id, updates)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "MILESTONE_UPDATE_INVALID", "message": str(error)},
+            ) from error
+        return _envelope(True, result["message"], result["data"])
 
     @api.get("/v2/study/topics")
     def get_study_topics(user=Depends(current_user)):

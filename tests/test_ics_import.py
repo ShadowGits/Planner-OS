@@ -185,3 +185,39 @@ def test_a_failed_dedup_read_aborts_rather_than_duplicating_the_calendar():
 
     assert raised, "a failed dedup read must not be treated as an empty one"
     assert len(gw.tables["planner_tasks"]) == before, "the calendar was duplicated"
+
+
+def test_deletions_can_be_forgotten_so_an_event_comes_back():
+    """A deletion is permanent by design, which is unhelpful when it was a
+    mistake — the event is still on the calendar but nothing can pull it back.
+    Asking to forget deletions lets the next import bring it in again."""
+    tasks, gw = _service()
+    tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))
+    dentist = [r for r in gw.tables["planner_tasks"] if r["title"] == "Dentist appointment"][0]
+    tasks.delete_task(dentist["id"])
+
+    # Still gone on an ordinary re-import.
+    tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))
+    titles = [r["title"] for r in gw.tables["planner_tasks"]]
+    assert "Dentist appointment" not in titles
+
+    back = tasks.import_ics(
+        SAMPLE, window_days=60, today=date(2026, 9, 1), forget_deletions=True
+    )["data"]
+
+    assert back["created"] == 1
+    titles = [r["title"] for r in gw.tables["planner_tasks"]]
+    assert "Dentist appointment" in titles
+
+
+def test_a_batch_delete_refuses_ids_that_are_not_task_ids():
+    """These ids are pasted into a PostgREST filter, where a stray comma or
+    bracket changes what the query matches."""
+    tasks, _ = _service()
+
+    try:
+        tasks.delete_tasks_batch(["not-a-uuid,*"])
+    except Exception as error:
+        assert "valid task id" in str(error)
+    else:
+        raise AssertionError("a malformed task id should be refused")

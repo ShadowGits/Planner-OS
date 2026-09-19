@@ -44,11 +44,15 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
                 detail={"code": "CRON_KEY_INVALID", "message": "X-Cron-Key header is missing or wrong"},
             )
 
-    def _run_apple_import(tasks: TaskService, days: int) -> dict[str, Any] | None:
+    def _run_apple_import(
+        tasks: TaskService, days: int, forget_deletions: bool = False
+    ) -> dict[str, Any] | None:
         """Fetch APPLE_ICS_URL and import its events, or None if not set.
 
         Shared by the standalone endpoint and the calendar sync, so one sync
-        run pulls Google out and Apple in together.
+        run pulls Google out and Apple in together. forget_deletions is never
+        set by the sync — only by someone deliberately asking for events they
+        deleted to come back.
         """
         ics_url = os.environ.get("APPLE_ICS_URL", "").strip()
         if not ics_url:
@@ -57,7 +61,9 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
         import urllib.request
         with urllib.request.urlopen(url, timeout=30) as resp:
             ics_text = resp.read().decode("utf-8", errors="replace")
-        return tasks.import_ics(ics_text, window_days=days)["data"]
+        return tasks.import_ics(
+            ics_text, window_days=days, forget_deletions=forget_deletions
+        )["data"]
 
     @api.post("/v2/calendar/sync")
     def sync_calendar(
@@ -109,6 +115,11 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
     @api.post("/v2/calendar/import-apple")
     def import_apple_calendar(
         days: int = Query(default=30, ge=1, le=90),
+        # Deleting an imported task stops that event coming back, permanently.
+        # This asks for those deletions to be forgotten first, so a task removed
+        # by mistake can be pulled back off the calendar. Opt-in, and never set
+        # by the sync.
+        forget_deletions: bool = Query(default=False),
         x_cron_key: str | None = Header(default=None),
         x_app_key: str | None = Header(default=None),
     ):
@@ -143,7 +154,7 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
         repository = PlannerCoreRepository(cloud.service_client, user_id, workspace.id)
         tasks = TaskService(repository, workspace.timezone)
         try:
-            imported = _run_apple_import(tasks, days)
+            imported = _run_apple_import(tasks, days, forget_deletions=forget_deletions)
         except Exception as error:
             raise HTTPException(
                 status_code=502,

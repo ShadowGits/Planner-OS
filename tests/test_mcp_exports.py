@@ -52,6 +52,9 @@ class TestMCPExports(unittest.TestCase):
             "delete_recurring",  # mapped to core_delete_recurring_charge
             "materialize_recurring",  # cron only: POST /v2/finance/recurring/run
             "import_ics",  # cron/manual only: POST /v2/calendar/import-apple
+            # Recovery, not planning: reached by asking the import to forget
+            # deletions (POST /v2/calendar/import-apple?forget_deletions=true).
+            "forget_deleted_events",
             # A habit's occurrences have no rows, so the tools are named for
             # the day they act on rather than after the method.
             "occurrences",  # read through core_today and the day view
