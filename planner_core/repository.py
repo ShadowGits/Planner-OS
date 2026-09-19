@@ -25,10 +25,31 @@ class PlannerCoreRepository:
     def _tenant(self) -> dict[str, str]:
         return {"user_id": str(self.user_id), "workspace_id": str(self.workspace_id)}
 
-    def list_rows(self, table: str, extra_filters: Mapping[str, Any] | None = None, query_string: str | None = None, columns: str = "*") -> list[dict[str, Any]]:
+    def list_rows(
+        self,
+        table: str,
+        extra_filters: Mapping[str, Any] | None = None,
+        query_string: str | None = None,
+        columns: str = "*",
+        strict: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Rows matching the filters, or [] if the read fails.
+
+        Swallowing the failure keeps a screen rendering when one panel's query
+        breaks, but it makes a failed read indistinguishable from an empty
+        table. That is fine for something that only gets displayed and actively
+        dangerous for anything that decides whether to write: a dedup set that
+        comes back empty because the database hiccuped means every record looks
+        new, and the caller duplicates the lot.
+
+        Pass strict=True from those callers so the failure propagates and the
+        write is abandoned instead of doubling the data.
+        """
         try:
             return self.gateway.select(table, filters={**self._tenant(), **dict(extra_filters or {})}, query_string=query_string, columns=columns)
         except Exception:
+            if strict:
+                raise
             return []
 
     def get_row(self, table: str, row_id: str) -> dict[str, Any] | None:

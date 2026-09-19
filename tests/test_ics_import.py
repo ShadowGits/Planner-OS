@@ -152,3 +152,36 @@ def test_deleting_a_batch_also_keeps_those_events_away():
 
     assert again["created"] == 0
     assert gw.tables["planner_tasks"] == []
+
+
+def test_a_failed_dedup_read_aborts_rather_than_duplicating_the_calendar():
+    """The import decides what is new by reading which UIDs it already has.
+
+    That read used to swallow its own failures and return no rows, which is
+    indistinguishable from "nothing imported yet" — so a database hiccup made
+    every event in the feed look new and the import duplicated the whole
+    calendar. It must fail the run instead.
+    """
+    tasks, gw = _service()
+    tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))
+    before = len(gw.tables["planner_tasks"])
+
+    real_select = gw.select
+
+    def flaky(table, **kwargs):
+        if table == "planner_tasks" and kwargs.get("columns") == "metadata":
+            raise RuntimeError("connection reset")
+        return real_select(table, **kwargs)
+
+    gw.select = flaky
+    try:
+        raised = False
+        try:
+            tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))
+        except Exception:
+            raised = True
+    finally:
+        gw.select = real_select
+
+    assert raised, "a failed dedup read must not be treated as an empty one"
+    assert len(gw.tables["planner_tasks"]) == before, "the calendar was duplicated"

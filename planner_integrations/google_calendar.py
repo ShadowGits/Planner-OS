@@ -398,17 +398,21 @@ class GoogleCalendarClient:
         )
 
     def _active_links_by_block(self) -> dict[str, dict[str, Any]]:
-        """Load every active Google Calendar link in one call for a sync pass."""
+        """Load every active Google Calendar link in one call for a sync pass.
+
+        Deliberately not guarded: these links are the only record of which
+        blocks already have an event. Answering "none" because the read failed
+        makes every block look new, and the pass then creates a second event
+        for work that is already on the calendar. Failing the sync is the
+        lesser harm — nothing is written, and the next pass tries again.
+        """
 
         if self.external_links is None:
             return {}
-        try:
-            return {
-                str(item["planner_block_id"]): item
-                for item in self.external_links.list(target_name="google_calendar", status="active")
-            }
-        except Exception:
-            return {}
+        return {
+            str(item["planner_block_id"]): item
+            for item in self.external_links.list(target_name="google_calendar", status="active")
+        }
 
     def _linked_event(
         self,

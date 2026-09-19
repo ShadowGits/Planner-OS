@@ -7,6 +7,7 @@ plan, how to phrase advice) stays with the AI client calling the MCP tools.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -14,6 +15,8 @@ from planner_engine.models import DailyPlan, ScheduledBlock
 from zoneinfo import ZoneInfo
 
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
+
+logger = logging.getLogger(__name__)
 
 OPEN_TASK_STATUSES = {"todo", "in_progress", "blocked"}
 CLOSED_TASK_STATUSES = {"done", "skipped"}
@@ -461,22 +464,29 @@ class TaskService:
         # Every UID already imported, so a re-run only adds what is new. Read
         # just the metadata column and match in Python — this runs on an
         # infrequent cron, and it avoids depending on a JSON-path filter.
+        #
+        # Read strictly: if this query fails and comes back empty, every event
+        # in the feed looks new and the import duplicates the entire calendar.
+        # Failing the run is the lesser harm — the next one picks it up.
         seen: set[str] = set()
-        for row in self.repository.list_rows("planner_tasks", columns="metadata"):
+        for row in self.repository.list_rows(
+            "planner_tasks", columns="metadata", strict=True
+        ):
             uid = (row.get("metadata") or {}).get("apple_uid")
             if uid:
                 seen.add(str(uid))
         # An event deleted here stays deleted. Without this the import has no
         # way of telling "never imported" from "imported, then thrown away",
-        # and recreates it on the next sync.
+        # and recreates it on the next sync. Tolerated on a database where the
+        # table is not there yet, but never silently skipped once it is.
         try:
             for row in self.repository.list_rows(
-                "apple_event_tombstones", columns="apple_uid"
+                "apple_event_tombstones", columns="apple_uid", strict=True
             ):
                 if row.get("apple_uid"):
                     seen.add(str(row["apple_uid"]))
-        except Exception:
-            pass
+        except Exception as error:
+            logger.warning("Apple event tombstones unreadable, ignoring them: %s", error)
 
         created = 0
         skipped = 0
@@ -625,22 +635,34 @@ class TaskService:
             return _envelope(True, "No tasks to update", {"updated": []})
         
         updated_tasks = []
+        failed: list[dict[str, str]] = []
         for update in updates:
             task_id = update.get("id")
             if not task_id:
                 continue
-                
+
             allowed = {"scheduled_date", "due_date", "start_time"}
             payload = {k: v for k, v in update.items() if k in allowed}
-            
+
             if payload:
                 try:
                     row = self.repository.update_row("planner_tasks", task_id, payload)
                     updated_tasks.append(row)
-                except Exception:
-                    pass
-                    
-        return _envelope(True, f"{len(updated_tasks)} tasks updated", {"updated": updated_tasks})
+                except Exception as error:
+                    # A row that would not save used to vanish from the result
+                    # entirely, and the envelope still said success — so a drag
+                    # that moved half its tasks reported as if it moved them
+                    # all, and the screen kept the positions it had guessed.
+                    logger.error("Batch reschedule failed for %s: %s", task_id, error)
+                    failed.append({"id": str(task_id), "error": str(error)})
+
+        if failed:
+            message = f"{len(updated_tasks)} tasks updated, {len(failed)} failed"
+        else:
+            message = f"{len(updated_tasks)} tasks updated"
+        return _envelope(
+            not failed, message, {"updated": updated_tasks, "failed": failed}
+        )
 
     def complete_task(self, task_id: str, *, source: str = "mcp", note: str | None = None) -> dict[str, Any]:
         if source not in COMPLETION_SOURCES:
@@ -837,7 +859,9 @@ class TaskService:
         for offset in range(days):
             on_date = today + timedelta(days=offset)
             items = self.day_view(
-                on_date.isoformat(), habit_items=habits_by_day.get(on_date.isoformat(), [])
+                on_date.isoformat(),
+                habit_items=habits_by_day.get(on_date.isoformat(), []),
+                with_slot_context=False,
             )["data"]["items"]
             for block in _blocks_for_day(items, on_date, self.timezone):
                 # A task timed just after midnight is shown on the previous
@@ -878,12 +902,17 @@ class TaskService:
         ids = [str(row["id"]) for row in rows]
         if not ids:
             return set()
+        # Strict: an empty answer here means "nothing was split", so a failed
+        # read would put every umbrella back on the timeline beside its own
+        # slots — the day would read as double the work, and the sync would
+        # write the spare blocks to Google Calendar.
         return {
             str(row["parent_task_id"])
             for row in self.repository.list_rows(
                 "planner_tasks",
                 columns="parent_task_id",
                 query_string=f"parent_task_id=in.({','.join(ids)})",
+                strict=True,
             )
             if row.get("parent_task_id")
         }
@@ -966,7 +995,10 @@ class TaskService:
         return items
 
     def day_view(
-        self, on_date: str | None = None, habit_items: list[dict[str, Any]] | None = None
+        self,
+        on_date: str | None = None,
+        habit_items: list[dict[str, Any]] | None = None,
+        with_slot_context: bool = True,
     ) -> dict[str, Any]:
         """Tasks belonging to one date, shaped for a timeline: tasks with a
         start_time carry their slot, the rest form the unscheduled tray.
@@ -985,7 +1017,10 @@ class TaskService:
         )
         all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
         umbrellas = self._umbrella_ids(all_rows)
-        slot_context = self._slot_context(all_rows)
+        # Naming a slot's parent costs two more queries, and the calendar sync
+        # walks a whole window of days without ever reading those fields — so
+        # it opts out rather than paying for them once per day.
+        slot_context = self._slot_context(all_rows) if with_slot_context else {}
 
         for row in all_rows:
             if str(row["id"]) in umbrellas:
@@ -1936,7 +1971,12 @@ class ReminderService:
         out: list[dict[str, Any]] = []
         try:
             items = self.tasks.timed_items(today)
-        except Exception:
+        except Exception as error:
+            # Still swallowed, so one bad read cannot stop the daily digests
+            # going out — but it is no longer invisible. Without this line a
+            # break in here looked exactly like a quiet day: no reminders, no
+            # error, nothing to find.
+            logger.error("Per-event reminders skipped, timed_items failed: %s", error)
             return out
         for item in items:
             if item.get("done"):
