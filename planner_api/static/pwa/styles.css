@@ -15,6 +15,10 @@
   --now: #e53e3e;
   --go: #1f7a52;
   --go-soft: #e6f4ec;
+  --star: #c98a11;
+  --star-soft: #fdf6e3;
+  --star-line: #eadcb4;
+  --star-ink: #7a5607;
   --shadow-lift: 0 6px 18px rgba(23, 24, 28, 0.16), 0 18px 44px rgba(23, 24, 28, 0.18);
 }
 
@@ -32,6 +36,10 @@
     --now: #fc5c65;
     --go: #5fd39b;
     --go-soft: #172f25;
+    --star: #e8b93d;
+    --star-soft: #2a2415;
+    --star-line: #453a1d;
+    --star-ink: #e8d9a8;
     --shadow-lift: 0 6px 18px rgba(0, 0, 0, 0.5), 0 18px 44px rgba(0, 0, 0, 0.55);
   }
 }
@@ -90,6 +98,60 @@ body {
 .day-pill.selected .num { background: var(--wine); color: #fff; }
 .day-pill .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--wine); opacity: 0; }
 .day-pill.has-tasks .dot { opacity: 0.55; }
+
+/* ---------- today's wins ---------- */
+
+.wins {
+  margin: 10px 16px 0;
+  padding: 9px 13px;
+  border-radius: 14px;
+  background: var(--star-soft);
+  border: 1px solid var(--star-line);
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13px; font-weight: 650; color: var(--star-ink);
+}
+.wins .dots { display: flex; gap: 5px; margin-left: auto; }
+.wins .dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--star-line);
+}
+.wins .dot.hit { background: var(--star); }
+
+/* A star sits on every task; only a starred one is filled in. */
+.star {
+  border: none; background: none; cursor: pointer;
+  padding: 4px; margin: -4px; flex: none; line-height: 1;
+  font-size: 15px; color: var(--ink-3);
+  transition: transform 0.12s ease;
+}
+.star:active { transform: scale(0.85); }
+.star.on { color: var(--star); }
+
+/* A starred row keeps the same shape as the rest — a gold title and a ring in
+   the same gold is enough to find it at a glance, without turning the day into
+   a colour chart. */
+.row.starred .title, .row.starred .ov-title {
+  color: var(--star-ink);
+}
+.row.starred .time-shape, .row.starred .ov-time-shape {
+  box-shadow: 0 0 0 2px var(--star), 0 0 0 6px var(--bg) !important;
+}
+.inbox-card.starred {
+  box-shadow: inset 3px 0 0 var(--star);
+  border-radius: 12px;
+  padding-left: 10px;
+}
+
+/* A timeline task is edited through the sheet, so that is where it gets
+   starred; the row itself only shows the result. */
+.sheet-star {
+  width: 100%; margin-bottom: 8px;
+  padding: 12px; border-radius: 14px; cursor: pointer;
+  font-size: 15px; font-weight: 650;
+  border: 1px solid var(--star-line);
+  background: var(--bg); color: var(--ink-2);
+}
+.sheet-star.on { background: var(--star-soft); color: var(--star-ink); }
 
 /* ---------- inbox tray ---------- */
 

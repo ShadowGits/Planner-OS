@@ -518,3 +518,49 @@ test("each todo carries its own done and schedule buttons", async (t) => {
   assert.ok(patch, "the done button did not tell the server");
   assert.equal(patch.body.done, true);
 });
+
+/* ---------- today's wins ---------- */
+
+test("starring a todo marks it, counts it and tells the server", async (t) => {
+  const { doc, window, calls, close } = await boot({
+    items: [task({ id: "b", title: "Ship the thing", start_time: null })],
+  });
+  t.after(close);
+
+  // Nothing starred yet, so the strip stays out of the way.
+  assert.equal(doc.getElementById("wins").classList.contains("hidden"), true);
+
+  const star = doc.querySelector("#inbox-list .inbox-card .star");
+  assert.ok(star, "a todo should offer a star");
+  star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  const patch = calls.find((c) => c.method === "PATCH" && c.path.includes("/v2/day/tasks/b"));
+  assert.ok(patch, "starring did not reach the server");
+  assert.equal(patch.body.starred, true);
+
+  const wins = doc.getElementById("wins");
+  assert.equal(wins.classList.contains("hidden"), false, "the wins strip should appear");
+  assert.match(wins.textContent, /0 of 1/);
+  assert.ok(doc.querySelector("#inbox-list .inbox-card.starred"), "the card should read as starred");
+});
+
+test("a star the day has no room for does not stay on screen", async (t) => {
+  // The server owns the limit. If it refuses, the screen must not keep showing
+  // a star that was never saved.
+  const { doc, window, close } = await boot({
+    items: [task({ id: "b", title: "Ship the thing", start_time: null })],
+    onRequest: ({ method }) =>
+      method === "PATCH"
+        ? { __status: 400, detail: { code: "TASK_UPDATE_INVALID", message: "already has 5 starred tasks. Unstar one to make room." } }
+        : null,
+  });
+  t.after(close);
+
+  doc.querySelector("#inbox-list .inbox-card .star")
+    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  assert.equal(doc.getElementById("wins").classList.contains("hidden"), true);
+  assert.equal(doc.querySelector("#inbox-list .inbox-card.starred"), null);
+});

@@ -43,6 +43,9 @@
   </header>
 
   <main>
+    <!-- The few tasks the day is judged by, counted so the day has a shape
+         beyond "31 of 44 done". -->
+    <div id="wins" class="wins hidden"></div>
     <section id="inbox" class="inbox hidden">
       <div class="inbox-head">Todos</div>
       <div id="inbox-list" class="inbox-list"></div>
@@ -90,6 +93,7 @@
         </div>
       </label>
     </div>
+    <button id="sheet-star" class="sheet-star hidden" type="button"></button>
     <button id="sheet-save" class="sheet-save">Add to day</button>
     <div style="display:flex; gap:8px;">
       <button id="sheet-split" class="sheet-delete hidden" style="flex:1; background:var(--bg-2); color:var(--ink); border:1px solid var(--line);">Split Block</button>

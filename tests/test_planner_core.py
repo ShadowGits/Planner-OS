@@ -10,6 +10,7 @@ import pytest
 
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
 from planner_core.services import (
+    MAX_STARRED_PER_DAY,
     OVERDUE_LIST_LIMIT,
     FinanceService,
     HabitService,
@@ -1597,3 +1598,79 @@ def test_the_small_hours_of_the_next_day_still_belong_to_todays_view(services):
     # breakfast.
     assert by_title["Late night edit"]["start_time"] == "28:00:00"
     assert by_title["Deep night"]["start_time"] == "25:30:00"
+
+
+# ---------------------------------------------------------------------------
+# starred tasks — the few a day is judged by
+# ---------------------------------------------------------------------------
+
+
+def test_starring_marks_a_task_and_the_day_counts_them(services):
+    tasks, _, _, _ = services
+    day = _today().isoformat()
+    a = tasks.create_task("Ship the thing", scheduled_date=day)["data"]["task"]
+    tasks.create_task("Tidy inbox", scheduled_date=day)
+
+    tasks.update_task(a["id"], {"starred": True})
+    view = tasks.day_view(day)["data"]
+
+    starred = [item for item in view["items"] if item.get("starred")]
+    assert [item["title"] for item in starred] == ["Ship the thing"]
+    assert view["starred_total"] == 1
+    assert view["starred_done"] == 0
+
+    tasks.complete_task(a["id"])
+    assert tasks.day_view(day)["data"]["starred_done"] == 1
+
+
+def test_a_day_refuses_more_stars_than_its_budget(services):
+    """The cap is the feature: without it the stars become a second todo list
+    and the day has no shape again."""
+    tasks, _, _, _ = services
+    day = _today().isoformat()
+    made = [
+        tasks.create_task(f"Task {i}", scheduled_date=day)["data"]["task"]
+        for i in range(MAX_STARRED_PER_DAY + 1)
+    ]
+    for task in made[:MAX_STARRED_PER_DAY]:
+        tasks.update_task(task["id"], {"starred": True})
+
+    try:
+        tasks.update_task(made[-1]["id"], {"starred": True})
+    except PlannerCoreError as error:
+        assert "Unstar one" in str(error)
+    else:
+        raise AssertionError("the budget should have refused the extra star")
+
+    assert tasks.day_view(day)["data"]["starred_total"] == MAX_STARRED_PER_DAY
+
+
+def test_restarring_an_already_starred_task_costs_nothing(services):
+    """Saving a starred task again must not read as spending another slot."""
+    tasks, _, _, _ = services
+    day = _today().isoformat()
+    made = [
+        tasks.create_task(f"Task {i}", scheduled_date=day)["data"]["task"]
+        for i in range(MAX_STARRED_PER_DAY)
+    ]
+    for task in made:
+        tasks.update_task(task["id"], {"starred": True})
+
+    tasks.update_task(made[0]["id"], {"starred": True})
+
+    assert tasks.day_view(day)["data"]["starred_total"] == MAX_STARRED_PER_DAY
+
+
+def test_a_starred_task_keeps_its_star_when_it_moves_to_another_day(services):
+    """It did not stop mattering by being missed."""
+    tasks, _, _, _ = services
+    today = _today()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    task = tasks.create_task("Ship the thing", scheduled_date=today.isoformat())["data"]["task"]
+    tasks.update_task(task["id"], {"starred": True})
+
+    tasks.update_task(task["id"], {"scheduled_date": tomorrow})
+
+    assert tasks.day_view(today.isoformat())["data"]["starred_total"] == 0
+    moved = tasks.day_view(tomorrow)["data"]
+    assert moved["starred_total"] == 1

@@ -39,6 +39,10 @@ OVERDUE_LIST_LIMIT = 200
 SPILLOVER_CUTOFF = "06:00:00"
 MILESTONE_DRIFT_AMBER = 0.10
 MILESTONE_DRIFT_RED = 0.25
+# How many tasks a day can be starred as the ones that decide whether it went
+# well. The limit is the feature: star everything and the day has no shape
+# again, which is the problem starring was meant to solve.
+MAX_STARRED_PER_DAY = 5
 # task_completions.source carries a check constraint in the database listing
 # exactly these. Naming them here means an unknown value is refused with a
 # clear message instead of the insert failing with a 500 nobody can read.
@@ -598,6 +602,7 @@ class TaskService:
             "notes",
             "parent_task_id",
             "depends_on",
+            "starred",
             # free-form columns a project brings with it: the study plan's
             # Subject and Source, for instance
             "metadata",
@@ -610,9 +615,43 @@ class TaskService:
             raise PlannerCoreError(f"Invalid task status: {status}")
         if "start_time" in payload:
             _parse_time(payload["start_time"])
+        if payload.get("starred"):
+            self._check_star_budget(task_id, payload.get("scheduled_date"))
 
         row = self.repository.update_row("planner_tasks", task_id, payload)
         return _envelope(True, f"Task updated: {row['title']}", {"task": row})
+
+    def _check_star_budget(self, task_id: str, moving_to: str | None = None) -> None:
+        """Refuse a star once the day is full.
+
+        The cap is the point of the feature, so it is enforced here rather than
+        only in the screen that draws the stars — otherwise the limit lasts
+        exactly as long as it takes to star something from somewhere else.
+        """
+        existing = self.repository.get_row("planner_tasks", task_id)
+        if existing is None:
+            raise PlannerCoreError(f"Task was not found: {task_id}")
+        if existing.get("starred") and not moving_to:
+            return  # already starred on its own day; nothing new is being spent
+
+        day = moving_to or existing.get("scheduled_date")
+        if not day:
+            return  # no day to be a highlight of, so no budget to spend
+
+        starred = [
+            row
+            for row in self.repository.list_rows(
+                "planner_tasks",
+                {"scheduled_date": str(day)[:10], "starred": True},
+                columns="id",
+            )
+            if str(row.get("id")) != str(task_id)
+        ]
+        if len(starred) >= MAX_STARRED_PER_DAY:
+            raise PlannerCoreError(
+                f"{day} already has {MAX_STARRED_PER_DAY} starred tasks. "
+                "Unstar one to make room."
+            )
 
     def _tombstone_apple_events(self, rows: list[dict[str, Any]]) -> None:
         """Record that these tasks' calendar events were deleted here.
@@ -1106,6 +1145,8 @@ class TaskService:
                     # lets the timeline tag a slot as part of a split task,
                     # and name the task it is a part of
                     "parent_task_id": row.get("parent_task_id"),
+                    # One of the few tasks this day is being judged by.
+                    "starred": bool(row.get("starred")),
                     **{
                         key: value
                         for key, value in slot_context.get(str(row["id"]), {}).items()
@@ -1124,6 +1165,8 @@ class TaskService:
             )
         )
         done_count = len([item for item in items if item["done"]])
+        starred = [item for item in items if item.get("starred")]
+        starred_done = len([item for item in starred if item["done"]])
         return _envelope(
             True,
             f"{done_count} of {len(items)} done on {target.isoformat()}",
@@ -1132,6 +1175,11 @@ class TaskService:
                 "items": items,
                 "done_count": done_count,
                 "total_count": len(items),
+                # What the day is actually being judged by, so the screen can
+                # say "2 of 3" without counting the other forty tasks.
+                "starred_done": starred_done,
+                "starred_total": len(starred),
+                "starred_limit": MAX_STARRED_PER_DAY,
             },
         )
 

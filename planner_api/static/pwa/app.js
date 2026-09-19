@@ -402,6 +402,7 @@
 
     renderInbox(inbox);
     renderUnscheduledPill(inbox);
+    renderWins();
 
     const list = $("list");
     list.innerHTML = "";
@@ -461,14 +462,19 @@
     const dur = task.estimated_minutes || 30;
     const row = document.createElement("div");
     const isOverlap = layout && layout.totalCols > 1;
-    row.className = "row" + (task.done ? " done" : "") + (isOverlap ? " overlap" : "");
+    row.className =
+      "row" +
+      (task.done ? " done" : "") +
+      (isOverlap ? " overlap" : "") +
+      (task.starred ? " starred" : "");
     row.style.top = `${(start - top0) * PX_PER_MIN}px`;
     row.style.height = `${Math.max(MIN_ROW_PX, dur * PX_PER_MIN)}px`;
     row.style.setProperty("--ring", ringFor(task.title));
     row.style.setProperty("--task-bg", pastelFor(task.title));
 
     const recur = task.recurrence_key ? " ↻" : "";
-    const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
+    const starMark = task.starred ? "★ " : "";
+    const timeLabel = starMark + `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
 
     if (isOverlap) {
       // Side by side, each in its own column of the shared time span. The
@@ -700,6 +706,60 @@
     }
   }
 
+  /* ---------- today's wins ---------- */
+
+  const STAR_LIMIT = 5;
+
+  // A day is forty-odd tasks, most of them upkeep. These are the few it is
+  // actually judged by, counted on their own so "2 of 3" means something that
+  // "31 of 44 done" never does.
+  function renderWins() {
+    const box = $("wins");
+    if (!box) return;
+    const starred = state.items.filter((t) => t.starred);
+    box.classList.toggle("hidden", starred.length === 0);
+    if (!starred.length) return;
+    const hit = starred.filter((t) => t.done).length;
+    const dots = starred
+      .map((t) => `<span class="dot${t.done ? " hit" : ""}"></span>`)
+      .join("");
+    box.innerHTML =
+      `<span>⭐️</span><span>${hit === starred.length
+        ? "Day won"
+        : `Today's wins · ${hit} of ${starred.length}`}</span>` +
+      `<span class="dots">${dots}</span>`;
+  }
+
+  // Toggling is optimistic, and the server owns the limit: it refuses a star
+  // the day has no room for, so the screen puts it back rather than showing a
+  // sixth that was never saved.
+  async function toggleStar(task) {
+    const next = !task.starred;
+    task.starred = next;
+    render();
+    try {
+      await api("PATCH", `/v2/day/tasks/${task.id}`, { starred: next });
+    } catch (e) {
+      task.starred = !next;
+      render();
+      showError(e);
+    }
+  }
+
+  function starButton(task) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `star${task.starred ? " on" : ""}`;
+    btn.textContent = task.starred ? "★" : "☆";
+    btn.title = task.starred ? "One of today's wins" : `Mark as one of today's wins (max ${STAR_LIMIT})`;
+    btn.setAttribute("aria-label", btn.title);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleStar(task);
+    });
+    return btn;
+  }
+
   /* ---------- unscheduled pill ---------- */
 
   // A floating count of tasks with no time yet. The inbox tray sits at the top
@@ -729,14 +789,20 @@
     box.classList.toggle("hidden", items.length === 0);
     const list = $("inbox-list");
     list.innerHTML = "";
-    for (const task of items) {
+    // Starred first: if a todo is one of the day's wins it should not be
+    // somewhere down a list of forty.
+    const ordered = [...items].sort(
+      (a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0)
+    );
+    for (const task of ordered) {
       const card = document.createElement("div");
-      card.className = "inbox-card";
+      card.className = `inbox-card${task.starred ? " starred" : ""}`;
       if (task.done) card.style.opacity = "0.55";
       card.innerHTML = `
         <div class="icon" style="background:${pastelFor(task.title)}">${task.done ? "✓" : emojiFor(task.title)}</div>
         <div class="t"${task.done ? ' style="text-decoration:line-through"' : ""}>${escapeHtml(task.title)}</div>`;
       if (!task.done) {
+        card.insertBefore(starButton(task), card.querySelector(".t").nextSibling);
         // Two squircles: tick it off, or give it a time. Done used to mean
         // tapping the emoji, which nothing on screen suggested, so it may as
         // well not have existed.
@@ -813,6 +879,8 @@
     $("sheet-save").textContent = "Add to day";
     $("sheet-delete").classList.add("hidden");
     $("sheet-split").classList.add("hidden");
+    // Nothing to star until the task exists.
+    $("sheet-star").classList.add("hidden");
     $("new-title").value = "";
     $("new-title").disabled = false;
     $("new-date").value = iso(state.selected);
@@ -833,7 +901,25 @@
     $("new-date").value = task.scheduled_date || iso(state.selected);
     $("new-time").value = task.start_time ? task.start_time.slice(0, 5) : "";
     setDuration(task.estimated_minutes || 30);
+    refreshSheetStar(task);
     openSheetEl();
+  }
+
+  function refreshSheetStar(task) {
+    const btn = $("sheet-star");
+    if (!btn) return;
+    btn.classList.remove("hidden");
+    const paint = () => {
+      btn.classList.toggle("on", !!task.starred);
+      btn.textContent = task.starred
+        ? "★  One of today's wins"
+        : "☆  Mark as one of today's wins";
+    };
+    paint();
+    btn.onclick = async () => {
+      await toggleStar(task);
+      paint();
+    };
   }
 
   function openSheetEl() {
