@@ -717,8 +717,16 @@
     const box = $("wins");
     if (!box) return;
     const starred = state.items.filter((t) => t.starred);
-    box.classList.toggle("hidden", starred.length === 0);
-    if (!starred.length) return;
+    // Shown even with nothing starred yet. Hiding it until the first star
+    // meant the one thing that explains the feature only appeared once you
+    // had already found it.
+    box.classList.toggle("hidden", state.items.length === 0);
+    box.classList.toggle("empty", starred.length === 0);
+    if (!starred.length) {
+      box.innerHTML =
+        `<span>☆</span><span>Pick today's wins — tap ☆ on up to ${STAR_LIMIT} tasks</span>`;
+      return;
+    }
     const hit = starred.filter((t) => t.done).length;
     const dots = starred
       .map((t) => `<span class="dot${t.done ? " hit" : ""}"></span>`)

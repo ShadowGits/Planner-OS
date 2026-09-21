@@ -117,6 +117,15 @@ body {
 }
 .wins .dot.hit { background: var(--star); }
 
+/* Nothing picked yet: present, so the feature can be found, but quiet enough
+   not to nag on a day you never use it. */
+.wins.empty {
+  background: none;
+  border-style: dashed;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
 /* A star sits on every task; only a starred one is filled in. */
 .star {
   border: none; background: none; cursor: pointer;

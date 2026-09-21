@@ -527,8 +527,12 @@ test("starring a todo marks it, counts it and tells the server", async (t) => {
   });
   t.after(close);
 
-  // Nothing starred yet, so the strip stays out of the way.
-  assert.equal(doc.getElementById("wins").classList.contains("hidden"), true);
+  // Nothing starred yet, but the strip is still there inviting you to pick —
+  // hiding it until the first star meant the one thing explaining the feature
+  // only showed up once you had already found it.
+  assert.equal(doc.getElementById("wins").classList.contains("hidden"), false);
+  assert.equal(doc.getElementById("wins").classList.contains("empty"), true);
+  assert.match(doc.getElementById("wins").textContent, /Pick today's wins/);
 
   const star = doc.querySelector("#inbox-list .inbox-card .star");
   assert.ok(star, "a todo should offer a star");
@@ -561,6 +565,7 @@ test("a star the day has no room for does not stay on screen", async (t) => {
     .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
 
-  assert.equal(doc.getElementById("wins").classList.contains("hidden"), true);
+  // Back to the empty prompt, not a count of one that was never saved.
+  assert.equal(doc.getElementById("wins").classList.contains("empty"), true);
   assert.equal(doc.querySelector("#inbox-list .inbox-card.starred"), null);
 });
