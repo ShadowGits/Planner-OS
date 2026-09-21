@@ -1021,6 +1021,22 @@ def test_spending_logged_against_a_line_reduces_what_is_left_to_fund(plan):
     assert data["totals"]["cost_paid"] == 8000.0
 
 
+def test_overspending_a_cost_is_reported_rather_than_swallowed(plan):
+    item = plan.add_plan_item("cost", "IELTS", 17000, due_date="2027-01-10")["data"]["item"]
+    plan.log_transaction("IELTS booking", 32000, plan_item_id=str(item["id"]))
+
+    data = plan.plan_overview(as_of="2026-10-01")["data"]
+    cost = data["costs"][0]
+
+    assert cost["over_by"] == 15000.0
+    assert data["totals"]["cost_overspend"] == 15000.0
+    # The extra has already left the account, so it must not also be counted
+    # as still owing, or the shortfall would double it.
+    assert cost["outstanding"] == 0.0
+    assert cost["progress_pct"] == 100.0
+    assert data["timeline"]["months"] == []
+
+
 def test_a_refund_against_a_cost_line_gives_the_money_back(plan):
     item = plan.add_plan_item("cost", "Exam fee", 20000, due_date="2027-01-10")["data"]["item"]
     plan.log_transaction("Exam fee", 20000, plan_item_id=str(item["id"]))

@@ -2201,6 +2201,11 @@ EXPENSE_CATEGORIES = (
     "Food", "Groceries", "Transport", "Rent", "Utilities", "Health",
     "Education", "Shopping", "Entertainment", "Subscriptions", "Travel",
     "Savings", "Fees", "Family", "Other",
+    # The funding plan's cost categories are first-class here too. Ticking a
+    # plan line as paid writes a real passbook row, and mapping "Tests" onto
+    # "Education" on the way in would hide the move's spending inside ordinary
+    # study costs — the one split the monthly summary most needs to show.
+    "Tests", "Tuition", "Applications", "Courses", "Documents", "Visa", "Living",
 )
 INCOME_CATEGORIES = ("Salary", "Freelance", "Refund", "Gift", "Interest", "Other")
 TRANSACTION_TYPES = {"expense", "income"}
@@ -2593,6 +2598,7 @@ class FinanceService:
             "cost_estimate": round(sum(i["estimate"] for i in costs), 2),
             "cost_paid": round(sum(i["settled"] for i in costs), 2),
             "cost_outstanding": cost_left,
+            "cost_overspend": round(sum(i["over_by"] for i in costs), 2),
             "fund_expected": round(sum(i["estimate"] for i in counted), 2),
             "fund_received": round(sum(i["settled"] for i in counted), 2),
             "fund_outstanding": fund_left,
@@ -2674,6 +2680,11 @@ class FinanceService:
             "estimate": estimate,
             "settled": settled,
             "outstanding": round(max(estimate - settled, 0.0), 2),
+            # Deliberately not folded into outstanding or the gap. Money spent
+            # over an estimate has already left the account, so it belongs
+            # against the cash-in-hand line rather than counted twice here.
+            # Reported on its own so overspending is loud instead of silent.
+            "over_by": round(max(settled - estimate, 0.0), 2),
             "progress_pct": round(min(settled / estimate * 100, 100), 1) if estimate else 0.0,
             "sort_order": int(row.get("sort_order") or 0),
             "notes": row.get("notes"),
