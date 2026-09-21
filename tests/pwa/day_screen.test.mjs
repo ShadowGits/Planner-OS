@@ -569,3 +569,27 @@ test("a star the day has no room for does not stay on screen", async (t) => {
   assert.equal(doc.getElementById("wins").classList.contains("empty"), true);
   assert.equal(doc.querySelector("#inbox-list .inbox-card.starred"), null);
 });
+
+test("a timed task can be starred from its row, and leads the day by name", async (t) => {
+  // It used to be starrable only through the edit sheet, so a timed task cost
+  // two taps where a todo cost one.
+  const { doc, window, calls, close } = await boot({
+    items: [task({ id: "a", title: "Deep work", start_time: "09:00" })],
+  });
+  t.after(close);
+
+  const star = rowFor(doc, "Deep work").querySelector(".star");
+  assert.ok(star, "a timed row should carry its own star");
+  star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  const patch = calls.find((c) => c.method === "PATCH" && c.path.includes("/v2/day/tasks/a"));
+  assert.ok(patch && patch.body.starred === true, "starring the row did not reach the server");
+
+  // The timeline stays in time order, so the strip is where a starred task
+  // gets to lead the day.
+  const chips = [...doc.querySelectorAll("#wins .win-chip")].map((c) => c.textContent);
+  assert.equal(chips.length, 1);
+  assert.match(chips[0], /Deep work/);
+  assert.ok(rowFor(doc, "Deep work").classList.contains("starred"));
+});

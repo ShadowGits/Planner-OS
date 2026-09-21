@@ -473,8 +473,9 @@
     row.style.setProperty("--task-bg", pastelFor(task.title));
 
     const recur = task.recurrence_key ? " ↻" : "";
-    const starMark = task.starred ? "★ " : "";
-    const timeLabel = starMark + `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
+    // No ★ in the text: the row carries a real star button, which shows the
+    // same state and can be tapped.
+    const timeLabel = `${fmtClock(start)} – ${fmtClock(start + dur)} (${fmtDur(dur)})${recur}` + (task.parent_task_id ? " 🔗 (Part)" : "");
 
     if (isOverlap) {
       // Side by side, each in its own column of the shared time span. The
@@ -518,6 +519,15 @@
     }
 
     if (task.pending) row.classList.add("pending");
+    // Lets the wins strip find this row to scroll to it.
+    row._taskId = task.id;
+
+    // A star on the row itself. It used to live only in the edit sheet, so a
+    // timed task cost two taps to star while a todo cost one.
+    if (!task.pending) {
+      const meta = row.querySelector(".meta, .ov-time");
+      if (meta) meta.insertBefore(starButton(task), meta.firstChild);
+    }
 
     row.querySelector(".ring").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -728,14 +738,29 @@
       return;
     }
     const hit = starred.filter((t) => t.done).length;
-    const dots = starred
-      .map((t) => `<span class="dot${t.done ? " hit" : ""}"></span>`)
-      .join("");
     box.innerHTML =
-      `<span>⭐️</span><span>${hit === starred.length
+      `<div class="wins-head"><span>⭐️</span><span>${hit === starred.length
         ? "Day won"
-        : `Today's wins · ${hit} of ${starred.length}`}</span>` +
-      `<span class="dots">${dots}</span>`;
+        : `Today's wins · ${hit} of ${starred.length}`}</span></div>` +
+      `<div class="wins-list"></div>`;
+
+    // The timeline is ordered by time, so a starred task cannot move to the
+    // top without sitting at the wrong hour. Naming them here puts them at the
+    // top instead, and tapping one jumps to where it actually sits.
+    const list = box.querySelector(".wins-list");
+    for (const task of starred) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = `win-chip${task.done ? " done" : ""}`;
+      chip.textContent = `${task.done ? "✓" : "○"} ${task.title}`;
+      chip.addEventListener("click", () => {
+        const row = [...document.querySelectorAll("#list .row")].find(
+          (el) => el._taskId === task.id
+        );
+        if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      list.appendChild(chip);
+    }
   }
 
   // Toggling is optimistic, and the server owns the limit: it refuses a star

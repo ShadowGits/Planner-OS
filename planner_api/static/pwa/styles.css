@@ -110,12 +110,22 @@ body {
   display: flex; align-items: center; gap: 9px;
   font-size: 13px; font-weight: 650; color: var(--star-ink);
 }
-.wins .dots { display: flex; gap: 5px; margin-left: auto; }
-.wins .dot {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: var(--star-line);
+.wins { flex-direction: column; align-items: stretch; gap: 7px; }
+.wins-head { display: flex; align-items: center; gap: 9px; }
+
+/* The starred tasks by name, at the top. Their rows stay at their real times
+   down the timeline, so this is the only place they can lead the day. */
+.wins-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.win-chip {
+  border: 1px solid var(--star-line);
+  background: var(--bg);
+  color: var(--star-ink);
+  font-size: 12.5px; font-weight: 650;
+  padding: 5px 10px; border-radius: 999px;
+  cursor: pointer; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.wins .dot.hit { background: var(--star); }
+.win-chip.done { opacity: 0.6; text-decoration: line-through; }
 
 /* Nothing picked yet: present, so the feature can be found, but quiet enough
    not to nag on a day you never use it. */
