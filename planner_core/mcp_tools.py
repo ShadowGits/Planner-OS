@@ -399,13 +399,14 @@ def register_core_tools(server: Any) -> None:
         merchant: str | None = None,
         payment_method: str | None = None,
         goal_id: str | None = None,
+        plan_item_id: str | None = None,
         notes: str | None = None,
     ) -> str:
-        """Log money spent. Amount is a positive number; currency is INR (default, day-to-day spending) or EUR (Germany costs). Date defaults to today, YYYY-MM-DD otherwise. Pick category from: Food, Groceries, Transport, Rent, Utilities, Health, Education, Shopping, Entertainment, Subscriptions, Travel, Savings, Fees, Family, Other — reuse these exact names so monthly summaries stay consistent. Pass goal_id when the spend is a transfer into a savings goal (use core_finance_goals to find the id)."""
+        """Log money spent. Amount is a positive number; currency is INR (default, day-to-day spending) or EUR (Germany costs). Date defaults to today, YYYY-MM-DD otherwise. Pick category from: Food, Groceries, Transport, Rent, Utilities, Health, Education, Shopping, Entertainment, Subscriptions, Travel, Savings, Fees, Family, Other — reuse these exact names so monthly summaries stay consistent. Pass goal_id when the spend is a transfer into a savings goal (use core_finance_goals to find the id). Pass plan_item_id when the spend is one of the costs budgeted in the funding plan (use core_plan_overview to find the id) — that is what makes the plan show estimate against actual."""
         result = _core().finance.log_transaction(
             description, amount, on_date=date, category=category, currency=currency,
             kind="expense", merchant=merchant, payment_method=payment_method,
-            goal_id=goal_id, notes=notes,
+            goal_id=goal_id, plan_item_id=plan_item_id, notes=notes,
         )
         return json.dumps(result)
 
@@ -427,7 +428,7 @@ def register_core_tools(server: Any) -> None:
 
     @server.tool(name="core_update_transaction")
     def core_update_transaction(transaction_id: str, updates: dict) -> str:
-        """Correct a logged transaction. Updatable fields: date, description, amount, currency, type, category, merchant, payment_method, goal_id, notes."""
+        """Correct a logged transaction. Updatable fields: date, description, amount, currency, type, category, merchant, payment_method, goal_id, plan_item_id, notes."""
         result = _core().finance.update_transaction(transaction_id, updates)
         return json.dumps(result)
 
@@ -461,6 +462,59 @@ def register_core_tools(server: Any) -> None:
     def core_finance_goals() -> str:
         """Savings goals with real progress: the hand-set baseline plus every transaction logged against each goal. Contributions made in a different currency to the goal are reported separately rather than converted."""
         result = _core().finance.goal_progress()
+        return json.dumps(result)
+
+    @server.tool(name="core_plan_overview")
+    def core_plan_overview(include_unconfirmed: bool = True, as_of: str | None = None) -> str:
+        """The funding plan for the move: every budgeted cost against every source of money, both net of what has already been spent or received, plus a month-by-month cash-flow walk.
+
+        Read two numbers off it, and do not confuse them. totals.gap is whether there is enough money at all — negative means a real shortfall. totals.loan_needed is the worst the running balance ever gets, which is the bridge loan required even when the plan is fully funded, because money arriving in March does not pay a bill due in January; totals.loan_by_month says when it is first needed. status is green (covered), amber (funded but mistimed) or red (genuinely short).
+
+        Amounts are converted into totals.base_currency at the plan's own hand-set eur_rate, never a live one. Set include_unconfirmed to false to see the picture using only funding marked confirmed. timeline.undated_costs lists costs that count towards the gap but could not be placed on the timeline because they have no date — give them one for the loan figure to be trustworthy."""
+        result = _core().finance.plan_overview(
+            include_unconfirmed=include_unconfirmed, as_of=as_of
+        )
+        return json.dumps(result)
+
+    @server.tool(name="core_add_plan_item")
+    def core_add_plan_item(
+        kind: str,
+        label: str,
+        amount: float,
+        currency: str = "INR",
+        category: str | None = None,
+        due_date: str | None = None,
+        instalments: int = 1,
+        certainty: str = "likely",
+        notes: str | None = None,
+    ) -> str:
+        """Add one line to the funding plan. kind is 'cost' (money going out — a test fee, tuition, an application) or 'fund' (money coming in — savings, salary put aside, family help, a loan).
+
+        amount is PER INSTALMENT, not the total: saving 40,000 a month for ten months is amount 40000 with instalments 10, while a one-off fee is amount 12000 with instalments 1. due_date is when a cost is payable or when funding becomes available, and instalments repeat monthly from it. Leave due_date out for money already in hand; leaving it out on a cost keeps it in the totals but out of the cash-flow timeline.
+
+        certainty applies to funding: 'confirmed' (committed), 'likely' (default) or 'maybe'. Cost categories: Tests, Tuition, Applications, Courses, Documents, Visa, Travel, Living, Family, Other. Funding categories: Savings, Salary, Family, Sale, Scholarship, Loan, Other."""
+        result = _core().finance.add_plan_item(
+            kind, label, amount, currency=currency, category=category,
+            due_date=due_date, instalments=instalments, certainty=certainty, notes=notes,
+        )
+        return json.dumps(result)
+
+    @server.tool(name="core_update_plan_item")
+    def core_update_plan_item(item_id: str, updates: dict) -> str:
+        """Correct one line of the funding plan. Updatable fields: label, category, amount (per instalment), currency, due_date, instalments, certainty, notes, sort_order, kind."""
+        result = _core().finance.update_plan_item(item_id, updates)
+        return json.dumps(result)
+
+    @server.tool(name="core_delete_plan_item")
+    def core_delete_plan_item(item_id: str) -> str:
+        """Remove a line from the funding plan. Spending already logged against it stays in the passbook and simply stops being attributed to the plan."""
+        result = _core().finance.delete_plan_item(item_id)
+        return json.dumps(result)
+
+    @server.tool(name="core_update_plan")
+    def core_update_plan(updates: dict) -> str:
+        """Change the funding plan itself. Updatable fields: name, base_currency, eur_rate (how many units of the base currency one euro is worth, used for every conversion in the plan), notes."""
+        result = _core().finance.update_plan(updates)
         return json.dumps(result)
 
     @server.tool(name="core_add_recurring_charge")

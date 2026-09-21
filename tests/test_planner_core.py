@@ -64,6 +64,13 @@ TABLE_DEFAULTS = {
         "skipped": False,
     },
     "reminder_log": {"channel": "telegram", "payload": None},
+    # Mirrors migration 0032: without these a plan line reads as having no
+    # instalments and an unknown certainty.
+    "finance_plans": {"base_currency": "INR", "eur_rate": 100, "notes": None},
+    "finance_plan_items": {
+        "category": None, "due_date": None, "instalments": 1,
+        "certainty": "likely", "notes": None, "sort_order": 0,
+    },
 }
 
 class MemoryGateway:
@@ -286,6 +293,11 @@ class MemoryGateway:
     CHECKS = {
         "task_completions": {"source": {"mcp", "telegram", "dashboard", "api"}},
         "planner_tasks": {"status": {"todo", "in_progress", "blocked", "done", "skipped"}},
+        # Migration 0032.
+        "finance_plan_items": {
+            "kind": {"cost", "fund"},
+            "certainty": {"confirmed", "likely", "maybe"},
+        },
     }
 
     def insert(self, table, payload):
@@ -783,6 +795,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_add_habit",
         "core_add_milestone",
         "core_add_monthly_goal",
+        "core_add_plan_item",
         "core_add_project_qna",
         "core_add_project_widget",
         "core_add_recurring_charge",
@@ -794,6 +807,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_create_tasks_batch",
         "core_delete_habit",
         "core_delete_monthly_goal",
+        "core_delete_plan_item",
         "core_delete_project_qna",
         "core_delete_project_widget",
         "core_delete_recurring_charge",
@@ -811,6 +825,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_log_expense",
         "core_log_income",
         "core_metrics",
+        "core_plan_overview",
         "core_reopen_habit_day",
         "core_reschedule_habit_day",
         "core_skip_habit_day",
@@ -819,6 +834,8 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_update_habit",
         "core_update_milestone",
         "core_update_monthly_goal",
+        "core_update_plan",
+        "core_update_plan_item",
         "core_update_project",
         "core_update_project_qna",
         "core_update_project_widget",
@@ -936,6 +953,193 @@ def test_goal_progress_reports_other_currencies_separately(finance, repo):
     assert tracked["saved_amount"] == 0.0
     assert tracked["progress_pct"] == 0.0
     assert tracked["other_currency_contributions"] == {"INR": 90000.0}
+
+
+# ----------------------------------------------------------- funding plan ---
+
+
+@pytest.fixture()
+def plan(finance, repo):
+    """A plan priced in rupees at a round 100 to the euro, so a converted line
+    is readable at a glance and the arithmetic below stays checkable."""
+    repo.insert_row(
+        "finance_plans",
+        {"name": "Germany move", "base_currency": "INR", "eur_rate": 100},
+    )
+    return finance
+
+
+def test_plan_overview_without_a_plan_says_so_rather_than_failing(finance):
+    assert finance.plan_overview()["data"]["plan"] is None
+
+
+def test_plan_separates_not_enough_money_from_not_enough_in_time(plan):
+    plan.add_plan_item("cost", "Tuition instalment", 300000, due_date="2027-01-10")
+    plan.add_plan_item("fund", "Fixed deposit matures", 350000, due_date="2027-03-01")
+
+    totals = plan.plan_overview(as_of="2026-10-01")["data"]["totals"]
+
+    # Enough money overall, but none of it lands before the January bill, so
+    # the two numbers disagree on purpose.
+    assert totals["gap"] == 50000.0
+    assert totals["loan_needed"] == 300000.0
+    assert totals["loan_by_month"] == "2027-01"
+    assert totals["status"] == "amber"
+
+
+def test_plan_is_red_when_the_money_does_not_cover_the_costs(plan):
+    plan.add_plan_item("cost", "Tuition", 500000, due_date="2027-01-10")
+    plan.add_plan_item("fund", "Savings", 200000)
+
+    totals = plan.plan_overview(as_of="2026-10-01")["data"]["totals"]
+
+    assert totals["gap"] == -300000.0
+    assert totals["status"] == "red"
+
+
+def test_plan_is_green_when_the_money_is_already_in_hand(plan):
+    plan.add_plan_item("cost", "IELTS", 17000, due_date="2027-01-10")
+    plan.add_plan_item("fund", "Current savings", 50000)  # no date: in the bank
+
+    totals = plan.plan_overview(as_of="2026-10-01")["data"]["totals"]
+
+    assert totals["status"] == "green"
+    assert totals["loan_needed"] == 0.0
+
+
+def test_spending_logged_against_a_line_reduces_what_is_left_to_fund(plan):
+    item = plan.add_plan_item("cost", "APS certificate", 20000, due_date="2027-01-10")["data"]["item"]
+    plan.log_transaction("APS application fee", 8000, plan_item_id=str(item["id"]))
+
+    data = plan.plan_overview(as_of="2026-10-01")["data"]
+    cost = data["costs"][0]
+
+    assert cost["estimate"] == 20000.0
+    assert cost["settled"] == 8000.0
+    assert cost["outstanding"] == 12000.0
+    assert cost["progress_pct"] == 40.0
+    assert data["totals"]["cost_paid"] == 8000.0
+
+
+def test_a_refund_against_a_cost_line_gives_the_money_back(plan):
+    item = plan.add_plan_item("cost", "Exam fee", 20000, due_date="2027-01-10")["data"]["item"]
+    plan.log_transaction("Exam fee", 20000, plan_item_id=str(item["id"]))
+    plan.log_transaction(
+        "Exam cancelled, part refunded", 5000, kind="income", plan_item_id=str(item["id"])
+    )
+
+    cost = plan.plan_overview(as_of="2026-10-01")["data"]["costs"][0]
+
+    assert cost["settled"] == 15000.0
+    assert cost["outstanding"] == 5000.0
+
+
+def test_instalments_already_banked_drop_off_the_front_of_the_schedule(plan):
+    item = plan.add_plan_item(
+        "fund", "Monthly saving", 40000, due_date="2026-10-01", instalments=10
+    )["data"]["item"]
+    plan.log_transaction("October saving", 40000, kind="income", plan_item_id=str(item["id"]))
+    plan.log_transaction("November saving", 40000, kind="income", plan_item_id=str(item["id"]))
+
+    data = plan.plan_overview(as_of="2026-12-01")["data"]
+    months = [m["month"] for m in data["timeline"]["months"]]
+
+    assert data["funds"][0]["outstanding"] == 320000.0
+    # Two of the ten are already in the bank, so eight months are still to
+    # come — not ten smaller ones.
+    assert months == [
+        "2026-12", "2027-01", "2027-02", "2027-03",
+        "2027-04", "2027-05", "2027-06", "2027-07",
+    ]
+
+
+def test_euro_lines_convert_at_the_plans_own_rate(plan):
+    plan.add_plan_item("cost", "Blocked account", 11904, currency="EUR", due_date="2027-02-01")
+
+    data = plan.plan_overview(as_of="2026-10-01")["data"]
+
+    assert data["costs"][0]["estimate"] == 1190400.0
+    assert data["totals"]["eur_rate"] == 100.0
+
+
+def test_an_overdue_cost_moves_to_the_current_month(plan):
+    plan.add_plan_item("cost", "Fee that slipped", 5000, due_date="2026-08-01")
+
+    timeline = plan.plan_overview(as_of="2026-10-15")["data"]["timeline"]
+
+    # Leaving it in August would put the low point in the past, where no loan
+    # can reach it.
+    assert [m["month"] for m in timeline["months"]] == ["2026-10"]
+
+
+def test_undated_costs_count_towards_the_gap_but_are_flagged_as_unplaced(plan):
+    plan.add_plan_item("cost", "Flights, dates not booked", 60000)
+    plan.add_plan_item("fund", "Savings", 100000)
+
+    data = plan.plan_overview(as_of="2026-10-01")["data"]
+
+    assert data["totals"]["cost_outstanding"] == 60000.0
+    assert data["totals"]["gap"] == 40000.0
+    assert data["timeline"]["months"] == []
+    assert [c["label"] for c in data["timeline"]["undated_costs"]] == ["Flights, dates not booked"]
+
+
+def test_the_confirmed_only_view_drops_funding_that_is_not_committed(plan):
+    plan.add_plan_item("cost", "Tuition", 300000, due_date="2027-01-10")
+    plan.add_plan_item("fund", "Savings", 100000, certainty="confirmed")
+    plan.add_plan_item("fund", "Hoping for a bonus", 250000, certainty="maybe")
+
+    optimistic = plan.plan_overview(as_of="2026-10-01")["data"]["totals"]
+    conservative = plan.plan_overview(
+        as_of="2026-10-01", include_unconfirmed=False
+    )["data"]["totals"]
+
+    assert optimistic["gap"] == 50000.0
+    assert conservative["gap"] == -200000.0
+    assert conservative["status"] == "red"
+
+
+def test_plan_items_sort_undated_costs_last_and_undated_funding_first(plan):
+    plan.add_plan_item("cost", "Undated cost", 1000)
+    plan.add_plan_item("cost", "Dated cost", 1000, due_date="2027-01-01")
+    plan.add_plan_item("fund", "Undated funding", 1000)
+    plan.add_plan_item("fund", "Dated funding", 1000, due_date="2027-01-01")
+
+    data = plan.plan_overview(as_of="2026-10-01")["data"]
+
+    assert [c["label"] for c in data["costs"]] == ["Dated cost", "Undated cost"]
+    assert [f["label"] for f in data["funds"]] == ["Undated funding", "Dated funding"]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"kind": "maybe", "label": "Something", "amount": 100},
+        {"kind": "cost", "label": "  ", "amount": 100},
+        {"kind": "cost", "label": "Something", "amount": 0},
+        {"kind": "cost", "label": "Something", "amount": 100, "certainty": "hopeful"},
+        {"kind": "cost", "label": "Something", "amount": 100, "instalments": 0},
+    ],
+)
+def test_add_plan_item_refuses_values_the_database_would_reject(plan, kwargs):
+    with pytest.raises(PlannerCoreError):
+        plan.add_plan_item(
+            kwargs.pop("kind"), kwargs.pop("label"), kwargs.pop("amount"), **kwargs
+        )
+
+
+def test_log_transaction_rejects_an_unknown_plan_line(plan):
+    with pytest.raises(PlannerCoreError, match="Plan line was not found"):
+        plan.log_transaction("Mystery fee", 500, plan_item_id=str(uuid4()))
+
+
+def test_updating_the_plans_rate_reprices_every_euro_line(plan):
+    plan.add_plan_item("cost", "Blocked account", 11904, currency="EUR", due_date="2027-02-01")
+
+    plan.update_plan({"eur_rate": 105})
+    data = plan.plan_overview(as_of="2026-10-01")["data"]
+
+    assert data["costs"][0]["estimate"] == 1249920.0
 
 
 def test_monthly_recurring_clamps_to_a_short_month(finance):

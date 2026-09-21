@@ -2207,6 +2207,25 @@ TRANSACTION_TYPES = {"expense", "income"}
 CADENCES = {"weekly", "monthly", "yearly"}
 RECURRING_LOOKBACK_DAYS = 62
 
+# Funding plan. A line is either money going out or money coming in, and the
+# two sides are read against each other month by month.
+PLAN_ITEM_KINDS = {"cost", "fund"}
+# Unconfirmed funding is still worth planning around, but the shortfall has to
+# be readable without it, so every funding line says how sure it is.
+PLAN_CERTAINTIES = {"confirmed", "likely", "maybe"}
+PLAN_COST_CATEGORIES = (
+    "Tests", "Tuition", "Applications", "Courses", "Documents",
+    "Visa", "Travel", "Living", "Family", "Other",
+)
+PLAN_FUND_CATEGORIES = (
+    "Savings", "Salary", "Family", "Sale", "Scholarship", "Loan", "Other",
+)
+# Matches the check constraint in migration 0032.
+MAX_PLAN_INSTALMENTS = 600
+# A rupee either side of a total is rounding, not a shortfall. Without this the
+# status flips to red on a balance of -0.004.
+PLAN_EPSILON = 1.0
+
 
 def _normalize_category(value: Any, kind: str = "expense") -> str | None:
     """Snap a category onto the canonical list so the summary doesn't end up
@@ -2226,6 +2245,34 @@ def _money(value: Any) -> float:
         return round(float(value or 0), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _convert(amount: float, from_currency: Any, base: str, eur_rate: float) -> float:
+    """Put one plan line onto the plan's base currency at the plan's own rate.
+
+    Only the euro/rupee pair converts: those are the two the move is priced in,
+    and inventing a rate for a third would put a number on screen that nobody
+    could reproduce later. Anything else passes through untouched, and the
+    caller reports which currencies that happened to.
+    """
+    src = str(from_currency or base).strip().upper()
+    dst = str(base or "INR").strip().upper()
+    if src == dst:
+        return round(amount, 2)
+    if src == "EUR" and dst == "INR":
+        return round(amount * eur_rate, 2)
+    if src == "INR" and dst == "EUR" and eur_rate:
+        return round(amount / eur_rate, 2)
+    return round(amount, 2)
+
+
+def _add_months(anchor: date, months: int) -> date:
+    """The same day in a later month, clamped to the month's length so an
+    instalment set on the 31st still lands in February."""
+    index = anchor.month - 1 + months
+    year = anchor.year + index // 12
+    month = index % 12 + 1
+    return date(year, month, min(anchor.day, _days_in_month(date(year, month, 1))))
 
 
 class FinanceService:
@@ -2254,6 +2301,7 @@ class FinanceService:
         merchant: str | None = None,
         payment_method: str | None = None,
         goal_id: str | None = None,
+        plan_item_id: str | None = None,
         notes: str | None = None,
     ) -> dict[str, Any]:
         if not description.strip():
@@ -2269,6 +2317,8 @@ class FinanceService:
 
         if goal_id and not self.repository.get_row("finance_goals", goal_id):
             raise PlannerCoreError(f"Savings goal was not found: {goal_id}")
+        if plan_item_id and not self.repository.get_row("finance_plan_items", plan_item_id):
+            raise PlannerCoreError(f"Plan line was not found: {plan_item_id}")
 
         row = self.repository.insert_row(
             "finance_logs",
@@ -2282,6 +2332,7 @@ class FinanceService:
                 "merchant": merchant.strip() if merchant else None,
                 "payment_method": payment_method.strip() if payment_method else None,
                 "goal_id": goal_id,
+                "plan_item_id": plan_item_id,
                 "notes": notes,
             },
         )
@@ -2290,7 +2341,8 @@ class FinanceService:
     def update_transaction(self, transaction_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "date", "description", "amount", "currency", "type",
-            "category", "merchant", "payment_method", "goal_id", "notes",
+            "category", "merchant", "payment_method", "goal_id",
+            "plan_item_id", "notes",
         }
         payload = {key: value for key, value in updates.items() if key in allowed}
         if not payload:
@@ -2465,6 +2517,383 @@ class FinanceService:
             })
         out.sort(key=lambda g: (g["deadline"] or "9999-12-31", g["goal"] or ""))
         return _envelope(True, f"{len(out)} savings goals", {"goals": out})
+
+    # ---------- funding plan ----------
+
+    def _active_plan(self) -> dict[str, Any] | None:
+        plans = self.repository.list_rows("finance_plans")
+        plans.sort(key=lambda p: str(p.get("created_at") or ""))
+        return plans[0] if plans else None
+
+    def plan_overview(
+        self,
+        *,
+        include_unconfirmed: bool = True,
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        """What the move costs, what pays for it, and the month it goes under.
+
+        Two numbers answer two different questions and both are reported. The
+        gap is whether there is enough money at all. The loan is whether it is
+        there in time — money arriving in March does not pay a bill due in
+        January, so a plan can be fully funded and still need a bridge. That
+        second case is the one a single total hides.
+
+        Both sides are read net of what has already moved: a cost line that is
+        half paid has half left to fund, and the passbook rows linked to it are
+        what say so.
+        """
+        plan = self._active_plan()
+        if plan is None:
+            return _envelope(True, "No funding plan yet", {"plan": None, "costs": [], "funds": []})
+
+        today = _parse_date(as_of) or _local_today(self.timezone)
+        base = str(plan.get("base_currency") or "INR").upper()
+        rate = _money(plan.get("eur_rate")) or 1.0
+        moved = self._settled_by_item(base, rate)
+
+        costs: list[dict[str, Any]] = []
+        funds: list[dict[str, Any]] = []
+        unconvertible: set[str] = set()
+        for row in self.repository.list_rows("finance_plan_items"):
+            if str(row.get("plan_id")) != str(plan["id"]):
+                continue
+            view = self._plan_item_view(row, moved, base, rate)
+            if view["currency"] not in {base, "EUR", "INR"}:
+                unconvertible.add(view["currency"])
+            (costs if view["kind"] == "cost" else funds).append(view)
+
+        # A cost with no date is one whose date is not settled yet, so it sorts
+        # last; a funding line with no date is money already in hand, so it
+        # sorts first.
+        costs.sort(key=lambda i: (i["due_date"] or "9999-12-31", i["sort_order"], i["label"] or ""))
+        funds.sort(key=lambda i: (i["due_date"] or "0000-01-01", i["sort_order"], i["label"] or ""))
+
+        counted = funds if include_unconfirmed else [f for f in funds if f["certainty"] == "confirmed"]
+        timeline = self._plan_timeline(costs, counted, today)
+
+        cost_left = round(sum(i["outstanding"] for i in costs), 2)
+        fund_left = round(sum(i["outstanding"] for i in counted), 2)
+        gap = round(fund_left - cost_left, 2)
+        loan = timeline["loan_needed"]
+
+        if gap < -PLAN_EPSILON:
+            status = "red"
+            headline = f"Short by {base} {abs(gap):,.0f}"
+        elif loan > PLAN_EPSILON:
+            status = "amber"
+            headline = f"Enough money, but {base} {loan:,.0f} of it arrives too late"
+        else:
+            status = "green"
+            headline = f"Covered, with {base} {gap:,.0f} to spare"
+
+        totals = {
+            "base_currency": base,
+            "eur_rate": rate,
+            "cost_estimate": round(sum(i["estimate"] for i in costs), 2),
+            "cost_paid": round(sum(i["settled"] for i in costs), 2),
+            "cost_outstanding": cost_left,
+            "fund_expected": round(sum(i["estimate"] for i in counted), 2),
+            "fund_received": round(sum(i["settled"] for i in counted), 2),
+            "fund_outstanding": fund_left,
+            "gap": gap,
+            "loan_needed": loan,
+            "loan_by_month": timeline["loan_by_month"],
+            "status": status,
+            "headline": headline,
+            "unconvertible_currencies": sorted(unconvertible),
+        }
+
+        return _envelope(
+            True,
+            headline,
+            {
+                "plan": {
+                    "id": plan["id"],
+                    "name": plan.get("name"),
+                    "base_currency": base,
+                    "eur_rate": rate,
+                    "notes": plan.get("notes"),
+                },
+                "totals": totals,
+                "costs": costs,
+                "funds": funds,
+                "timeline": timeline,
+            },
+        )
+
+    def _settled_by_item(self, base: str, rate: float) -> dict[str, dict[str, float]]:
+        """What has actually moved against each plan line, in base currency.
+
+        Both sides of the passbook are kept: a cost line counts what went out
+        less anything refunded, a funding line counts what came in. Same rows,
+        read from whichever side the line sits on.
+        """
+        out: dict[str, dict[str, float]] = {}
+        for row in self.repository.list_rows("finance_logs"):
+            key = row.get("plan_item_id")
+            if not key:
+                continue
+            side = "income" if row.get("type") == "income" else "expense"
+            bucket = out.setdefault(str(key), {"expense": 0.0, "income": 0.0})
+            bucket[side] += _convert(_money(row.get("amount")), row.get("currency"), base, rate)
+        return out
+
+    @staticmethod
+    def _plan_item_view(
+        row: Mapping[str, Any],
+        moved: Mapping[str, dict[str, float]],
+        base: str,
+        rate: float,
+    ) -> dict[str, Any]:
+        """One plan line with its estimate, what has moved, and what is left.
+
+        amount is per instalment, not the total — a monthly saving of 40,000
+        over ten months is 40000 x 10, and a one-off is 40000 x 1.
+        """
+        kind = row.get("kind") or "cost"
+        instalments = max(1, int(row.get("instalments") or 1))
+        per = _money(row.get("amount"))
+        currency = str(row.get("currency") or base).upper()
+        estimate = _convert(per * instalments, currency, base, rate)
+
+        flows = moved.get(str(row["id"]), {"expense": 0.0, "income": 0.0})
+        net = flows["expense"] - flows["income"] if kind == "cost" else flows["income"] - flows["expense"]
+        settled = round(max(net, 0.0), 2)
+
+        return {
+            "id": row["id"],
+            "kind": kind,
+            "label": row.get("label"),
+            "category": row.get("category"),
+            "amount": per,
+            "currency": currency,
+            "instalments": instalments,
+            "due_date": str(row["due_date"])[:10] if row.get("due_date") else None,
+            "certainty": row.get("certainty") or "likely",
+            "estimate": estimate,
+            "settled": settled,
+            "outstanding": round(max(estimate - settled, 0.0), 2),
+            "progress_pct": round(min(settled / estimate * 100, 100), 1) if estimate else 0.0,
+            "sort_order": int(row.get("sort_order") or 0),
+            "notes": row.get("notes"),
+        }
+
+    def _plan_timeline(
+        self,
+        costs: list[dict[str, Any]],
+        funds: list[dict[str, Any]],
+        today: date,
+    ) -> dict[str, Any]:
+        """Walk the months and find the worst the running balance ever gets.
+
+        Funding with no date is money already in hand, so it opens the balance.
+        A cost with no date cannot be placed on the timeline at all: it still
+        counts towards the gap, and is listed separately so a missing date
+        shows up as something to fix rather than quietly flattering the loan
+        figure.
+        """
+        opening = round(sum(i["outstanding"] for i in funds if not i["due_date"]), 2)
+        buckets: dict[str, dict[str, float]] = {}
+
+        for item in costs:
+            for month, amount in self._instalment_schedule(item, today):
+                buckets.setdefault(month, {"in": 0.0, "out": 0.0})["out"] += amount
+        for item in funds:
+            for month, amount in self._instalment_schedule(item, today):
+                buckets.setdefault(month, {"in": 0.0, "out": 0.0})["in"] += amount
+
+        months: list[dict[str, Any]] = []
+        running = low = opening
+        loan_by: str | None = None
+        for month in sorted(buckets):
+            flow = buckets[month]
+            running = round(running + flow["in"] - flow["out"], 2)
+            low = min(low, running)
+            if loan_by is None and running < -PLAN_EPSILON:
+                loan_by = month
+            months.append({
+                "month": month,
+                "in": round(flow["in"], 2),
+                "out": round(flow["out"], 2),
+                "balance": running,
+            })
+
+        return {
+            "opening_balance": opening,
+            "months": months,
+            "closing_balance": round(running, 2),
+            "low_point": round(low, 2),
+            "loan_needed": round(max(-low, 0.0), 2),
+            "loan_by_month": loan_by,
+            "undated_costs": [
+                {"id": i["id"], "label": i["label"], "outstanding": i["outstanding"]}
+                for i in costs
+                if not i["due_date"] and i["outstanding"] > 0
+            ],
+        }
+
+    @staticmethod
+    def _instalment_schedule(item: Mapping[str, Any], today: date) -> list[tuple[str, float]]:
+        """Which months this line still owes money in.
+
+        What has already moved is taken off the earliest instalments first, so
+        a ten-month saving plan three months in shows seven months left rather
+        than ten smaller ones. An instalment whose date has passed but which is
+        still unpaid moves to the current month — it is owed now, and leaving
+        it in the past would put the low point behind us where no loan can
+        reach it.
+        """
+        start = _parse_date(item["due_date"])
+        if start is None or item["outstanding"] <= 0:
+            return []
+
+        count = max(1, int(item["instalments"]))
+        per = item["estimate"] / count
+        credit = item["settled"]
+        out: list[tuple[str, float]] = []
+        for index in range(count):
+            covered = min(per, credit)
+            credit -= covered
+            owing = round(per - covered, 2)
+            if owing <= 0:
+                continue
+            out.append((max(_add_months(start, index), today).strftime("%Y-%m"), owing))
+        return out
+
+    def add_plan_item(
+        self,
+        kind: str,
+        label: str,
+        amount: float,
+        *,
+        currency: str = "INR",
+        category: str | None = None,
+        due_date: str | None = None,
+        instalments: int = 1,
+        certainty: str = "likely",
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Add one cost line or one funding line to the plan."""
+        plan = self._active_plan()
+        if plan is None:
+            raise PlannerCoreError("There is no funding plan to add to")
+
+        kind = str(kind).strip().lower()
+        if kind not in PLAN_ITEM_KINDS:
+            raise PlannerCoreError(f"kind must be one of {sorted(PLAN_ITEM_KINDS)}")
+        if not str(label).strip():
+            raise PlannerCoreError("Label is required")
+
+        certainty = str(certainty or "likely").strip().lower()
+        if certainty not in PLAN_CERTAINTIES:
+            raise PlannerCoreError(f"certainty must be one of {sorted(PLAN_CERTAINTIES)}")
+
+        value = _money(amount)
+        if value <= 0:
+            raise PlannerCoreError("Amount must be greater than zero")
+
+        # Only an omitted count defaults to one. `or 1` would quietly turn a
+        # requested zero into a one-off and store a row nobody asked for.
+        count = 1 if instalments is None else int(instalments)
+        if not 1 <= count <= MAX_PLAN_INSTALMENTS:
+            raise PlannerCoreError(f"instalments must be between 1 and {MAX_PLAN_INSTALMENTS}")
+
+        when = _parse_date(due_date)
+        code = str(currency).strip().upper() or "INR"
+        siblings = [
+            int(r.get("sort_order") or 0)
+            for r in self.repository.list_rows("finance_plan_items")
+            if str(r.get("plan_id")) == str(plan["id"]) and r.get("kind") == kind
+        ]
+
+        row = self.repository.insert_row(
+            "finance_plan_items",
+            {
+                "plan_id": plan["id"],
+                "kind": kind,
+                "label": str(label).strip(),
+                "category": str(category).strip() if category else None,
+                "amount": value,
+                "currency": code,
+                "due_date": when.isoformat() if when else None,
+                "instalments": count,
+                "certainty": certainty,
+                "notes": notes,
+                "sort_order": max(siblings) + 1 if siblings else 0,
+            },
+        )
+        spread = f" x {count}" if count > 1 else ""
+        side = "Cost" if kind == "cost" else "Funding"
+        return _envelope(
+            True,
+            f"{side} line added — {row['label']} ({code} {value:,.2f}{spread})",
+            {"item": row},
+        )
+
+    def update_plan_item(self, item_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Correct one line of the plan."""
+        allowed = {
+            "label", "category", "amount", "currency", "due_date",
+            "instalments", "certainty", "notes", "sort_order", "kind",
+        }
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError("No supported fields to update")
+
+        if "kind" in payload and payload["kind"] not in PLAN_ITEM_KINDS:
+            raise PlannerCoreError(f"kind must be one of {sorted(PLAN_ITEM_KINDS)}")
+        if "certainty" in payload and payload["certainty"] not in PLAN_CERTAINTIES:
+            raise PlannerCoreError(f"certainty must be one of {sorted(PLAN_CERTAINTIES)}")
+        if "label" in payload and not str(payload["label"]).strip():
+            raise PlannerCoreError("Label is required")
+        if "amount" in payload:
+            payload["amount"] = _money(payload["amount"])
+            if payload["amount"] <= 0:
+                raise PlannerCoreError("Amount must be greater than zero")
+        if "instalments" in payload:
+            value = payload["instalments"]
+            payload["instalments"] = 1 if value is None else int(value)
+            if not 1 <= payload["instalments"] <= MAX_PLAN_INSTALMENTS:
+                raise PlannerCoreError(f"instalments must be between 1 and {MAX_PLAN_INSTALMENTS}")
+        if "due_date" in payload:
+            parsed = _parse_date(payload["due_date"])
+            payload["due_date"] = parsed.isoformat() if parsed else None
+        if "currency" in payload:
+            payload["currency"] = str(payload["currency"]).strip().upper()
+
+        payload["updated_at"] = datetime.now(ZoneInfo(self.timezone)).isoformat()
+        row = self.repository.update_row("finance_plan_items", item_id, payload)
+        return _envelope(True, "Plan line updated", {"item": row})
+
+    def delete_plan_item(self, item_id: str) -> dict[str, Any]:
+        """Remove a line. Any spending logged against it keeps its place in the
+        passbook and simply stops being attributed to the plan."""
+        self.repository.delete_row("finance_plan_items", item_id)
+        return _envelope(True, "Plan line removed", None)
+
+    def update_plan(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """Rename the plan, or change the rate every euro line is read at."""
+        plan = self._active_plan()
+        if plan is None:
+            raise PlannerCoreError("There is no funding plan to update")
+
+        allowed = {"name", "base_currency", "eur_rate", "notes"}
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            raise PlannerCoreError("No supported fields to update")
+        if "name" in payload and not str(payload["name"]).strip():
+            raise PlannerCoreError("Name is required")
+        if "eur_rate" in payload:
+            payload["eur_rate"] = _money(payload["eur_rate"])
+            if payload["eur_rate"] <= 0:
+                raise PlannerCoreError("The euro rate must be greater than zero")
+        if "base_currency" in payload:
+            payload["base_currency"] = str(payload["base_currency"]).strip().upper()
+
+        payload["updated_at"] = datetime.now(ZoneInfo(self.timezone)).isoformat()
+        row = self.repository.update_row("finance_plans", plan["id"], payload)
+        return _envelope(True, "Funding plan updated", {"plan": row})
 
     # ---------- recurring charges ----------
 
