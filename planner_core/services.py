@@ -1433,6 +1433,9 @@ class HabitService:
                     "parent_task_id": None,
                     "is_habit": True,
                     "recurrence_key": key,
+                    # Carried on the day's override, so starring today's gym
+                    # does not star every gym day.
+                    "starred": bool((override or {}).get("starred")),
                 }
             )
 
@@ -1547,6 +1550,18 @@ class HabitService:
         habit = self._habit_for(habit_id)
         row = self._upsert_override(habit_id, rule_day, {"skipped": True, "moved_to": None})
         return _envelope(True, f"Skipped: {habit['title']}", {"override": row})
+
+    def star_occurrence(self, habit_id: str, rule_day: date, starred: bool) -> dict[str, Any]:
+        """Mark one day of a habit as a win, or unmark it.
+
+        Written as a per-day override like skipping and rescheduling, so the
+        rule itself never changes: going to the gym can be what today is judged
+        by without every gym day forever being a win.
+        """
+        habit = self._habit_for(habit_id)
+        row = self._upsert_override(habit_id, rule_day, {"starred": bool(starred)})
+        verb = "Starred" if starred else "Unstarred"
+        return _envelope(True, f"{verb}: {habit['title']}", {"override": row})
 
 
 class MetricsService:

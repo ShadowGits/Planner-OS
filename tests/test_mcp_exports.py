@@ -58,6 +58,9 @@ class TestMCPExports(unittest.TestCase):
             # A habit's occurrences have no rows, so the tools are named for
             # the day they act on rather than after the method.
             "occurrences",  # read through core_today and the day view
+            # Starring one day of a habit: reached from the PWA by patching the
+            # occurrence, alongside ticking and rescheduling it.
+            "star_occurrence",
             "complete_occurrence",  # mapped to core_complete_habit_day
             "reopen_occurrence",  # mapped to core_reopen_habit_day
             "reschedule_occurrence",  # mapped to core_reschedule_habit_day

@@ -456,3 +456,41 @@ def test_the_pwa_can_tick_move_and_skip_a_habit_day(client, runtime) -> None:
     assert client.delete(f"/v2/day/tasks/{twentyfourth['id']}", headers=APP_KEY).status_code == 200
     assert not [i for i in client.get("/v2/day?date=2026-07-24", headers=APP_KEY).json()["data"]["items"] if i["title"] == "Gym"]
     assert core.habits.list_habits()["data"]["habits"][0]["id"] == habit["id"]
+
+
+def test_starring_a_habit_day_sticks(client, runtime) -> None:
+    """Starring a habit used to tick on screen and spring straight back.
+
+    A habit occurrence has no task row, so the patch fell through the habit
+    branch — which only understood done, date and time — to "nothing to
+    change", and the app reverted its optimistic star.
+    """
+    from planner_api.v2 import build_core
+
+    core = build_core(runtime.service_client, USER_ID)
+    core.habits.add_habit(
+        "Gym", recurrence_key="gym", start_time="07:00", estimated_minutes=45,
+        start_date="2026-07-20",
+    )
+
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    gym = [i for i in items if i["title"] == "Gym"][0]
+    assert gym["starred"] is False
+
+    res = client.patch(f"/v2/day/tasks/{gym['id']}", json={"starred": True}, headers=APP_KEY)
+    assert res.status_code == 200, res.json()
+
+    day = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]
+    assert [i for i in day["items"] if i["title"] == "Gym"][0]["starred"] is True
+    assert day["starred_total"] == 1
+
+    # One day only: the rule is untouched, so tomorrow's gym is not a win.
+    other = client.get("/v2/day?date=2026-07-23", headers=APP_KEY).json()["data"]
+    assert [i for i in other["items"] if i["title"] == "Gym"][0]["starred"] is False
+
+    # And it can be taken back off.
+    assert client.patch(
+        f"/v2/day/tasks/{gym['id']}", json={"starred": False}, headers=APP_KEY
+    ).status_code == 200
+    back = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]
+    assert [i for i in back["items"] if i["title"] == "Gym"][0]["starred"] is False

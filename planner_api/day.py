@@ -7,7 +7,9 @@ MCP_USER_ID. Interactive UI logic lives in the static files under /app.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,7 @@ def _normalize_spillover(date_str, time_str):
     return date_str, time_str
 
 from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -250,6 +253,13 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                         moved["moved_to"] = norm_date
                 if moved:
                     result = core.habits.reschedule_occurrence(habit_id, rule_day, **moved)
+                # A habit has no task row, so this branch has to handle the
+                # star itself. Without it a starred habit fell through to
+                # "nothing to change" and sprang back on screen.
+                if "starred" in body.model_fields_set:
+                    result = core.habits.star_occurrence(
+                        habit_id, rule_day, bool(body.starred)
+                    )
                 if result is None:
                     raise HTTPException(
                         status_code=400,
@@ -533,5 +543,49 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             response = super().file_response(*args, **kwargs)
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
             return response
+
+    # A token that changes whenever any PWA file does. The version in
+    # index.html's asset links and the service worker's cache name used to be
+    # typed by hand, so they sat at v10 through a month of changes and iOS kept
+    # serving whatever it had — the one place a stale copy is hardest to
+    # clear. Deriving it from the files themselves means a deploy busts the
+    # cache on its own, with nothing to remember.
+    def _asset_version() -> str:
+        stamp = hashlib.sha1()
+        for path in sorted(STATIC_DIR.iterdir()):
+            if path.is_file():
+                info = path.stat()
+                stamp.update(f"{path.name}:{info.st_mtime_ns}:{info.st_size}".encode())
+        return stamp.hexdigest()[:12]
+
+    ASSET_VERSION = _asset_version()
+
+    def _serve_versioned(name: str, media_type: str) -> Response:
+        text = (STATIC_DIR / name).read_text(encoding="utf-8")
+        # index.html: stamp every ?v= link. sw.js: stamp the cache name, so a
+        # new deploy installs a new worker and drops the old caches.
+        text = re.sub(r"\?v=[\w.-]+", f"?v={ASSET_VERSION}", text)
+        # \g<1> rather than \1: the version is hex, so a leading digit would
+        # read as part of the group number and blow up the substitution.
+        text = re.sub(
+            r'(const CACHE = "day-planner-)[\w.-]+(")',
+            rf"\g<1>{ASSET_VERSION}\g<2>",
+            text,
+        )
+        return Response(
+            content=text,
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
+
+    # Registered before the mount below, so these win over the static files.
+    @api.get("/app/", include_in_schema=False)
+    @api.get("/app/index.html", include_in_schema=False)
+    def pwa_index():
+        return _serve_versioned("index.html", "text/html; charset=utf-8")
+
+    @api.get("/app/sw.js", include_in_schema=False)
+    def pwa_service_worker():
+        return _serve_versioned("sw.js", "text/javascript; charset=utf-8")
 
     api.mount("/app", RevalidatingStaticFiles(directory=STATIC_DIR, html=True), name="day-planner")
