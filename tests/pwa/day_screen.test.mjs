@@ -141,7 +141,11 @@ test("tasks that do not share a time keep the normal layout", async (t) => {
   for (const title of ["Gym", "Maths"]) {
     const row = rowFor(doc, title);
     assert.equal(row.classList.contains("overlap"), false);
-    assert.ok(row.querySelector(".icon"), "the normal row keeps its circle");
+    // .time-shape is the circle itself; the emoji inside it is .icon-glyph,
+    // renamed off .icon so it stops colliding with the global 46px .icon rule
+    // that the row used to override inline.
+    assert.ok(row.querySelector(".time-shape"), "the normal row keeps its circle");
+    assert.ok(row.querySelector(".icon-glyph"), "the circle keeps its emoji");
   }
 });
 

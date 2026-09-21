@@ -102,9 +102,12 @@
     [/wind down|skin|sleep|rest|nap|night/i, "🌙"],
   ];
 
+  // One step deeper than they were: against a warm ground rather than white,
+  // the old tints washed out and the icons stopped reading as coloured at all.
+  // Same ten-colour rotation, same order.
   const PASTELS = [
-    "#ffe3e0", "#fff0d4", "#e6f3d8", "#d9f0f3", "#e3e8ff",
-    "#f5e1f3", "#e0f4ea", "#fde8d2", "#e9e4fb", "#dcf0ff",
+    "#fbd9d4", "#fbe9c9", "#dcecc8", "#cbe8ec", "#dfe4fb",
+    "#efd6ec", "#d3ecdf", "#f8ddc0", "#e0d9f7", "#cfe8fa",
   ];
   const PASTELS_DARK = [
     "#4b2f2d", "#4b3e26", "#33452c", "#2b4348", "#2f3555",
@@ -505,14 +508,16 @@
           <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>
         </div>`;
     } else {
+      // Layout and colour live in the stylesheet; only the task's own pastel
+      // is set here, because it is chosen per title at runtime.
       row.innerHTML = `
-      <div class="rail" style="position: relative; width: 100%; height: 100%; display: flex; justify-content: center; z-index: 1;">
-        <div class="time-shape" style="width: 42px; height: 100%; min-height: 42px; border-radius: 21px; background: ${pastelFor(task.title)}; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 4px var(--bg);">
-          <div class="icon" style="font-size: 20px; line-height: 1;">${emojiFor(task.title)}</div>
+      <div class="rail">
+        <div class="time-shape" style="background:${pastelFor(task.title)}">
+          <div class="icon-glyph">${emojiFor(task.title)}</div>
         </div>
       </div>
-      <div class="body" style="padding-left: 4px; display: flex; flex-direction: column; justify-content: center; height: 100%; position: relative;">
-        <div class="meta" style="color: var(--ink-2); font-size: 12.5px; margin-bottom: 2px; font-weight: 500;">${timeLabel}</div>
+      <div class="body">
+        <div class="meta">${timeLabel}</div>
         <div class="title">${escapeHtml(task.title)}</div>
       </div>
       <button class="ring${task.done ? " checked" : ""}" aria-label="Toggle done"></button>`;
@@ -829,11 +834,11 @@
     );
     for (const task of ordered) {
       const card = document.createElement("div");
-      card.className = `inbox-card${task.starred ? " starred" : ""}`;
-      if (task.done) card.style.opacity = "0.55";
+      card.className =
+        `inbox-card${task.starred ? " starred" : ""}${task.done ? " done" : ""}`;
       card.innerHTML = `
         <div class="icon" style="background:${pastelFor(task.title)}">${task.done ? "✓" : emojiFor(task.title)}</div>
-        <div class="t"${task.done ? ' style="text-decoration:line-through"' : ""}>${escapeHtml(task.title)}</div>`;
+        <div class="t">${escapeHtml(task.title)}</div>`;
       if (!task.done) {
         card.insertBefore(starButton(task), card.querySelector(".t").nextSibling);
         // Two squircles: tick it off, or give it a time. Done used to mean
