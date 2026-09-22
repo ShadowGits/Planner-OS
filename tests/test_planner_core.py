@@ -1021,6 +1021,22 @@ def test_spending_logged_against_a_line_reduces_what_is_left_to_fund(plan):
     assert data["totals"]["cost_paid"] == 8000.0
 
 
+def test_paying_a_cost_takes_it_off_the_money_available(plan):
+    plan.add_plan_item("fund", "Savings", 100000)
+    item = plan.add_plan_item("cost", "IELTS", 17000, due_date="2027-01-10")["data"]["item"]
+
+    before = plan.plan_overview(as_of="2026-10-01")["data"]["totals"]
+    plan.log_transaction("IELTS booking", 17000, plan_item_id=str(item["id"]))
+    after = plan.plan_overview(as_of="2026-10-01")["data"]["totals"]
+
+    assert before["fund_available"] == 100000.0
+    assert after["fund_available"] == 83000.0  # the money has gone
+    assert after["cost_outstanding"] == 0.0
+    # Paying a cost that was already budgeted moves the same rupees from one
+    # column to the other, so the position must not drift.
+    assert before["gap"] == after["gap"] == 83000.0
+
+
 def test_overspending_a_cost_is_reported_rather_than_swallowed(plan):
     item = plan.add_plan_item("cost", "IELTS", 17000, due_date="2027-01-10")["data"]["item"]
     plan.log_transaction("IELTS booking", 32000, plan_item_id=str(item["id"]))

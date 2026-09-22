@@ -2575,11 +2575,18 @@ class FinanceService:
         funds.sort(key=lambda i: (i["due_date"] or "0000-01-01", i["sort_order"], i["label"] or ""))
 
         counted = funds if include_unconfirmed else [f for f in funds if f["certainty"] == "confirmed"]
-        timeline = self._plan_timeline(costs, counted, today)
 
         cost_left = round(sum(i["outstanding"] for i in costs), 2)
-        fund_left = round(sum(i["outstanding"] for i in counted), 2)
-        gap = round(fund_left - cost_left, 2)
+        cost_paid = round(sum(i["settled"] for i in costs), 2)
+        # Money already paid out is money you no longer have, so it comes off
+        # what is available rather than sitting there implying otherwise. The
+        # gap is unchanged by it either way — settling a budgeted cost moves
+        # the same rupees from one column to the other — which is the point:
+        # paying a bill you had planned for does not change your position.
+        fund_available = round(sum(i["outstanding"] for i in counted) - cost_paid, 2)
+        gap = round(fund_available - cost_left, 2)
+
+        timeline = self._plan_timeline(costs, counted, today, cost_paid)
         loan = timeline["loan_needed"]
 
         if gap < -PLAN_EPSILON:
@@ -2596,12 +2603,13 @@ class FinanceService:
             "base_currency": base,
             "eur_rate": rate,
             "cost_estimate": round(sum(i["estimate"] for i in costs), 2),
-            "cost_paid": round(sum(i["settled"] for i in costs), 2),
+            "cost_paid": cost_paid,
             "cost_outstanding": cost_left,
             "cost_overspend": round(sum(i["over_by"] for i in costs), 2),
             "fund_expected": round(sum(i["estimate"] for i in counted), 2),
             "fund_received": round(sum(i["settled"] for i in counted), 2),
-            "fund_outstanding": fund_left,
+            "fund_outstanding": round(sum(i["outstanding"] for i in counted), 2),
+            "fund_available": fund_available,
             "gap": gap,
             "loan_needed": loan,
             "loan_by_month": timeline["loan_by_month"],
@@ -2695,16 +2703,20 @@ class FinanceService:
         costs: list[dict[str, Any]],
         funds: list[dict[str, Any]],
         today: date,
+        paid_out: float = 0.0,
     ) -> dict[str, Any]:
         """Walk the months and find the worst the running balance ever gets.
 
-        Funding with no date is money already in hand, so it opens the balance.
-        A cost with no date cannot be placed on the timeline at all: it still
-        counts towards the gap, and is listed separately so a missing date
-        shows up as something to fix rather than quietly flattering the loan
-        figure.
+        Funding with no date is money already in hand, so it opens the balance,
+        less anything already paid out — that money has gone and cannot fund
+        what is still coming. A cost with no date cannot be placed on the
+        timeline at all: it still counts towards the gap, and is listed
+        separately so a missing date shows up as something to fix rather than
+        quietly flattering the loan figure.
         """
-        opening = round(sum(i["outstanding"] for i in funds if not i["due_date"]), 2)
+        opening = round(
+            sum(i["outstanding"] for i in funds if not i["due_date"]) - paid_out, 2
+        )
         buckets: dict[str, dict[str, float]] = {}
 
         for item in costs:
