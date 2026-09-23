@@ -63,6 +63,25 @@ steps:
       # here, so this probe fails, the revision is rejected, and the previous
       # good one keeps serving. Costs nothing and changes no scaling setting.
       - '--startup-probe=httpGet.path=/api/health,initialDelaySeconds=5,periodSeconds=5,timeoutSeconds=4,failureThreshold=6'
+      # Keep checking after startup, and replace a container that stops
+      # answering.
+      #
+      # The startup probe only runs while a container is being born. Once it
+      # was alive nothing checked it again, so when every worker thread in one
+      # container ended up stuck, that container stayed in service answering
+      # nothing at all: /api/health does no work whatsoever and still timed out
+      # at the 300s request limit, because a synchronous route cannot run
+      # without a thread. It sat there until someone noticed by hand.
+      #
+      # Three missed checks, ninety seconds, and Cloud Run replaces it instead.
+      # /api/health has to stay a synchronous route for this to mean anything:
+      # an async one would answer off the event loop and report a wedged
+      # container as healthy.
+      #
+      # Free, and it changes no scaling setting. Probes only run against a
+      # container that already exists, so a service asleep at min-instances=0
+      # has nothing to probe, and health checks are not billed as requests.
+      - '--liveness-probe=httpGet.path=/api/health,periodSeconds=30,timeoutSeconds=5,failureThreshold=3'
 
 options:
   logging: CLOUD_LOGGING_ONLY
