@@ -21,6 +21,28 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# How long to wait on a push service before giving up on one subscription.
+#
+# This has to be passed explicitly, and leaving it off is not a smaller
+# version of the same behaviour — it is unbounded. pywebpush's send() reads
+# kwargs.pop("timeout", 10000), but webpush() always forwards timeout whether
+# you set it or not, so the key is present as None and the 10000 default never
+# applies. requests.post(timeout=None) then waits for ever.
+#
+# A push endpoint that accepts the connection and never answers therefore
+# holds its thread permanently. The reminder cron runs every five minutes and
+# sends to every subscription, so each run leaks another thread; Cloud Run
+# returning 504 at its 300s request limit does not release it, because the
+# thread is still inside requests. Once the threadpool was gone every
+# synchronous route went with it — /api/health included, which does no I/O at
+# all — while async MCP traffic carried on being served off the event loop and
+# made the service look alive. Nothing recovers this but a restart, and the
+# next cron starts it again.
+#
+# A subscription that hangs also never returns the 404 or 410 that would have
+# retired it, so it comes back on every run.
+PUSH_TIMEOUT_SECONDS = 10
+
 
 def generate_vapid_keys() -> dict[str, str]:
     """Generate a new VAPID key pair. Run once, store in env vars."""
@@ -75,6 +97,7 @@ def send_push(
             vapid_private_key=private_key,
             vapid_claims=_vapid_claims(),
             ttl=86400,
+            timeout=PUSH_TIMEOUT_SECONDS,
         )
         return True
     except WebPushException as e:
