@@ -73,15 +73,24 @@ steps:
       # at the 300s request limit, because a synchronous route cannot run
       # without a thread. It sat there until someone noticed by hand.
       #
-      # Three missed checks, ninety seconds, and Cloud Run replaces it instead.
-      # /api/health has to stay a synchronous route for this to mean anything:
-      # an async one would answer off the event loop and report a wedged
-      # container as healthy.
+      # This asks whether the process is alive, and nothing more. The first
+      # version of it tried to catch a starved threadpool too, by keeping
+      # /api/health synchronous so it would fail when no thread was free. That
+      # killed working containers: a calendar sync holds threads for about two
+      # minutes, which was enough to miss three checks and have the instance
+      # shut down in the middle of the sync. Busy is not dead. /api/health is
+      # async now, so this fails only when the event loop has stopped, and
+      # thread exhaustion is prevented at its source instead — see the timeout
+      # on the push calls that used to leak threads.
+      #
+      # Generous with it either way: five minutes before replacing a container,
+      # because the cost of being wrong is killing live work, while a genuinely
+      # dead one costs only the wait.
       #
       # Free, and it changes no scaling setting. Probes only run against a
       # container that already exists, so a service asleep at min-instances=0
       # has nothing to probe, and health checks are not billed as requests.
-      - '--liveness-probe=httpGet.path=/api/health,periodSeconds=30,timeoutSeconds=5,failureThreshold=3'
+      - '--liveness-probe=httpGet.path=/api/health,periodSeconds=60,timeoutSeconds=10,failureThreshold=5'
 
 options:
   logging: CLOUD_LOGGING_ONLY

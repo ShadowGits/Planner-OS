@@ -158,12 +158,21 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             raise _api_error(401, "AUTHENTICATION_REQUIRED", str(error)) from error
 
     @api.get("/api/health")
-    def health_check() -> dict[str, Any]:
+    async def health_check() -> dict[str, Any]:
         """Simple health check endpoint.
 
         Reports only that the service role key is configured, never any part of
         it. This route is unauthenticated, so the prefix it used to return was
         a slice of a live secret handed to anyone who asked.
+
+        Deliberately async. A synchronous route needs a worker thread, and the
+        liveness probe reads a starved threadpool as a dead container: a
+        calendar sync holding threads for two minutes is enough to miss three
+        probes, and Cloud Run then shuts the instance down mid-sync. Busy is
+        not dead. Answering from the event loop means this fails only when the
+        loop itself has stopped, which is the thing liveness is for — thread
+        exhaustion is prevented at its source instead, by bounding the calls
+        that used to leak threads.
         """
         configured = bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
         return envelope(
