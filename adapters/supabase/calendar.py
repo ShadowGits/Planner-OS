@@ -240,6 +240,74 @@ class SupabaseExternalLinkRepository:
             raise RuntimeError("Calendar event mapping was not persisted")
         return self._public(rows[0])
 
+    def upsert_many(self, context, records, *, active_links=None):
+        """Write many links, sending every new one in a single insert.
+
+        A first sync of a week is all new links, and one insert per block meant
+        one network round trip per block. PostgREST takes a list, so they go
+        together. Links that already exist still need a row-specific update
+        each — there is no single statement for "set a different value per
+        row" — but on a settled calendar almost nothing is left to update,
+        because unchanged links are dropped before they reach here.
+
+        Rows that fail are reported, not raised: one bad link must not cost
+        the rest of the pass its mapping.
+        """
+
+        if not records:
+            return {"written": [], "errors": {}}
+
+        now = datetime.now(timezone.utc).isoformat()
+        base = {
+            "user_id": str(context.user_id),
+            "workspace_id": str(context.workspace_id),
+        }
+        written: list[str] = []
+        errors: dict[str, str] = {}
+        fresh: list[dict[str, Any]] = []
+
+        for record in records:
+            block_id = str(record["planner_block_id"])
+            target_name = record["target_name"]
+            active = (
+                active_links.get(block_id)
+                if active_links is not None
+                else self.active_for(context, block_id)
+            )
+            if active and active["target_name"] != target_name:
+                errors[block_id] = "Planner block already has an active link on another target"
+                continue
+            payload = {
+                "provider": target_name,
+                "external_id": record["external_id"],
+                "checksum": record["checksum"],
+                "status": "active",
+                "last_synced_at": now,
+                "updated_at": now,
+            }
+            if active:
+                try:
+                    self.client.update(
+                        "calendar_event_mappings",
+                        payload,
+                        filters={**base, "planner_block_id": block_id},
+                    )
+                    written.append(block_id)
+                except Exception as error:  # noqa: BLE001 - one row must not sink the pass
+                    errors[block_id] = str(error)
+            else:
+                fresh.append({**base, "planner_block_id": block_id, **payload, "published_at": now})
+
+        if fresh:
+            try:
+                self.client.insert("calendar_event_mappings", fresh)
+                written.extend(str(row["planner_block_id"]) for row in fresh)
+            except Exception as error:  # noqa: BLE001
+                for row in fresh:
+                    errors[str(row["planner_block_id"])] = str(error)
+
+        return {"written": written, "errors": errors}
+
     def deactivate(self, context, planner_block_id, target_name):
         self.client.update(
             "calendar_event_mappings",
@@ -297,6 +365,9 @@ class BoundExternalLinkStore:
             checksum,
             active_links=active_links,
         )
+
+    def upsert_many(self, records, *, active_links=None):
+        return self.repository.upsert_many(self.context, records, active_links=active_links)
 
     def deactivate(self, planner_block_id, target_name):
         return self.repository.deactivate(self.context, planner_block_id, target_name)

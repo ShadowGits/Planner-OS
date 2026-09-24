@@ -244,6 +244,68 @@ class GoogleCalendarClient:
             batch.execute()
         return {"deleted": deleted, "errors": errors}
 
+    def batch_write_events(
+        self,
+        creates: list[tuple[str, ScheduledBlock]],
+        updates: list[tuple[str, str, ScheduledBlock]],
+        *,
+        chunk_size: int = 50,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+        """Create and update many events over Google's batch HTTP endpoint.
+
+        A sync used to send one request per block and wait for each in turn, so
+        a week's backlog was a hundred sequential round trips and took minutes.
+        These are independent writes — nothing in one decides anything in the
+        next — so there is no reason to pay latency per block rather than per
+        batch of fifty.
+
+        Keyed by the caller's request id, which is the planner block id, so a
+        failure is attributable to its block instead of sinking the pass. The
+        contract matches batch_delete_events: results for what succeeded,
+        messages for what did not, and never an exception for one bad block.
+        """
+
+        if not creates and not updates:
+            return {}, {}
+
+        service = self.authenticate()
+        written: dict[str, dict[str, Any]] = {}
+        errors: dict[str, str] = {}
+
+        def _handle(request_id: str, response: Any, exception: Exception | None) -> None:
+            if exception is not None:
+                errors[request_id] = str(exception)
+            elif response:
+                written[request_id] = response
+
+        requests: list[tuple[str, Any]] = [
+            (
+                block_id,
+                service.events().insert(
+                    calendarId=self.calendar_id, body=self.event_from_block(block)
+                ),
+            )
+            for block_id, block in creates
+        ]
+        requests += [
+            (
+                block_id,
+                service.events().update(
+                    calendarId=self.calendar_id,
+                    eventId=event_id,
+                    body=self.event_from_block(block),
+                ),
+            )
+            for block_id, event_id, block in updates
+        ]
+
+        for offset in range(0, len(requests), chunk_size):
+            batch = service.new_batch_http_request(callback=_handle)
+            for request_id, request in requests[offset : offset + chunk_size]:
+                batch.add(request, request_id=request_id)
+            batch.execute()
+        return written, errors
+
     def delete_event_scope(self, event_id: str, delete_scope: str) -> None:
         """Delete a Planner OS event, recurring series, or this-and-future instances."""
 
@@ -343,36 +405,60 @@ class GoogleCalendarClient:
         links_by_block = self._active_links_by_block()
         events_by_id = {str(event["id"]): event for event in existing_events}
 
-        created = updated = deleted = unchanged = 0
+        deleted = unchanged = 0
         errors: list[str] = []
+
+        # Decide everything first, touching nothing. Each block's verdict
+        # depends only on what was already read, so the whole pass can be
+        # settled in memory and then applied in batches — rather than one
+        # request per block, each waiting on the last.
+        to_create: list[tuple[str, ScheduledBlock]] = []
+        to_update: list[tuple[str, str, ScheduledBlock]] = []
+        settled: list[tuple[str, str, ScheduledBlock]] = []
 
         for block_id, block in desired_blocks.items():
             existing = planner_events.get(block_id)
             if existing is None:
                 existing = self._linked_event(block_id, links_by_block, events_by_id)
-            try:
-                if existing is None:
-                    created_event = self.create_event(block)
-                    self._record_external_link(block_id, str(created_event["id"]), block, links_by_block)
-                    created += 1
-                elif self._event_matches_block(existing, block):
-                    self._record_external_link(block_id, str(existing["id"]), block, links_by_block)
-                    unchanged += 1
-                else:
-                    self.update_event(str(existing["id"]), block)
-                    self._record_external_link(block_id, str(existing["id"]), block, links_by_block)
-                    updated += 1
-            except Exception as error:
-                errors.append(f"{block.title}: {error}")
+            if existing is None:
+                to_create.append((block_id, block))
+            elif self._event_matches_block(existing, block):
+                settled.append((block_id, str(existing["id"]), block))
+                unchanged += 1
+            else:
+                to_update.append((block_id, str(existing["id"]), block))
 
-        for block_id, event in planner_events.items():
-            if block_id in desired_blocks:
-                continue
-            try:
-                self.delete_event(str(event["id"]))
-                deleted += 1
-            except Exception as error:
-                errors.append(f"{event.get('summary', event.get('id'))}: {error}")
+        try:
+            written, write_errors = self.batch_write_events(to_create, to_update)
+        except Exception as error:
+            written, write_errors = {}, {
+                block_id: str(error)
+                for block_id, *_ in [*to_create, *to_update]
+            }
+
+        created = sum(1 for block_id, _ in to_create if block_id in written)
+        updated = sum(1 for block_id, _, _ in to_update if block_id in written)
+        for block_id, message in write_errors.items():
+            errors.append(f"{desired_blocks[block_id].title}: {message}")
+
+        settled += [
+            (block_id, str(event["id"]), desired_blocks[block_id])
+            for block_id, event in written.items()
+        ]
+        self._record_external_links(settled, links_by_block)
+
+        stale = [
+            (block_id, event)
+            for block_id, event in planner_events.items()
+            if block_id not in desired_blocks
+        ]
+        if stale:
+            outcome = self.batch_delete_events([str(event["id"]) for _, event in stale])
+            deleted = len(outcome["deleted"])
+            by_event_id = {str(event["id"]): event for _, event in stale}
+            for event_id, message in outcome["errors"].items():
+                event = by_event_id.get(event_id, {})
+                errors.append(f"{event.get('summary', event_id)}: {message}")
 
         result = CalendarSyncResult(
             created=created,
@@ -488,6 +574,75 @@ class GoogleCalendarClient:
                 "status": "active",
                 "checksum": checksum,
             }
+
+    def _record_external_links(
+        self,
+        settled: list[tuple[str, str, ScheduledBlock]],
+        links_by_block: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Persist every block-to-event mapping this pass established.
+
+        Links whose event and checksum already match are dropped first, so a
+        re-run of an unchanged week writes nothing at all. Whatever is left
+        goes to the store in one call rather than one per block; a store with
+        no bulk path falls back to writing them individually, which is what
+        this did for every block before.
+        """
+
+        if self.external_links is None or not settled:
+            return
+
+        pending: list[tuple[str, str, str]] = []
+        for block_id, external_id, block in settled:
+            checksum = self._checksum(block)
+            current = (links_by_block or {}).get(block_id)
+            if (
+                current
+                and str(current.get("external_id")) == external_id
+                and current.get("checksum") == checksum
+            ):
+                continue
+            pending.append((block_id, external_id, checksum))
+
+        if not pending:
+            return
+
+        bulk = getattr(self.external_links, "upsert_many", None)
+        try:
+            if bulk is not None:
+                bulk(
+                    [
+                        {
+                            "planner_block_id": block_id,
+                            "target_name": "google_calendar",
+                            "external_id": external_id,
+                            "checksum": checksum,
+                        }
+                        for block_id, external_id, checksum in pending
+                    ],
+                    active_links=links_by_block,
+                )
+            else:
+                for block_id, external_id, checksum in pending:
+                    self.external_links.upsert(
+                        block_id,
+                        "google_calendar",
+                        external_id,
+                        checksum,
+                        active_links=links_by_block,
+                    )
+        except Exception:
+            return
+
+        if links_by_block is not None:
+            for block_id, external_id, checksum in pending:
+                links_by_block[block_id] = {
+                    "planner_block_id": block_id,
+                    "target_name": "google_calendar",
+                    "external_id": external_id,
+                    "status": "active",
+                    "checksum": checksum,
+                }
 
     def _checksum(self, block: ScheduledBlock) -> str:
         event = self.event_from_block(block)

@@ -4,7 +4,7 @@ import json
 import io
 import sys
 from contextlib import redirect_stdout
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
@@ -283,12 +283,53 @@ class GoogleCalendarClientTests(TestCase):
             self.assertEqual(result.updated, 1)
             self.assertEqual(result.deleted, 1)
             self.assertEqual(result.unchanged, 1)
+            # Same work as before, sent differently: one insert, one update and
+            # one delete are still prepared, but they leave over batch requests
+            # instead of one blocking round trip each. The count is what the
+            # sync's wall clock is made of, so it is worth pinning: writes go in
+            # one batch and deletes in another, however many blocks there are.
+            operations = [call[0] for call in client.service.calls]
             self.assertEqual(
-                [call[0] for call in client.service.calls],
+                [name for name in operations if name != "batch"],
                 ["list", "insert", "update", "delete"],
             )
+            self.assertEqual(operations.count("batch"), 2)
             deleted_ids = [call[1]["eventId"] for call in client.service.calls if call[0] == "delete"]
             self.assertEqual(deleted_ids, ["stale"])
+
+    def test_round_trips_do_not_grow_with_the_number_of_blocks(self) -> None:
+        """What made a sync take minutes was its shape, not its size.
+
+        One request per block, each waiting on the last, means a week's backlog
+        costs a hundred sequential latencies. These writes are independent, so
+        they go in batches of fifty and the wall clock stops tracking the block
+        count.
+        """
+
+        with TemporaryDirectory() as directory:
+            service = FakeService()
+            client = GoogleCalendarClient(
+                service=service,
+                decision_log=DecisionLog(Path(directory) / "decision_log.jsonl"),
+            )
+            blocks = [
+                block(
+                    f"Task {index}",
+                    start=datetime(2026, 7, 11, 6, 0) + timedelta(minutes=30 * index),
+                    end=datetime(2026, 7, 11, 6, 30) + timedelta(minutes=30 * index),
+                )
+                for index in range(30)
+            ]
+
+            result = client.sync_plan(plan_with(*blocks))
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.created, 30)
+            operations = [call[0] for call in service.calls]
+            self.assertEqual(operations.count("insert"), 30, "every block is still written")
+            # One read, then one batch carrying all thirty — not thirty waits.
+            self.assertEqual(operations.count("batch"), 1)
+            self.assertEqual(operations.count("list"), 1)
 
     def test_partial_api_failures_are_reported(self) -> None:
         with TemporaryDirectory() as directory:

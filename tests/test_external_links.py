@@ -28,6 +28,7 @@ class CountingGateway:
         self.rows = list(rows or [])
         self.selects: list[dict] = []
         self.inserts: list[dict] = []
+        self.bulk_inserts: list[list] = []
         self.updates: list[dict] = []
 
     def select(self, table, *, filters, columns="*", limit=None):
@@ -39,10 +40,12 @@ class CountingGateway:
         return matched[:limit] if limit else matched
 
     def insert(self, table, payload):
-        row = {"id": str(uuid4()), **dict(payload)}
-        self.inserts.append(row)
-        self.rows.append(row)
-        return [row]
+        batch = payload if isinstance(payload, list) else [payload]
+        self.bulk_inserts.append(list(batch))
+        rows = [{"id": str(uuid4()), **dict(item)} for item in batch]
+        self.inserts.extend(rows)
+        self.rows.extend(rows)
+        return rows
 
     def update(self, table, payload, *, filters):
         self.updates.append(dict(payload))
@@ -135,3 +138,54 @@ def test_the_other_target_guard_survives_the_shortcut():
 
     assert gateway.inserts == [], "a second active link was written for one block"
     assert gateway.updates == []
+
+
+def test_new_links_are_written_in_one_insert():
+    """A first sync is all new links, so this is the round trip that mattered."""
+    gateway = CountingGateway()
+    repository = SupabaseExternalLinkRepository(gateway)
+    records = [
+        {
+            "planner_block_id": f"block-{index}",
+            "target_name": "google_calendar",
+            "external_id": f"g-{index}",
+            "checksum": "sum",
+        }
+        for index in range(30)
+    ]
+
+    outcome = repository.upsert_many(_context(), records, active_links={})
+
+    assert len(outcome["written"]) == 30
+    assert outcome["errors"] == {}
+    assert len(gateway.inserts) == 30, "every link is still persisted"
+    assert gateway.selects == []
+    assert len(gateway.bulk_inserts) == 1, "thirty links cost one insert, not thirty"
+
+
+def test_a_conflicting_link_is_reported_without_sinking_the_others():
+    gateway = CountingGateway([_row("block-1", provider="apple_calendar")])
+    repository = SupabaseExternalLinkRepository(gateway)
+    links = {"block-1": repository._public(_row("block-1", provider="apple_calendar"))}
+
+    outcome = repository.upsert_many(
+        _context(),
+        [
+            {
+                "planner_block_id": "block-1",
+                "target_name": "google_calendar",
+                "external_id": "g-1",
+                "checksum": "sum",
+            },
+            {
+                "planner_block_id": "block-2",
+                "target_name": "google_calendar",
+                "external_id": "g-2",
+                "checksum": "sum",
+            },
+        ],
+        active_links=links,
+    )
+
+    assert "block-1" in outcome["errors"]
+    assert outcome["written"] == ["block-2"], "the healthy link was still written"
