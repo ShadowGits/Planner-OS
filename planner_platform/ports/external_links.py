@@ -29,5 +29,7 @@ class ExternalLinkRepository(Protocol):
         target_name: str,
         external_id: str,
         checksum: str,
+        *,
+        active_links: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]: ...
 

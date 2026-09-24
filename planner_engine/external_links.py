@@ -25,7 +25,23 @@ class ExternalLinkStore:
     def active_for(self, planner_block_id: str) -> dict[str, Any] | None:
         return next((item for item in self.list(status="active") if item["planner_block_id"] == planner_block_id), None)
 
-    def upsert(self, planner_block_id: str, target_name: str, external_id: str, checksum: str) -> dict[str, Any]:
+    def upsert(
+        self,
+        planner_block_id: str,
+        target_name: str,
+        external_id: str,
+        checksum: str,
+        *,
+        active_links: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """active_links is accepted for interface parity and deliberately unused.
+
+        It exists so a caller can spare a remote-backed store one read per
+        block. This store keeps every link in one local file and has to load it
+        anyway to write it back, so there is nothing here to save, and trusting
+        the caller's copy over the file would only risk writing stale records.
+        """
+
         links = self._load()
         active = next((item for item in links if item["planner_block_id"] == planner_block_id and item["status"] == "active"), None)
         if active and active["target_name"] != target_name:

@@ -193,8 +193,25 @@ class SupabaseExternalLinkRepository:
         )
         return self._public(rows[0]) if rows else None
 
-    def upsert(self, context, planner_block_id, target_name, external_id, checksum):
-        active = self.active_for(context, planner_block_id)
+    def upsert(self, context, planner_block_id, target_name, external_id, checksum, *, active_links=None):
+        """Create or refresh the active link for a block.
+
+        active_links, when given, is the complete set of active links for this
+        workspace keyed by planner_block_id — a caller that already holds it
+        saves a SELECT here. A calendar sync does: it loads every active link
+        once before the loop, so re-reading one row per block was a network
+        round trip for data already in memory, and a sync of a week with a
+        creation backlog paid it a hundred times over. Absent from the map
+        means no active link, so the "already linked to another target" guard
+        still holds; it is only sound because the map covers every provider,
+        not just the one being synced.
+        """
+
+        active = (
+            active_links.get(planner_block_id)
+            if active_links is not None
+            else self.active_for(context, planner_block_id)
+        )
         if active and active["target_name"] != target_name:
             raise ValueError("Planner block already has an active link on another target")
         now = datetime.now(timezone.utc).isoformat()
@@ -271,8 +288,15 @@ class BoundExternalLinkStore:
     def active_for(self, planner_block_id):
         return self.repository.active_for(self.context, planner_block_id)
 
-    def upsert(self, planner_block_id, target_name, external_id, checksum):
-        return self.repository.upsert(self.context, planner_block_id, target_name, external_id, checksum)
+    def upsert(self, planner_block_id, target_name, external_id, checksum, *, active_links=None):
+        return self.repository.upsert(
+            self.context,
+            planner_block_id,
+            target_name,
+            external_id,
+            checksum,
+            active_links=active_links,
+        )
 
     def deactivate(self, planner_block_id, target_name):
         return self.repository.deactivate(self.context, planner_block_id, target_name)

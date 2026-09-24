@@ -398,7 +398,14 @@ class GoogleCalendarClient:
         )
 
     def _active_links_by_block(self) -> dict[str, dict[str, Any]]:
-        """Load every active Google Calendar link in one call for a sync pass.
+        """Load every active link in one call for a sync pass.
+
+        Every target, not only Google Calendar. A block may hold one active
+        link at a time, so this map is the whole answer to "is this block
+        already linked, and to what" — which lets it stand in for the per-block
+        lookup the store would otherwise do on each write. Narrowed to one
+        provider it could not: a block linked elsewhere would read as unlinked
+        and the write would add a second active row instead of refusing.
 
         Deliberately not guarded: these links are the only record of which
         blocks already have an event. Answering "none" because the read failed
@@ -411,7 +418,7 @@ class GoogleCalendarClient:
             return {}
         return {
             str(item["planner_block_id"]): item
-            for item in self.external_links.list(target_name="google_calendar", status="active")
+            for item in self.external_links.list(status="active")
         }
 
     def _linked_event(
@@ -464,7 +471,13 @@ class GoogleCalendarClient:
             ):
                 return
         try:
-            self.external_links.upsert(block_id, "google_calendar", external_id, checksum)
+            self.external_links.upsert(
+                block_id,
+                "google_calendar",
+                external_id,
+                checksum,
+                active_links=links_by_block,
+            )
         except Exception:
             return
         if links_by_block is not None:
