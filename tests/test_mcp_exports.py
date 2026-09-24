@@ -79,3 +79,36 @@ class TestMCPExports(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_no_mcp_tool_blocks_the_event_loop() -> None:
+    """A tool that never awaits must not be declared async.
+
+    Every core tool talks to Postgres or Google over synchronous HTTP. Declared
+    `async def`, the handler runs to completion on the event loop and the whole
+    process serves nothing until it returns — /api/health included. A calendar
+    sync takes minutes, so one call took the service down while the container
+    sat there perfectly healthy. Declared `def`, the framework hands it to the
+    threadpool and the loop stays free.
+
+    The rule is mechanical: if it does not await, it is not async.
+    """
+
+    tree = ast.parse(open("planner_core/mcp_tools.py").read())
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("core_"):
+            continue
+        awaits = [
+            child
+            for child in ast.walk(node)
+            if isinstance(child, (ast.Await, ast.AsyncFor, ast.AsyncWith))
+        ]
+        if not awaits:
+            offenders.append(node.name)
+
+    assert not offenders, (
+        "these tools are async but never await, so they block the event loop "
+        f"for their whole duration: {sorted(offenders)}"
+    )

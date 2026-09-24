@@ -72,7 +72,7 @@ def _core_for_current_user():
 
 def register_core_tools(server: Any) -> None:
     @server.tool(name="core_create_project")
-    async def core_create_project(
+    def core_create_project(
         name: str,
         track: str | None = None,
         description: str | None = None,
@@ -83,13 +83,13 @@ def register_core_tools(server: Any) -> None:
         return projects.create_project(name, track=track, description=description, target_date=target_date)
 
     @server.tool(name="core_update_project")
-    async def core_update_project(project_id: str, updates: dict) -> dict:
+    def core_update_project(project_id: str, updates: dict) -> dict:
         """Update project fields: name, track, description, status (active/paused/done/archived), target_date."""
         _, projects, _, _, _ = _core_for_current_user()
         return projects.update_project(project_id, updates)
 
     @server.tool(name="core_add_milestone")
-    async def core_add_milestone(
+    def core_add_milestone(
         project_id: str,
         name: str,
         target_date: str | None = None,
@@ -103,19 +103,19 @@ def register_core_tools(server: Any) -> None:
         )
 
     @server.tool(name="core_update_milestone")
-    async def core_update_milestone(milestone_id: str, updates: dict) -> dict:
+    def core_update_milestone(milestone_id: str, updates: dict) -> dict:
         """Update milestone fields: name, status (not_started/in_progress/blocked/done), target_date, sort_order, notes."""
         _, projects, _, _, _ = _core_for_current_user()
         return projects.update_milestone(milestone_id, updates)
 
     @server.tool(name="core_list_projects")
-    async def core_list_projects() -> dict:
+    def core_list_projects() -> dict:
         """List all projects with their milestones and open/done task counts."""
         _, projects, _, _, _ = _core_for_current_user()
         return projects.project_tree()
 
     @server.tool(name="core_create_task")
-    async def core_create_task(
+    def core_create_task(
         title: str,
         project_id: str | None = None,
         milestone_id: str | None = None,
@@ -149,67 +149,67 @@ def register_core_tools(server: Any) -> None:
         )
 
     @server.tool(name="core_create_tasks_batch")
-    async def core_create_tasks_batch(items: list[dict]) -> dict:
+    def core_create_tasks_batch(items: list[dict]) -> dict:
         """Create many tasks in one call. Each item takes the same fields as core_create_task: title (required), project_id, milestone_id, due_date, scheduled_date, start_time (HH:MM), priority, estimated_minutes, recurrence_key, notes, parent_task_id, depends_on, metadata. All items are validated before any task is created."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.create_tasks_batch(items)
 
     @server.tool(name="core_update_task")
-    async def core_update_task(task_id: str, updates: dict) -> dict:
+    def core_update_task(task_id: str, updates: dict) -> dict:
         """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes, parent_task_id, depends_on, and metadata (extra project columns, replaced wholesale)."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.update_task(task_id, updates)
 
     @server.tool(name="core_complete_task")
-    async def core_complete_task(task_id: str, note: str | None = None) -> dict:
+    def core_complete_task(task_id: str, note: str | None = None) -> dict:
         """Mark a task done and record the completion for streaks and metrics."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.complete_task(task_id, source="mcp", note=note)
 
     @server.tool(name="core_delete_task")
-    async def core_delete_task(task_id: str) -> dict:
+    def core_delete_task(task_id: str) -> dict:
         """Delete one task permanently."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.delete_task(task_id)
 
     @server.tool(name="core_delete_tasks_batch")
-    async def core_delete_tasks_batch(task_ids: list[str]) -> dict:
+    def core_delete_tasks_batch(task_ids: list[str]) -> dict:
         """Batch delete multiple tasks permanently."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.delete_tasks_batch(task_ids)
 
     @server.tool(name="core_list_tasks")
-    async def core_list_tasks(status: str | None = None, project_id: str | None = None) -> dict:
+    def core_list_tasks(status: str | None = None, project_id: str | None = None) -> dict:
         """List tasks, optionally filtered by status or project, sorted by due date."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.list_tasks(status=status, project_id=project_id)
 
     @server.tool(name="core_today")
-    async def core_today() -> dict:
+    def core_today() -> dict:
         """Today's view: scheduled tasks, due today, overdue, and completions so far."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.today()
 
     @server.tool(name="core_add_monthly_goal")
-    async def core_add_monthly_goal(project_id: str, month: str, description: str) -> dict:
+    def core_add_monthly_goal(project_id: str, month: str, description: str) -> dict:
         """Add or update a monthly goal (upsert). month should be YYYY-MM-DD (typically the 1st of the month)."""
         _, _, _, _, goals = _core_for_current_user()
         return goals.add_monthly_goal(project_id, month, description)
 
     @server.tool(name="core_update_monthly_goal")
-    async def core_update_monthly_goal(goal_id: str, description: str) -> dict:
+    def core_update_monthly_goal(goal_id: str, description: str) -> dict:
         """Update the description of an existing monthly goal."""
         _, _, _, _, goals = _core_for_current_user()
         return goals.update_monthly_goal(goal_id, description)
 
     @server.tool(name="core_add_weekly_goal")
-    async def core_add_weekly_goal(project_id: str, week_start: str, description: str) -> dict:
+    def core_add_weekly_goal(project_id: str, week_start: str, description: str) -> dict:
         """Add or update a weekly goal for a project. week_start should be YYYY-MM-DD (a Monday)."""
         _, _, _, _, goals = _core_for_current_user()
         return goals.add_weekly_goal(project_id, week_start, description)
 
     @server.tool(name="core_sync_calendar")
-    async def core_sync_calendar(days: int = 7) -> dict:
+    def core_sync_calendar(days: int = 7) -> dict:
         """Mirror scheduled tasks to Google Calendar. Returns the number of events created, updated, and deleted."""
         tasks, _, _, _, _ = _core_for_current_user()
         
@@ -245,7 +245,7 @@ def register_core_tools(server: Any) -> None:
             return {"success": False, "message": str(e), "data": {}, "errors": [str(e)]}
 
     @server.tool(name="core_metrics")
-    async def core_metrics() -> dict:
+    def core_metrics() -> dict:
         """Full metrics snapshot: per-project completion, upcoming deadlines, streaks, totals."""
         _, _, metrics, _, _ = _core_for_current_user()
         return {"success": True, "message": "Planner metrics", "data": metrics.snapshot()}
@@ -310,7 +310,7 @@ def register_core_tools(server: Any) -> None:
     # ── habits ────────────────────────────────────────────────────────────
 
     @server.tool(name="core_add_habit")
-    async def core_add_habit(
+    def core_add_habit(
         title: str,
         cadence: str = "daily",
         days_of_week: list[int] | None = None,
@@ -335,22 +335,22 @@ def register_core_tools(server: Any) -> None:
         )
 
     @server.tool(name="core_list_habits")
-    async def core_list_habits(include_inactive: bool = False) -> dict:
+    def core_list_habits(include_inactive: bool = False) -> dict:
         """List habits and their rules. Streak counts come from core_metrics."""
         return _core().habits.list_habits(include_inactive=include_inactive)
 
     @server.tool(name="core_update_habit")
-    async def core_update_habit(habit_id: str, updates: dict) -> dict:
+    def core_update_habit(habit_id: str, updates: dict) -> dict:
         """Change a habit's rule for good: title, cadence, days_of_week, start_time, estimated_minutes, project_id, start_date, end_date, is_active. Set is_active false to retire a habit while keeping its history. To change one day only, use core_reschedule_habit_day."""
         return _core().habits.update_habit(habit_id, updates)
 
     @server.tool(name="core_delete_habit")
-    async def core_delete_habit(habit_id: str) -> dict:
+    def core_delete_habit(habit_id: str) -> dict:
         """Delete a habit and its per-day changes. Completions already recorded stay, so past streaks survive."""
         return _core().habits.delete_habit(habit_id)
 
     @server.tool(name="core_reschedule_habit_day")
-    async def core_reschedule_habit_day(
+    def core_reschedule_habit_day(
         habit_id: str,
         on_date: str,
         moved_to: str | None = None,
@@ -369,21 +369,21 @@ def register_core_tools(server: Any) -> None:
         )
 
     @server.tool(name="core_skip_habit_day")
-    async def core_skip_habit_day(habit_id: str, on_date: str) -> dict:
+    def core_skip_habit_day(habit_id: str, on_date: str) -> dict:
         """Drop one day of a habit from the plan, e.g. no gym on a rest day. The streak still shows the day as missed; this only stops it appearing."""
         from datetime import date as _date
 
         return _core().habits.skip_occurrence(habit_id, _date.fromisoformat(on_date))
 
     @server.tool(name="core_complete_habit_day")
-    async def core_complete_habit_day(habit_id: str, on_date: str) -> dict:
+    def core_complete_habit_day(habit_id: str, on_date: str) -> dict:
         """Tick one day of a habit, which is what feeds its streak."""
         from datetime import date as _date
 
         return _core().habits.complete_occurrence(habit_id, _date.fromisoformat(on_date), source="mcp")
 
     @server.tool(name="core_reopen_habit_day")
-    async def core_reopen_habit_day(habit_id: str, on_date: str) -> dict:
+    def core_reopen_habit_day(habit_id: str, on_date: str) -> dict:
         """Un-tick one day of a habit."""
         from datetime import date as _date
 
