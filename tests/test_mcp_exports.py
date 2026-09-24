@@ -81,34 +81,108 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def test_no_mcp_tool_blocks_the_event_loop() -> None:
-    """A tool that never awaits must not be declared async.
+def test_registered_tools_do_not_run_on_the_event_loop() -> None:
+    """The handlers block; registration must move them off the loop.
 
-    Every core tool talks to Postgres or Google over synchronous HTTP. Declared
-    `async def`, the handler runs to completion on the event loop and the whole
-    process serves nothing until it returns — /api/health included. A calendar
-    sync takes minutes, so one call took the service down while the container
-    sat there perfectly healthy. Declared `def`, the framework hands it to the
-    threadpool and the loop stays free.
+    An earlier version of this test asserted the handlers were declared `def`,
+    on the belief that FastMCP then ran them in a threadpool. It does not —
+    it calls a non-coroutine handler inline, so `def` blocked the event loop
+    exactly as much as a non-awaiting `async def` did, and asserting on the
+    keyword proved nothing about the thing that mattered.
 
-    The rule is mechanical: if it does not await, it is not async.
+    So this asserts the behaviour instead: call a registered tool and check it
+    ran somewhere other than the thread running the loop, and that the loop
+    kept going while it blocked.
     """
 
-    tree = ast.parse(open("planner_core/mcp_tools.py").read())
+    import anyio
+    import threading
+    import time
 
-    offenders = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("core_"):
-            continue
-        awaits = [
-            child
-            for child in ast.walk(node)
-            if isinstance(child, (ast.Await, ast.AsyncFor, ast.AsyncWith))
-        ]
-        if not awaits:
-            offenders.append(node.name)
+    from planner_core.mcp_tools import _OffloadedTools
 
-    assert not offenders, (
-        "these tools are async but never await, so they block the event loop "
-        f"for their whole duration: {sorted(offenders)}"
+    registered = {}
+
+    class StubServer:
+        def tool(self, **kwargs):
+            def register(fn):
+                registered[kwargs["name"]] = fn
+                return fn
+            return register
+
+    server = _OffloadedTools(StubServer())
+    ran_on = {}
+
+    @server.tool(name="core_pretend_sync")
+    def core_pretend_sync(days: int = 7) -> dict:
+        ran_on["thread"] = threading.current_thread().name
+        time.sleep(0.4)  # stand in for blocking HTTP
+        return {"days": days}
+
+    handler = registered["core_pretend_sync"]
+    ticks = 0
+
+    async def main():
+        nonlocal ticks
+        ran_on["loop"] = threading.current_thread().name
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(10):
+                await anyio.sleep(0.02)
+                ticks += 1
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(ticker)
+            ran_on["result"] = await handler(days=3)
+
+    try:
+        anyio.run(main)
+    finally:
+        # anyio.run closes the loop it made and leaves asyncio with none, which
+        # breaks any later test still using the deprecated get_event_loop().
+        import asyncio
+
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert ran_on["result"] == {"days": 3}, "the tool still returns its value"
+    assert ran_on["thread"] != ran_on["loop"], (
+        "the handler ran on the event loop thread, so it blocks the whole service"
     )
+    assert ticks == 10, "the event loop stalled while the handler blocked"
+
+
+def test_tool_signatures_survive_being_offloaded() -> None:
+    """FastMCP builds each tool's argument model from the signature.
+
+    Wrapping a handler must not hide its parameters, or the tool registers
+    with the wrong schema and every call fails validation.
+    """
+
+    import inspect
+
+    from planner_core.mcp_tools import _OffloadedTools
+
+    registered = {}
+
+    class StubServer:
+        def tool(self, **kwargs):
+            def register(fn):
+                registered[kwargs["name"]] = fn
+                return fn
+            return register
+
+    server = _OffloadedTools(StubServer())
+
+    @server.tool(name="core_pretend")
+    def core_pretend(project_id: str, limit: int = 10) -> dict:
+        """Docstring the tool description comes from."""
+        return {}
+
+    handler = registered["core_pretend"]
+    signature = inspect.signature(handler)
+
+    assert list(signature.parameters) == ["project_id", "limit"]
+    assert signature.parameters["limit"].default == 10
+    assert handler.__name__ == "core_pretend"
+    assert handler.__doc__ == "Docstring the tool description comes from."

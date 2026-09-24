@@ -7,6 +7,8 @@ from the MCP access token exactly like the legacy workbook handlers do.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 from typing import Any
 from uuid import UUID
@@ -70,7 +72,62 @@ def _core_for_current_user():
     return core.tasks, core.projects, core.metrics, core.reminders, core.goals
 
 
+class _OffloadedTools:
+    """Register tools so their blocking work runs off the event loop.
+
+    Every tool here talks to Postgres or Google over synchronous HTTP, and
+    FastMCP offers no way to say so. It inspects the handler and, for anything
+    that is not a coroutine function, calls it inline:
+
+        if fn_is_async:
+            return await fn(...)
+        else:
+            return fn(...)
+
+    So a plain `def` handler runs on the event loop just as surely as an
+    `async def` one that never awaits. Either way the process serves nothing
+    else until the handler returns — every other tool call, and /api/health,
+    waits behind it. A calendar sync runs for minutes, which is how one call
+    took the whole service down while the container sat there healthy.
+
+    Wrapping each handler in a coroutine that awaits a worker thread is what
+    actually moves the blocking off the loop. functools.wraps keeps the
+    signature FastMCP builds its argument model from, and anyio copies the
+    current context into the thread, so the access token the handlers resolve
+    the caller from still reaches them.
+    """
+
+    def __init__(self, server: Any) -> None:
+        self._server = server
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._server, name)
+
+    def tool(self, *args: Any, **kwargs: Any) -> Any:
+        register = self._server.tool(*args, **kwargs)
+
+        def decorator(fn: Any) -> Any:
+            if inspect.iscoroutinefunction(fn):
+                return register(fn)
+
+            @functools.wraps(fn)
+            async def offloaded(*call_args: Any, **call_kwargs: Any) -> Any:
+                import anyio.to_thread
+
+                return await anyio.to_thread.run_sync(
+                    functools.partial(fn, *call_args, **call_kwargs)
+                )
+
+            return register(offloaded)
+
+        return decorator
+
+
 def register_core_tools(server: Any) -> None:
+    # Every handler below is written as a plain, blocking function. This makes
+    # each one run on a worker thread instead of the event loop.
+    server = _OffloadedTools(server)
+
     @server.tool(name="core_create_project")
     def core_create_project(
         name: str,
