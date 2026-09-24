@@ -54,6 +54,16 @@ steps:
       # Give the container extra CPU during startup so cold starts boot faster.
       # No extra charge — startup CPU boost is included at the same price.
       - '--cpu-boost'
+      # Stamp the running service with the commit it was built from.
+      #
+      # This trigger reports nothing back to GitHub, so from outside there was
+      # no way to tell a push that landed on main from a push that actually
+      # reached production. During an outage that is the first question worth
+      # asking and the one we could not answer. /api/health now returns it.
+      #
+      # update-env-vars, never set-env-vars: set replaces the whole environment
+      # and would wipe every secret this service runs on.
+      - '--update-env-vars=BUILD_SHA=$SHORT_SHA,BUILD_ID=$BUILD_ID'
       # Refuse to route traffic to a revision whose app did not start.
       #
       # Cloud Run otherwise only checks that something is listening on $PORT.

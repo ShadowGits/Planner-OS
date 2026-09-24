@@ -178,7 +178,17 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
         return envelope(
             True,
             "Planner OS API is ready",
-            data={"version": api.version, "service_key_configured": configured},
+            data={
+                "version": api.version,
+                "service_key_configured": configured,
+                # Which commit is actually serving. The deploy trigger reports
+                # nothing back to GitHub, so a push landing on main and the
+                # service running that push were impossible to tell apart from
+                # outside: we spent an outage unable to answer "is the fix even
+                # live?". Now anyone can ask the service and be told.
+                "revision": os.environ.get("BUILD_SHA", "unknown"),
+                "build_id": os.environ.get("BUILD_ID", "unknown"),
+            },
         )
 
     @api.get("/api/mcp-status")
