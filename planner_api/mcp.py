@@ -19,6 +19,7 @@ MCP_USER_ID   – UUID of the Planner OS owner whose workspace Claude should use
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import os
@@ -53,6 +54,29 @@ REFRESH_TOKEN_TTL = 86400 * 30
 AUTH_CODE_TTL = 300
 
 
+def _offload_blocking(method):
+    """Run an interface-mandated async method's blocking body on a worker thread.
+
+    Every method here is declared async because the MCP auth interface requires
+    it, and every one of them is a blocking Supabase call — none of them awaits
+    anything. Left as they were, each ran to completion on the event loop, and
+    load_access_token runs on every single request: the whole service was
+    serialised behind one database round trip at a time, unable to serve
+    anything else, /api/health included.
+
+    anyio copies the current context into the thread, so nothing the callers
+    read from contextvars changes.
+    """
+
+    @functools.wraps(method)
+    async def offloaded(*args, **kwargs):
+        import anyio.to_thread
+
+        return await anyio.to_thread.run_sync(functools.partial(method, *args, **kwargs))
+
+    return offloaded
+
+
 class ApiKeyOAuthProvider:
     """OAuth provider backed by static API keys.
 
@@ -80,13 +104,15 @@ class ApiKeyOAuthProvider:
     def _digest(secret: str) -> str:
         return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
-    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+    @_offload_blocking
+    def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         payload = self._store.get("client", client_id)
         if payload is None:
             return None
         return OAuthClientInformationFull.model_validate(payload)
 
-    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+    @_offload_blocking
+    def register_client(self, client_info: OAuthClientInformationFull) -> None:
         self._store.put(
             "client",
             client_info.client_id,
@@ -94,7 +120,8 @@ class ApiKeyOAuthProvider:
             None,
         )
 
-    async def authorize(
+    @_offload_blocking
+    def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
         return (
@@ -106,7 +133,8 @@ class ApiKeyOAuthProvider:
             f"&redirect_uri_provided_explicitly={params.redirect_uri_provided_explicitly}"
         )
 
-    async def create_authorization_code(
+    @_offload_blocking
+    def create_authorization_code(
         self,
         client: OAuthClientInformationFull,
         params: AuthorizationParams,
@@ -131,7 +159,8 @@ class ApiKeyOAuthProvider:
         )
         return code
 
-    async def load_authorization_code(
+    @_offload_blocking
+    def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         payload = self._store.get("auth_code", self._digest(authorization_code))
@@ -142,7 +171,8 @@ class ApiKeyOAuthProvider:
             return ac
         return None
 
-    async def exchange_authorization_code(
+    @_offload_blocking
+    def exchange_authorization_code(
         self,
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
@@ -188,7 +218,8 @@ class ApiKeyOAuthProvider:
             refresh_token=refresh,
         )
 
-    async def load_refresh_token(
+    @_offload_blocking
+    def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
         payload = self._store.get("refresh_token", self._digest(refresh_token))
@@ -202,7 +233,8 @@ class ApiKeyOAuthProvider:
             return None
         return rt
 
-    async def exchange_refresh_token(
+    @_offload_blocking
+    def exchange_refresh_token(
         self,
         client: OAuthClientInformationFull,
         refresh_token: RefreshToken,
@@ -213,7 +245,8 @@ class ApiKeyOAuthProvider:
             client.client_id, scopes or refresh_token.scopes, refresh_token.subject
         )
 
-    async def load_access_token(self, token: str) -> AccessToken | None:
+    @_offload_blocking
+    def load_access_token(self, token: str) -> AccessToken | None:
         payload = self._store.get("access_token", self._digest(token))
         if payload is not None:
             at = AccessToken.model_validate({**payload, "token": token})
@@ -232,7 +265,8 @@ class ApiKeyOAuthProvider:
             )
         return None
 
-    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+    @_offload_blocking
+    def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         self._store.delete("access_token", self._digest(token.token))
         self._store.delete("refresh_token", self._digest(token.token))
 
