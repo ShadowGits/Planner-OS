@@ -19,6 +19,15 @@ from planner_integrations.google_calendar import (
 )
 
 
+class HttpErrorish(Exception):
+    """Stand in for googleapiclient's HttpError: a status and a JSON body."""
+
+    def __init__(self, status: int, content: bytes) -> None:
+        super().__init__(f"HTTP {status}")
+        self.resp = type("Resp", (), {"status": status})()
+        self.content = content
+
+
 class FakeExecute:
     def __init__(self, result=None, error: Exception | None = None) -> None:
         self.result = result if result is not None else {}
@@ -330,6 +339,68 @@ class GoogleCalendarClientTests(TestCase):
             # One read, then one batch carrying all thirty — not thirty waits.
             self.assertEqual(operations.count("batch"), 1)
             self.assertEqual(operations.count("list"), 1)
+
+    def test_a_throttled_block_is_retried_and_a_rejected_one_is_not(self) -> None:
+        """Google's 403 means both "too fast" and "no". They must not be confused.
+
+        Resending a genuine rejection burns quota to fail again. Resending a
+        write that actually succeeded creates a duplicate event. So only the
+        throttled request is allowed back, and only it.
+        """
+
+        from planner_integrations.google_calendar import _is_rate_limited
+
+        class Resp:
+            def __init__(self, status):
+                self.status = status
+
+        throttled = HttpErrorish(403, b'{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}')
+        rejected = HttpErrorish(403, b'{"error":{"errors":[{"reason":"forbidden"}]}}')
+
+        self.assertTrue(_is_rate_limited(throttled))
+        self.assertFalse(_is_rate_limited(rejected), "a real refusal must not be retried")
+        self.assertTrue(_is_rate_limited(HttpErrorish(429, b"")))
+        self.assertTrue(_is_rate_limited(HttpErrorish(503, b"")))
+
+    def test_throttled_writes_are_resent_until_they_land(self) -> None:
+        with TemporaryDirectory() as directory:
+            service = FakeService()
+            client = GoogleCalendarClient(
+                service=service,
+                decision_log=DecisionLog(Path(directory) / "decision_log.jsonl"),
+            )
+            client.BATCH_PACING_SECONDS = 0
+            client.RATE_LIMIT_BACKOFF_SECONDS = 0
+            # First attempt is throttled, the retry succeeds.
+            service.insert_errors.append(
+                HttpErrorish(403, b'{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}')
+            )
+
+            result = client.sync_plan(plan_with(block("Throttled")))
+
+            self.assertEqual(result.created, 1, "the throttled block was retried and written")
+            self.assertEqual(result.errors, [], "a block that eventually landed is not an error")
+
+    def test_a_genuine_rejection_is_reported_once_and_not_retried(self) -> None:
+        with TemporaryDirectory() as directory:
+            service = FakeService()
+            client = GoogleCalendarClient(
+                service=service,
+                decision_log=DecisionLog(Path(directory) / "decision_log.jsonl"),
+            )
+            client.BATCH_PACING_SECONDS = 0
+            client.RATE_LIMIT_BACKOFF_SECONDS = 0
+            for _ in range(client.RATE_LIMIT_MAX_ATTEMPTS + 2):
+                service.insert_errors.append(
+                    HttpErrorish(403, b'{"error":{"errors":[{"reason":"forbidden"}]}}')
+                )
+
+            result = client.sync_plan(plan_with(block("Rejected")))
+
+            self.assertEqual(result.created, 0)
+            self.assertEqual(len(result.errors), 1)
+            inserts = [call for call in service.calls if call[0] == "insert"]
+            self.assertEqual(len(inserts), 1, "a rejected write must not be resent")
 
     def test_partial_api_failures_are_reported(self) -> None:
         with TemporaryDirectory() as directory:

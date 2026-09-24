@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import random
+# `time` here is datetime.time — the sleep has to come in under its own name.
+from time import sleep as _sleep
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -26,6 +29,39 @@ SCOPES = ("https://www.googleapis.com/auth/calendar.events",)
 
 class GoogleCalendarError(RuntimeError):
     """Raised for Google Calendar integration configuration errors."""
+
+
+# Reasons Google gives when it is refusing for load rather than for merit.
+# These are worth resending; anything else is a real rejection and resending it
+# would only fail again.
+_RATE_LIMIT_REASONS = (
+    "ratelimitexceeded",
+    "userratelimitexceeded",
+    "quotaexceeded",
+    "backenderror",
+)
+
+
+def _is_rate_limited(exception: Exception) -> bool:
+    """Is this Google saying "too fast" rather than "no"?
+
+    403 carries both meanings — it is the status for an exceeded quota and for
+    a calendar the account may not write to — so the status alone cannot decide
+    it and the reason has to be read out of the body. 429 and 5xx are
+    unambiguous. Anything unrecognised counts as a real refusal, because
+    retrying a rejected write is how duplicates and wasted quota happen.
+    """
+
+    status = getattr(getattr(exception, "resp", None), "status", None)
+    if status in (429, 500, 502, 503, 504):
+        return True
+    if status != 403:
+        return False
+    body = (getattr(exception, "content", b"") or b"")
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", "replace")
+    haystack = f"{body} {exception}".lower()
+    return any(reason in haystack for reason in _RATE_LIMIT_REASONS)
 
 
 @dataclass(frozen=True)
@@ -58,6 +94,19 @@ class CalendarSyncResult:
 
 class GoogleCalendarClient:
     """Synchronize Planner OS scheduled blocks to Google Calendar."""
+
+    # Google allows roughly 600 write queries per minute per user, and counts
+    # every request inside a batch separately. At 50 per chunk, a five second
+    # gap holds the sustained rate at about ten a second — just under it.
+    #
+    # The first chunks go out with no gap at all: short bursts are tolerated,
+    # and a week's sync fits inside one, so the common case pays nothing for
+    # this. Only a backlog large enough to actually threaten the quota slows
+    # down, and it slows to the fastest rate that still succeeds.
+    BATCH_PACING_SECONDS = 5.0
+    BATCH_BURST_CHUNKS = 2
+    RATE_LIMIT_BACKOFF_SECONDS = 2.0
+    RATE_LIMIT_MAX_ATTEMPTS = 4
 
     def __init__(
         self,
@@ -269,41 +318,92 @@ class GoogleCalendarClient:
             return {}, {}
 
         service = self.authenticate()
+
+        def _build() -> list[tuple[str, Any]]:
+            # Rebuilt per attempt: a request object cannot be replayed once it
+            # has been executed.
+            built: list[tuple[str, Any]] = [
+                (
+                    block_id,
+                    service.events().insert(
+                        calendarId=self.calendar_id, body=self.event_from_block(block)
+                    ),
+                )
+                for block_id, block in creates
+            ]
+            built += [
+                (
+                    block_id,
+                    service.events().update(
+                        calendarId=self.calendar_id,
+                        eventId=event_id,
+                        body=self.event_from_block(block),
+                    ),
+                )
+                for block_id, event_id, block in updates
+            ]
+            return built
+
+        return self._run_batches(service, _build, self.RATE_LIMIT_MAX_ATTEMPTS, chunk_size)
+
+    def _run_batches(
+        self,
+        service: Any,
+        build: Any,
+        max_attempts: int,
+        chunk_size: int,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+        """Send batches within Google's per-minute quota, retrying what it throttles.
+
+        Batching removed the latency but concentrated the load: Google counts
+        every request inside a batch separately against "queries per minute per
+        user", so a hundred days of new events went out as one burst and came
+        back refused. Fast enough to exceed the quota is still a failed sync.
+
+        So the requests are paced under the quota, and anything throttled
+        anyway is retried with widening backoff. Only the throttled ones are
+        resent — a block Google rejected on its merits would fail again every
+        time, and a block that succeeded must never be sent twice or it becomes
+        a duplicate event. Backoff is jittered because a fixed one would march
+        the whole retry set back into the limit together.
+        """
+
         written: dict[str, dict[str, Any]] = {}
         errors: dict[str, str] = {}
+        pending = build()
 
-        def _handle(request_id: str, response: Any, exception: Exception | None) -> None:
-            if exception is not None:
-                errors[request_id] = str(exception)
-            elif response:
-                written[request_id] = response
+        for attempt in range(max_attempts):
+            throttled: set[str] = set()
 
-        requests: list[tuple[str, Any]] = [
-            (
-                block_id,
-                service.events().insert(
-                    calendarId=self.calendar_id, body=self.event_from_block(block)
-                ),
-            )
-            for block_id, block in creates
-        ]
-        requests += [
-            (
-                block_id,
-                service.events().update(
-                    calendarId=self.calendar_id,
-                    eventId=event_id,
-                    body=self.event_from_block(block),
-                ),
-            )
-            for block_id, event_id, block in updates
-        ]
+            def _handle(request_id: str, response: Any, exception: Exception | None) -> None:
+                if exception is None:
+                    if response:
+                        written[request_id] = response
+                    errors.pop(request_id, None)
+                elif _is_rate_limited(exception):
+                    throttled.add(request_id)
+                    errors[request_id] = str(exception)
+                else:
+                    errors[request_id] = str(exception)
 
-        for offset in range(0, len(requests), chunk_size):
-            batch = service.new_batch_http_request(callback=_handle)
-            for request_id, request in requests[offset : offset + chunk_size]:
-                batch.add(request, request_id=request_id)
-            batch.execute()
+            for index, offset in enumerate(range(0, len(pending), chunk_size)):
+                # Google tolerates a short burst, so a small sync pays nothing
+                # for this. Only past that does pacing start, holding the
+                # sustained rate just under the per-minute quota.
+                if index >= self.BATCH_BURST_CHUNKS:
+                    _sleep(self.BATCH_PACING_SECONDS)
+                batch = service.new_batch_http_request(callback=_handle)
+                for request_id, request in pending[offset : offset + chunk_size]:
+                    batch.add(request, request_id=request_id)
+                batch.execute()
+
+            if not throttled or attempt == max_attempts - 1:
+                break
+
+            delay = self.RATE_LIMIT_BACKOFF_SECONDS * (2**attempt)
+            _sleep(delay + random.uniform(0, delay / 2))
+            pending = [item for item in build() if item[0] in throttled]
+
         return written, errors
 
     def delete_event_scope(self, event_id: str, delete_scope: str) -> None:
