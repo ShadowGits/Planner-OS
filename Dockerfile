@@ -6,8 +6,8 @@ RUN useradd --create-home --shell /bin/bash planner
 WORKDIR /app
 
 # Install Python dependencies first (cached layer)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir --upgrade "pip>=26.2" && pip install --no-cache-dir -r requirements.lock
 
 # Copy only backend source directories
 COPY planner_api/ ./planner_api/

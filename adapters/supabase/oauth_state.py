@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from threading import Lock
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +15,13 @@ class MemoryOAuthStateStore:
 
     def __init__(self) -> None:
         self._records: dict[tuple[str, str], tuple[dict[str, Any], float | None]] = {}
+        self._consume_lock = Lock()
+
+    def consume(self, kind: str, record_key: str) -> dict[str, Any] | None:
+        with self._consume_lock:
+            payload = self.get(kind, record_key)
+            self.delete(kind, record_key)
+            return payload
 
     def get(self, kind: str, record_key: str) -> dict[str, Any] | None:
         entry = self._records.get((kind, record_key))
@@ -96,3 +104,16 @@ class SupabaseOAuthStateStore:
 
     def delete(self, kind: str, record_key: str) -> None:
         self.client.delete(self.TABLE, filters={"kind": kind, "record_key": record_key})
+
+    def consume(self, kind: str, record_key: str) -> dict[str, Any] | None:
+        # DELETE RETURNING is atomic across API instances and requires no
+        # custom RPC/migration. Never use a get-then-delete fallback here.
+        rows = self.client.delete_returning(self.TABLE, filters={"kind": kind, "record_key": record_key})
+        if not rows:
+            return None
+        row = rows[0]
+        expires_at = row.get("expires_at")
+        if not expires_at or datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc):
+            return None
+        payload = row.get("payload")
+        return dict(payload) if isinstance(payload, dict) else None

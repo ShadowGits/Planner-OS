@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from mcp.server.auth.provider import AuthorizationParams
+from mcp.server.auth.provider import AuthorizationParams, TokenError
 from mcp.shared.auth import OAuthClientInformationFull
 
 from adapters.supabase.oauth_state import MemoryOAuthStateStore
@@ -27,7 +27,7 @@ def _params() -> AuthorizationParams:
     return AuthorizationParams(
         state="state-1",
         scopes=[],
-        code_challenge="challenge",
+        code_challenge="c" * 43,
         redirect_uri="https://claude.ai/api/mcp/auth_callback",
         redirect_uri_provided_explicitly=True,
     )
@@ -76,6 +76,53 @@ class OAuthPersistenceTests(unittest.TestCase):
         auth_code = self._run(self.provider.load_authorization_code(client, code))
         self._run(self.provider.exchange_authorization_code(client, auth_code))
         self.assertIsNone(self._run(self.provider.load_authorization_code(client, code)))
+
+    def test_reusing_loaded_authorization_code_is_rejected(self) -> None:
+        client = _client()
+        code = self._run(self.provider.create_authorization_code(client, _params(), USER_ID))
+        loaded = self._run(self.provider.load_authorization_code(client, code))
+        self._run(self.provider.exchange_authorization_code(client, loaded))
+        with self.assertRaises(TokenError):
+            self._run(self.provider.exchange_authorization_code(client, loaded))
+
+    def test_concurrent_authorization_code_exchange_only_mints_once(self) -> None:
+        client = _client()
+        code = self._run(self.provider.create_authorization_code(client, _params(), USER_ID))
+        loaded = self._run(self.provider.load_authorization_code(client, code))
+        async def race():
+            return await asyncio.gather(
+                self.provider.exchange_authorization_code(client, loaded),
+                self.provider.exchange_authorization_code(client, loaded),
+                return_exceptions=True,
+            )
+        results = self._run(race())
+        self.assertEqual(sum(not isinstance(result, Exception) for result in results), 1)
+
+    def test_unregistered_redirect_and_bad_pkce_are_rejected(self) -> None:
+        params = _params().model_copy(update={"redirect_uri": "https://attacker.test/callback"})
+        with self.assertRaises(ValueError):
+            self._run(self.provider.create_authorization_code(_client(), params, USER_ID))
+        params = _params().model_copy(update={"code_challenge": "bad"})
+        with self.assertRaises(ValueError):
+            self._run(self.provider.create_authorization_code(_client(), params, USER_ID))
+
+    def test_authorize_url_encodes_state_instead_of_injecting_parameters(self) -> None:
+        from urllib.parse import parse_qs, urlsplit
+        params = _params().model_copy(update={"state": "abc&client_id=attacker"})
+        result = self._run(self.provider.authorize(_client(), params))
+        query = parse_qs(urlsplit(result).query)
+        self.assertEqual(query["client_id"], ["claude-web"])
+        self.assertEqual(query["state"], ["abc&client_id=attacker"])
+
+    def test_refresh_cannot_replay_or_increase_scope(self) -> None:
+        token = self._authorize(self.provider)
+        client = _client()
+        refresh = self._run(self.provider.load_refresh_token(client, token.refresh_token))
+        with self.assertRaises(TokenError):
+            self._run(self.provider.exchange_refresh_token(client, refresh, ["admin"]))
+        self._run(self.provider.exchange_refresh_token(client, refresh, []))
+        with self.assertRaises(TokenError):
+            self._run(self.provider.exchange_refresh_token(client, refresh, []))
 
     def test_refresh_token_rotation_invalidates_old_token(self) -> None:
         token = self._authorize(self.provider)

@@ -193,18 +193,32 @@ class GoogleCalendarClient:
         """List calendar events in a date-time range."""
 
         service = self.authenticate()
-        response = (
-            service.events()
-            .list(
+        events: list[dict[str, Any]] = []
+        page_token = None
+        seen_tokens: set[str] = set()
+        while True:
+            response = service.events().list(
                 calendarId=self.calendar_id,
                 timeMin=self._api_datetime(start),
                 timeMax=self._api_datetime(end),
                 singleEvents=True,
                 orderBy="startTime",
-            )
-            .execute()
-        )
-        return list(response.get("items", []))
+                maxResults=2500,
+                **({"pageToken": page_token} if page_token else {}),
+            ).execute()
+            events.extend(response.get("items", []))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                return events
+            if page_token in seen_tokens:
+                raise GoogleCalendarError("Calendar pagination did not advance")
+            seen_tokens.add(page_token)
+
+    def _insert_body(self, block: ScheduledBlock) -> dict[str, Any]:
+        # Client-assigned IDs make retries and concurrent syncs converge on
+        # the same event even if the first successful response was lost.
+        identity = f"{self.calendar_id}|{self.stable_block_id(block)}"
+        return {**self.event_from_block(block), "id": hashlib.sha256(identity.encode()).hexdigest()}
 
     def create_event(self, block: ScheduledBlock) -> dict[str, Any]:
         """Create a Google Calendar event for a scheduled block."""
@@ -212,7 +226,7 @@ class GoogleCalendarClient:
         return (
             self.authenticate()
             .events()
-            .insert(calendarId=self.calendar_id, body=self.event_from_block(block))
+            .insert(calendarId=self.calendar_id, body=self._insert_body(block))
             .execute()
         )
 
@@ -225,7 +239,7 @@ class GoogleCalendarClient:
             .update(
                 calendarId=self.calendar_id,
                 eventId=event_id,
-                body=self.event_from_block(block),
+                body={**self.event_from_block(block), "status": "confirmed"},
             )
             .execute()
         )
@@ -326,7 +340,7 @@ class GoogleCalendarClient:
                 (
                     block_id,
                     service.events().insert(
-                        calendarId=self.calendar_id, body=self.event_from_block(block)
+                        calendarId=self.calendar_id, body=self._insert_body(block)
                     ),
                 )
                 for block_id, block in creates
@@ -337,14 +351,32 @@ class GoogleCalendarClient:
                     service.events().update(
                         calendarId=self.calendar_id,
                         eventId=event_id,
-                        body=self.event_from_block(block),
+                        body={**self.event_from_block(block), "status": "confirmed"},
                     ),
                 )
                 for block_id, event_id, block in updates
             ]
             return built
 
-        return self._run_batches(service, _build, self.RATE_LIMIT_MAX_ATTEMPTS, chunk_size)
+        written, errors = self._run_batches(service, _build, self.RATE_LIMIT_MAX_ATTEMPTS, chunk_size)
+        # A 409 (or a lost response) may mean our deterministic insert already
+        # exists. Only adopt an event whose private ownership and block match.
+        for block_id, block in creates:
+            if block_id not in errors:
+                continue
+            try:
+                event = self.get_event(self._insert_body(block)["id"])
+                if not self._is_planner_event(event) or self._planner_block_id_from_event(event) != block_id:
+                    continue
+                if event.get("status") == "cancelled" or not self._event_matches_block(event, block):
+                    event = self.update_event(str(event["id"]), block)
+                written[block_id] = event
+                errors.pop(block_id)
+            except Exception:
+                # Retain the original failure; never treat a failed read as
+                # permission to insert another event with a fresh ID.
+                pass
+        return written, errors
 
     def _run_batches(
         self,
@@ -495,14 +527,22 @@ class GoogleCalendarClient:
                 sync_scope=scope,
             )
 
-        planner_events = {
-            self._planner_block_id_from_event(event): event
-            for event in existing_events
-            if self._is_planner_event(event)
-            and self._planner_block_id_from_event(event) is not None
-        }
+        event_groups: dict[str, list[dict[str, Any]]] = {}
+        for event in existing_events:
+            block_id = self._planner_block_id_from_event(event)
+            if self._is_planner_event(event) and block_id and event.get("status") != "cancelled":
+                event_groups.setdefault(block_id, []).append(event)
         desired_blocks = {self.stable_block_id(block): block for block in blocks}
         links_by_block = self._active_links_by_block()
+        # Keep the persisted mapping where possible, otherwise choose a
+        # stable canonical event. Do not discard duplicates in a dictionary.
+        planner_events = {
+            block_id: min(events, key=lambda event: (
+                str(event.get("id")) != str(links_by_block.get(block_id, {}).get("external_id")),
+                str(event.get("created", "")), str(event["id"]),
+            ))
+            for block_id, events in event_groups.items()
+        }
         events_by_id = {str(event["id"]): event for event in existing_events}
 
         deleted = unchanged = 0
@@ -545,14 +585,22 @@ class GoogleCalendarClient:
             (block_id, str(event["id"]), desired_blocks[block_id])
             for block_id, event in written.items()
         ]
-        self._record_external_links(settled, links_by_block)
+        try:
+            self._record_external_links(settled, links_by_block)
+        except Exception as error:
+            errors.append(f"external_links: {error}")
 
         stale = [
             (block_id, event)
-            for block_id, event in planner_events.items()
-            if block_id not in desired_blocks
+            for block_id, events in event_groups.items()
+            for event in events
+            if block_id not in desired_blocks or (
+                block_id in {item[0] for item in settled}
+                and event["id"] != planner_events[block_id]["id"]
+            )
         ]
-        if stale:
+        # A partially reconciled or unpersisted pass must not remove data.
+        if stale and not errors:
             outcome = self.batch_delete_events([str(event["id"]) for _, event in stale])
             deleted = len(outcome["deleted"])
             by_event_id = {str(event["id"]): event for _, event in stale}
@@ -628,13 +676,15 @@ class GoogleCalendarClient:
         if event is None:
             try:
                 event = self.get_event(external_id)
-            except Exception:
-                return None
+            except Exception as error:
+                if getattr(getattr(error, "resp", None), "status", None) in (404, 410):
+                    return None
+                raise
         if event.get("status") == "cancelled":
             return None
         if self._is_planner_event(event):
             return event if self._planner_block_id_from_event(event) == block_id else None
-        return event
+        raise GoogleCalendarError("Linked calendar event is not owned by this Planner OS block")
 
     def _record_external_link(
         self,
@@ -665,7 +715,7 @@ class GoogleCalendarClient:
                 active_links=links_by_block,
             )
         except Exception:
-            return
+            raise
         if links_by_block is not None:
             links_by_block[block_id] = {
                 "planner_block_id": block_id,
@@ -732,7 +782,7 @@ class GoogleCalendarClient:
                         active_links=links_by_block,
                     )
         except Exception:
-            return
+            raise
 
         if links_by_block is not None:
             for block_id, external_id, checksum in pending:

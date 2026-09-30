@@ -7,12 +7,16 @@ import os
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qsl, quote, urlencode
 from urllib.request import Request, urlopen
 
 
 class SupabaseError(RuntimeError):
     """Sanitized Supabase transport or response error."""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class SupabaseGateway(Protocol):
@@ -111,7 +115,34 @@ class SupabaseRestClient:
         url = f"/rest/v1/{self._identifier(table)}?{urlencode(query)}"
         if query_string:
             url += f"&{query_string}"
-        return self._json_request("GET", url)
+        extra = dict(parse_qsl(query_string or "", keep_blank_values=True))
+        if limit is not None or "limit" in extra or "offset" in extra:
+            return self._json_request("GET", url)
+        # PostgREST caps every response (normally at 1000), including a query
+        # without a limit. Sync and dedup need every row, not the first page.
+        # Ordering makes offset pages deterministic; retain caller ordering
+        # and add the primary key as a stable tie breaker.
+        order = extra.get("order")
+        if not order:
+            url += "&order=" + ("kind.asc,record_key.asc" if table == "mcp_oauth_records" else "id.asc")
+        elif "id" not in {item.split(".")[0] for item in order.split(",")}:
+            # Replace just the caller's order value, preserving repeated
+            # date filters and all other query syntax.
+            parts = parse_qsl(query_string or "", keep_blank_values=True)
+            parts = [(key, value + ",id.asc" if key == "order" else value) for key, value in parts]
+            url = f"/rest/v1/{self._identifier(table)}?{urlencode(query)}&{urlencode(parts)}"
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = self._json_request("GET", f"{url}&limit=1000&offset={offset}")
+            if not isinstance(page, list):
+                raise SupabaseError("Supabase select returned an invalid page")
+            if not page:
+                return rows
+            rows.extend(page)
+            # Fetch until an empty page even if the server's cap is lower
+            # than ours. Any failed later page aborts the whole snapshot.
+            offset += len(page)
 
     def insert(self, table: str, payload: Mapping[str, Any] | list[Mapping[str, Any]]) -> list[dict[str, Any]]:
         return self._json_request(
@@ -158,6 +189,20 @@ class SupabaseRestClient:
         self._json_request(
             "DELETE",
             f"/rest/v1/{self._identifier(table)}?{urlencode(query_parts)}",
+        )
+
+    def delete_returning(self, table: str, *, filters: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Atomically remove matching rows and return only rows actually deleted.
+
+        PostgREST's return=representation maps to SQL DELETE RETURNING. A
+        concurrent OAuth redemption therefore cannot read a token twice.
+        """
+        if not filters:
+            raise ValueError("Refusing to delete without filters")
+        query = urlencode({key: f"eq.{value}" for key, value in filters.items()})
+        return self._json_request(
+            "DELETE", f"/rest/v1/{self._identifier(table)}?{query}",
+            prefer="return=representation",
         )
 
     def rpc(self, function: str, payload: Mapping[str, Any]) -> Any:
@@ -229,8 +274,10 @@ class SupabaseRestClient:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
                 return response.read()
         except HTTPError as error:
-            error_body = error.read().decode("utf-8") if error.fp else "No body"
-            raise SupabaseError(f"Supabase request failed with HTTP {error.code}: {error_body}") from error
+            # PostgREST errors can echo SQL values and credential metadata.
+            # Preserve a useful status without propagating response bodies to
+            # user-facing domain exceptions or the configuration health route.
+            raise SupabaseError(f"Supabase request failed with HTTP {error.code}", status_code=error.code) from error
         except URLError as error:
             raise SupabaseError("Supabase request could not be completed") from error
 

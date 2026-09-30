@@ -446,17 +446,14 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
     @api.post("/v2/day/push/subscribe")
     def day_push_subscribe(body: dict, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
-        endpoint = body.get("endpoint")
-        keys = body.get("keys") or {}
-        p256dh, auth = keys.get("p256dh"), keys.get("auth")
-        if not endpoint or not p256dh or not auth:
-            raise HTTPException(
-                status_code=400,
-                detail={"code": "PUSH_INVALID", "message": "Missing endpoint or keys"},
-            )
+        from planner_core.push import validate_push_subscription
+        try:
+            endpoint, p256dh, auth = validate_push_subscription(body)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail={"code": "PUSH_INVALID", "message": "Invalid push subscription"}) from error
         core = _core()
         user_id = _configured_user_id()
-        device_label = body.get("device_label")
+        device_label = str(body.get("device_label") or "")[:200]
         # Drop this device's previous subscription before recording the new one.
         #
         # Matching on the endpoint alone is not enough: a browser that rotates
@@ -468,13 +465,13 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         try:
             existing = cloud.service_client.select(
                 "push_subscriptions",
-                filters={"user_id": str(user_id)},
+                filters={"user_id": str(user_id), "workspace_id": str(core.repository.workspace_id)},
             )
             for row in existing or []:
                 same_endpoint = row.get("endpoint") == endpoint
                 same_device = device_label and row.get("device_label") == device_label
                 if same_endpoint or same_device:
-                    cloud.service_client.delete("push_subscriptions", filters={"id": row["id"]})
+                    cloud.service_client.delete("push_subscriptions", filters={"id": row["id"], "user_id": str(user_id), "workspace_id": str(core.repository.workspace_id)})
         except Exception:
             pass
         cloud.service_client.insert(
@@ -485,7 +482,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 "endpoint": endpoint,
                 "p256dh": p256dh,
                 "auth": auth,
-                "device_label": body.get("device_label", ""),
+                "device_label": device_label,
             },
         )
         return _envelope(True, "Notifications on")
@@ -503,7 +500,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         try:
             cloud.service_client.delete(
                 "push_subscriptions",
-                filters={"user_id": str(user_id), "endpoint": endpoint},
+                filters={"user_id": str(user_id), "workspace_id": str(_core().repository.workspace_id), "endpoint": endpoint},
             )
         except Exception:
             pass

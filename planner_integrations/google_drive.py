@@ -18,13 +18,8 @@ SCOPES = [
 
 
 def get_drive_service(user: Any | None = None, gateway: Any | None = None, workspace_id: Any | None = None, *, allow_service_account: bool = False) -> Any | None:
-    """Initialize Google Drive client using user's OAuth credentials or fallback to service account.
-
-    Set *allow_service_account=True* for read-only operations (e.g. listing
-    files) so the endpoint still works when user OAuth creds are unavailable
-    (dashboard X-App-Key calls).
-    """
-    if user and gateway:
+    """Use this workspace's OAuth credentials. No shared-account fallback for users."""
+    if user and gateway and workspace_id:
         try:
             from adapters.supabase.calendar import SupabaseCalendarConnectionRepository
             from planner_platform.google_oauth import CredentialCipher
@@ -35,11 +30,7 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None, works
             from google.auth.transport.requests import Request
 
             user_id = getattr(user, "user_id", user)
-            # Use provided workspace_id or fallback to hardcoded test UUID
-            if workspace_id:
-                active_workspace_id = UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
-            else:
-                active_workspace_id = UUID("1040706c-f046-4c27-bcc4-ca75c6ff7df3")
+            active_workspace_id = UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
 
             ctx = PlannerContext(
                 user_id=user_id,
@@ -59,13 +50,21 @@ def get_drive_service(user: Any | None = None, gateway: Any | None = None, works
                 creds = Credentials.from_authorized_user_info(data, SCOPES)
                 if creds.expired and creds.refresh_token:
                     creds.refresh(Request())
-                svc = build("drive", "v3", credentials=creds)
-                return svc
+                    connections.save(ctx, cipher.encrypt(creds.to_json().encode(), context=ctx),
+                                     target_calendar_id=conn.target_calendar_id,
+                                     provider_account_id=conn.provider_account_id)
+                if not creds.valid:
+                    return None
+                from google_auth_httplib2 import AuthorizedHttp
+                import httplib2
+                return build("drive", "v3", http=AuthorizedHttp(creds, http=httplib2.Http(timeout=20)), cache_discovery=False)
         except Exception as e:
-            logger.warning(f"Could not use user OAuth credentials for Drive: {e}")
+            logger.warning("Could not use user OAuth credentials for Drive (%s)", type(e).__name__)
 
     # Fall back to service account when explicitly allowed (read-only operations).
-    if allow_service_account:
+    # A shared service account is never a fallback for an authenticated user:
+    # its Drive visibility is not bound to the user's workspace.
+    if allow_service_account and user is None:
         return _get_service_account_drive()
 
     return None
@@ -83,15 +82,16 @@ def _get_service_account_drive() -> Any | None:
             creds = service_account.Credentials.from_service_account_file(creds_file, scopes=SCOPES)
         else:
             return None
-        return build("drive", "v3", credentials=creds)
+        from google_auth_httplib2 import AuthorizedHttp
+        import httplib2
+        return build("drive", "v3", http=AuthorizedHttp(creds, http=httplib2.Http(timeout=20)), cache_discovery=False)
     except Exception as e:
         logger.warning(f"Service account Drive fallback failed: {e}")
         return None
 
 
 def get_or_create_project_folder(service: Any, project_name: str, existing_folder_id: str | None = None) -> str | None:
-    """Ensure a Google Drive subfolder exists for the project under the root Germany/Deutschland-Dash folder ID."""
-    ROOT_GERMANY_FOLDER_ID = "11BSxfqTZmGOEDONsfpfuKtNHtR9dEFZi"
+    """Use a saved project folder, or create one in the user's private Planner OS root."""
 
     if existing_folder_id:
         try:
@@ -102,10 +102,24 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
             logger.info(f"Folder ID {existing_folder_id} invalid or trashed; creating a new subfolder.")
 
     try:
-        parent_id = ROOT_GERMANY_FOLDER_ID
+        parent_id = os.environ.get("GOOGLE_DRIVE_ROOT_FOLDER_ID")
+        if not parent_id:
+            roots = service.files().list(
+                q="mimeType = 'application/vnd.google-apps.folder' and trashed = false and appProperties has { key='planner_os_root' and value='true' }",
+                fields="files(id)",
+            ).execute().get("files", [])
+            if roots:
+                parent_id = roots[0]["id"]
+            else:
+                parent_id = service.files().create(body={
+                    "name": "Planner OS", "mimeType": "application/vnd.google-apps.folder",
+                    "appProperties": {"planner_os_root": "true"},
+                }, fields="id").execute()["id"]
 
         # Check if a subfolder with this project name already exists inside the root folder
-        sub_query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{project_name}' and '{parent_id}' in parents and trashed = false"
+        escaped_name = project_name.replace("\\", "\\\\").replace("'", "\\'")
+        escaped_parent = parent_id.replace("\\", "\\\\").replace("'", "\\'")
+        sub_query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{escaped_name}' and '{escaped_parent}' in parents and trashed = false"
         sub_results = service.files().list(q=sub_query, fields="files(id, name)").execute()
         sub_files = sub_results.get("files", [])
 
@@ -115,18 +129,12 @@ def get_or_create_project_folder(service: Any, project_name: str, existing_folde
         project_folder_metadata = {
             "name": project_name,
             "mimeType": "application/vnd.google-apps.folder",
-            "parents": [parent_id]
+            "parents": [parent_id],
+            "appProperties": {"planner_os": "true"},
         }
         folder = service.files().create(body=project_folder_metadata, fields="id").execute()
         
-        # Grant public link access to the folder if needed
-        try:
-            service.permissions().create(
-                fileId=folder["id"],
-                body={"type": "anyone", "role": "writer"}
-            ).execute()
-        except Exception as perm_err:
-            logger.warning(f"Could not set public folder permissions: {perm_err}")
+        # Files inherit the existing private folder permissions.
 
         return folder["id"]
 
@@ -142,21 +150,14 @@ def create_drive_document(service: Any, folder_id: str, document_name: str, docu
     file_metadata = {
         "name": document_name,
         "mimeType": mime_type,
-        "parents": [folder_id]
+        "parents": [folder_id],
+        "appProperties": {"planner_os": "true"},
     }
 
     try:
         file = service.files().create(body=file_metadata, fields="id, name, webViewLink").execute()
         file_id = file["id"]
         
-        try:
-            service.permissions().create(
-                fileId=file_id,
-                body={"type": "anyone", "role": "writer"}
-            ).execute()
-        except Exception as perm_err:
-            logger.warning(f"Could not set file permissions: {perm_err}")
-
         embed_link = f"https://docs.google.com/document/d/{file_id}/edit?embedded=true" if document_type == "text" else f"https://docs.google.com/spreadsheets/d/{file_id}/edit?embedded=true"
 
         return {
@@ -180,7 +181,8 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
 
     file_metadata = {
         "name": file_name,
-        "parents": [folder_id]
+        "parents": [folder_id],
+        "appProperties": {"planner_os": "true"},
     }
 
     media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=content_type, resumable=False)
@@ -193,14 +195,6 @@ def upload_drive_file(service: Any, folder_id: str, file_name: str, file_bytes: 
         ).execute()
 
         file_id = uploaded_file["id"]
-
-        try:
-            service.permissions().create(
-                fileId=file_id,
-                body={"type": "anyone", "role": "writer"}
-            ).execute()
-        except Exception as perm_err:
-            logger.warning(f"Could not set file permissions: {perm_err}")
 
         embed_link = f"https://drive.google.com/file/d/{file_id}/preview"
 
@@ -228,8 +222,9 @@ def download_drive_file(service: Any, file_id: str) -> bytes | None:
         done = False
         while done is False:
             status, done = downloader.next_chunk()
+            if fh.tell() > 20 * 1024 * 1024:
+                raise ValueError("Drive download exceeds the 20 MB limit")
         return fh.getvalue()
     except Exception as e:
         logger.error(f"Failed to download Drive file {file_id}: {e}")
         return None
-

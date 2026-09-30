@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from urllib.parse import urlsplit
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,42 @@ logger = logging.getLogger(__name__)
 # A subscription that hangs also never returns the 404 or 410 that would have
 # retired it, so it comes back on every run.
 PUSH_TIMEOUT_SECONDS = 10
+
+
+def validate_push_endpoint(endpoint: Any) -> str:
+    """Only browser push providers may receive server-side HTTP requests.
+
+    An arbitrary HTTPS URL is still an SSRF target (Cloud metadata, private
+    services, or a DNS name that resolves to loopback). Restricting the host to
+    provider-owned domains also avoids a DNS validation/connect race.
+    """
+    if not isinstance(endpoint, str) or len(endpoint) > 4096:
+        raise ValueError("Invalid push endpoint")
+    try:
+        parsed = urlsplit(endpoint)
+        host = (parsed.hostname or "").lower()
+        allowed = host in {
+            "fcm.googleapis.com", "android.googleapis.com", "web.push.apple.com",
+            "updates.push.services.mozilla.com",
+        } or host.endswith(".push.services.mozilla.com") or host.endswith(".notify.windows.com")
+        if (parsed.scheme != "https" or not allowed or parsed.port not in {None, 443}
+                or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or not parsed.path or any(ord(c) < 32 for c in endpoint)):
+            raise ValueError("Invalid push endpoint")
+    except (TypeError, ValueError) as error:
+        raise ValueError("Push endpoint must use a supported HTTPS push provider") from error
+    return endpoint
+
+
+def validate_push_subscription(body: dict[str, Any]) -> tuple[str, str, str]:
+    endpoint = validate_push_endpoint(body.get("endpoint"))
+    keys = body.get("keys")
+    if not isinstance(keys, dict):
+        raise ValueError("Missing push keys")
+    p256dh, auth = keys.get("p256dh"), keys.get("auth")
+    if not all(isinstance(value, str) and 0 < len(value) <= 256 for value in (p256dh, auth)):
+        raise ValueError("Invalid push keys")
+    return endpoint, p256dh, auth
 
 
 def generate_vapid_keys() -> dict[str, str]:
@@ -76,6 +113,12 @@ def send_push(
     """
     from pywebpush import webpush, WebPushException
 
+    try:
+        validate_push_endpoint(subscription_info.get("endpoint"))
+    except ValueError:
+        logger.warning("Blocked unsupported push endpoint")
+        return False
+
     private_key = os.environ.get("VAPID_PRIVATE_KEY", "")
     if not private_key:
         logger.warning("VAPID_PRIVATE_KEY not set — cannot send push notification")
@@ -91,18 +134,24 @@ def send_push(
     })
 
     try:
-        webpush(
-            subscription_info=subscription_info,
-            data=payload,
-            vapid_private_key=private_key,
-            vapid_claims=_vapid_claims(),
-            ttl=86400,
-            timeout=PUSH_TIMEOUT_SECONDS,
-        )
+        # Push providers do not redirect sends. Never follow a provider
+        # response to an arbitrary URL with our encrypted user payload.
+        import requests
+        with requests.Session() as push_session:
+            push_session.max_redirects = 0
+            webpush(
+                subscription_info=subscription_info,
+                data=payload,
+                vapid_private_key=private_key,
+                vapid_claims=_vapid_claims(),
+                ttl=86400,
+                timeout=PUSH_TIMEOUT_SECONDS,
+                requests_session=push_session,
+            )
         return True
     except WebPushException as e:
         status = getattr(e, "response", None)
-        if status and hasattr(status, "status_code") and status.status_code in (404, 410):
+        if status is not None and hasattr(status, "status_code") and status.status_code in (404, 410):
             # Subscription expired or unsubscribed — caller should delete it
             logger.info("Push subscription gone (HTTP %s), should be removed", status.status_code)
             raise
@@ -144,7 +193,7 @@ def send_push_to_all(
         except WebPushException:
             # Gone — remove stale subscription
             try:
-                gateway.delete("push_subscriptions", filters={"id": row["id"]})
+                gateway.delete("push_subscriptions", filters={"id": row["id"], "user_id": user_id, "workspace_id": workspace_id})
             except Exception:
                 pass
             expired += 1

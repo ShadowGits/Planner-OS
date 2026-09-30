@@ -312,7 +312,7 @@
     $("key-gate").classList.add("hidden");
     try {
       await loadDay();
-    } catch (e) {
+    } catch {
       /* 401 reopens the gate */
     }
   });
@@ -328,11 +328,19 @@
     const names = { "-1": "Yesterday", 0: "Today", 1: "Tomorrow" };
     const label =
       names[diff] ?? state.selected.toLocaleDateString([], { weekday: "long" });
-    $("day-title").innerHTML = `${label} <span class="chev">›</span>`;
+    $("day-title").textContent = label;
+    $("day-date").textContent = state.selected.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+    $("jump-today").classList.toggle("hidden", diff === 0);
+    $("jump-now").classList.toggle("hidden", diff !== 0 || !state.items.some((t) => t.start_time));
 
     const done = state.items.filter((t) => t.done).length;
     const total = state.items.length;
     $("day-count").textContent = total ? `${done}/${total} done` : "";
+    const progress = $("day-progress");
+    progress.classList.toggle("hidden", total === 0);
+    progress.setAttribute("aria-valuemax", String(total));
+    progress.setAttribute("aria-valuenow", String(done));
+    $("day-progress-fill").style.width = `${total ? done / total * 100 : 0}%`;
   }
 
   function renderWeek() {
@@ -347,6 +355,11 @@
       pill.className = "day-pill";
       if (sameDay(d, getLogicalToday())) pill.classList.add("today");
       if (sameDay(d, state.selected)) pill.classList.add("selected");
+      pill.setAttribute("aria-label", d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }));
+      pill.setAttribute("aria-pressed", String(sameDay(d, state.selected)));
+      if (sameDay(d, getLogicalToday())) pill.setAttribute("aria-current", "date");
+      const cached = dayCache.get(iso(d));
+      if (cached && cached.items.length) pill.classList.add("has-tasks");
       pill.innerHTML = `<span class="dow">${d.toLocaleDateString([], { weekday: "narrow" })}</span>
         <span class="num">${d.getDate()}</span><span class="dot"></span>`;
       pill.addEventListener("click", () => goToDate(d));
@@ -356,6 +369,13 @@
 
   $("week-prev").addEventListener("click", () => shiftDays(-7));
   $("week-next").addEventListener("click", () => shiftDays(7));
+  $("jump-today").addEventListener("click", () => goToDate(getLogicalToday()));
+  $("jump-now").addEventListener("click", () => {
+    const target = document.querySelector(".now-line") || document.querySelector(".row.active") ||
+      [...document.querySelectorAll("#list .row")].find((r) => r._startMin >= logicalNowMinutes()) ||
+      [...document.querySelectorAll("#list .row")].at(-1);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 
   function shiftDays(n) {
     const d = new Date(state.selected);
@@ -410,16 +430,20 @@
     const list = $("list");
     list.innerHTML = "";
     $("empty").classList.toggle("hidden", state.items.length > 0);
-    if (!timed.length && !inbox.length) {
+    if (!timed.length) {
       list.style.height = "0px";
       return;
     }
 
     const mins = timed.map((t) => timeToMin(t.start_time));
     const ends = timed.map((t, i) => mins[i] + (t.estimated_minutes || 30));
-    let startH = timed.length ? Math.min(0, ...mins.map((m) => Math.floor(m / 60))) : 0;
-    let endH = timed.length ? Math.max(26, ...ends.map((m) => Math.ceil(m / 60) + 1)) : 26;
+    // Keep one hour of breathing room around the actual day. Starting every
+    // plan at midnight hid the first block below a long empty scroll.
+    const startH = Math.max(0, Math.floor(Math.min(...mins) / 60) - 1);
+    const endH = Math.ceil(Math.max(...ends) / 60) + 1;
     const top0 = startH * 60;
+    list.dataset.top0 = String(top0);
+    list.dataset.endMin = String(endH * 60);
     list.style.height = `${(endH - startH) * 60 * PX_PER_MIN + 24}px`;
 
     const spine = document.createElement("div");
@@ -441,6 +465,7 @@
       if (m >= top0 && m <= endH * 60) {
         const nl = document.createElement("div");
         nl.className = "now-line";
+        nl.setAttribute("aria-label", `Current time ${fmtClock(m)}`);
         nl.style.top = `${(m - top0) * PX_PER_MIN}px`;
         list.appendChild(nl);
       }
@@ -474,6 +499,12 @@
     row.style.height = `${Math.max(MIN_ROW_PX, dur * PX_PER_MIN)}px`;
     row.style.setProperty("--ring", ringFor(task.title));
     row.style.setProperty("--task-bg", pastelFor(task.title));
+    row.tabIndex = task.pending ? -1 : 0;
+    row.setAttribute("aria-label", `${task.title}, ${fmtClock(start)}, ${fmtDur(dur)}`);
+    row._startMin = start;
+    row._endMin = start + dur;
+    row._task = task;
+    row.classList.toggle("active", sameDay(state.selected, getLogicalToday()) && !task.done && logicalNowMinutes() >= start && logicalNowMinutes() < start + dur);
 
     const recur = task.recurrence_key ? " ↻" : "";
     // No ★ in the text: the row carries a real star button, which shows the
@@ -524,6 +555,9 @@
     }
 
     if (task.pending) row.classList.add("pending");
+    const ring = row.querySelector(".ring");
+    ring.setAttribute("aria-label", `Mark ${task.title} ${task.done ? "incomplete" : "done"}`);
+    ring.setAttribute("aria-pressed", String(!!task.done));
     // Lets the wins strip find this row to scroll to it.
     row._taskId = task.id;
 
@@ -550,6 +584,12 @@
       }
       openEdit(task);
     });
+    row.addEventListener("keydown", (e) => {
+      if (e.target === row && (e.key === "Enter" || e.key === " ") && !task.pending) {
+        e.preventDefault();
+        openEdit(task);
+      }
+    });
     attachDrag(row, task, top0);
     return row;
   }
@@ -564,7 +604,7 @@
     el.innerHTML = `
       <div class="rail"></div>
       <div class="gap-body">
-        <div class="gap-note">🕐 Use <b>${fmtDur(free)}</b> wisely. ${note}</div>
+        <div class="gap-note"><span aria-hidden="true">◷</span><span><b>${fmtDur(free)} free</b> · ${note}</span></div>
         <button class="gap-add">＋ Add Task</button>
       </div>`;
     // Round up, never down: rounding to the nearest could start the task a
@@ -599,7 +639,7 @@
     }
 
     row.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(".ring")) return;
+      if (e.target.closest("button")) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
       // Apple Pencil emits hover events with no contact; ignore them.
       if (e.pointerType === "pen" && e.buttons === 0) return;
@@ -615,7 +655,7 @@
         row.classList.add("lifted");
         try {
           row.setPointerCapture(pointerId);
-        } catch (_) {}
+        } catch {}
         if (navigator.vibrate) navigator.vibrate(14);
         badge = document.createElement("div");
         badge.className = "drag-badge";
@@ -648,7 +688,7 @@
       if (pointerId !== null) {
         try {
           row.releasePointerCapture(pointerId);
-        } catch (_) {}
+        } catch {}
         pointerId = null;
       }
       if (!lifted) return; // a tap or scroll → the click handler opens edit
@@ -704,6 +744,11 @@
     row.classList.toggle("done", next);
     const ring = row.querySelector(".ring");
     if (ring) ring.classList.toggle("checked", next);
+    if (ring) {
+      ring.setAttribute("aria-pressed", String(next));
+      ring.setAttribute("aria-label", `Mark ${task.title} ${next ? "incomplete" : "done"}`);
+    }
+    if (next) row.classList.remove("active");
     // Two layouts, two class names: a normal row has .icon, a row sharing
     // its time with another has .ov-icon. A missing element must not throw —
     // the catch below reads any failure as the save failing and puts the tick
@@ -712,6 +757,7 @@
     if (icon) icon.textContent = next ? "" : emojiFor(task.title);
     if (navigator.vibrate) navigator.vibrate(10);
     renderHeader();
+    renderWins();
     try {
       await api("PATCH", `/v2/day/tasks/${task.id}`, { done: next });
     } catch (e) {
@@ -895,15 +941,14 @@
       if (candidate + need <= slot.start) break;
       if (candidate < slot.end) candidate = slot.end;
     }
-    candidate = Math.min(candidate, 27 * 60);
-    // Instead of auto-saving, open the modal with the calculated candidate time prefilled
-    $("new-id").value = task.id;
-    $("new-title").value = task.title;
-    $("new-date").value = task.scheduled_date || iso(state.selected);
+    // HTML time fields cannot represent 24:00 or later. Offer midnight on
+    // the following date instead of leaving an invalid, blank input behind.
+    const date = new Date(state.selected);
+    date.setDate(date.getDate() + Math.floor(candidate / 1440));
+    candidate %= 1440;
+    openEdit(task);
+    $("new-date").value = iso(date);
     $("new-time").value = minToTime(candidate);
-    $("new-est").value = task.estimated_minutes || "";
-    $("sheet").classList.remove("hidden");
-    $("sheet-backdrop").classList.remove("hidden");
     $("new-time").focus();
   }
 
@@ -961,8 +1006,11 @@
   }
 
   function openSheetEl() {
+    sheetReturnFocus = document.activeElement;
     $("sheet").classList.remove("hidden");
     $("sheet-backdrop").classList.remove("hidden");
+    setSheetBackgroundInert(true);
+    $("new-title").focus({ preventScroll: true });
   }
 
   function setDuration(min) {
@@ -975,10 +1023,12 @@
     }
     // if custom duration, leave the nearest chip highlighted off; save still uses sheetMinutes
     if (!matched) for (const b of $("dur-chips").children) b.classList.remove("on");
+    $("custom-dur").value = matched ? "" : String(min);
   }
 
   $("fab").addEventListener("click", () => openSheet(null));
   $("sheet-backdrop").addEventListener("click", closeSheet);
+  $("sheet-close").addEventListener("click", closeSheet);
 
 
   // Split the block in half: half stays where it is, half goes to the Inbox
@@ -1040,7 +1090,23 @@
     $("sheet").classList.add("hidden");
     $("sheet-backdrop").classList.add("hidden");
     state.editing = null;
+    setSheetBackgroundInert(false);
+    if (sheetReturnFocus && sheetReturnFocus.isConnected) sheetReturnFocus.focus({ preventScroll: true });
   }
+
+  let sheetReturnFocus = null;
+  function setSheetBackgroundInert(value) {
+    for (const el of document.querySelectorAll("header, main, #fab, #unsched-pill")) el.inert = value;
+  }
+  $("sheet").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeSheet(); return; }
+    if (e.key !== "Tab") return;
+    const controls = [...$("sheet").querySelectorAll("button, input")]
+      .filter((el) => !el.disabled && !el.closest(".hidden"));
+    const first = controls[0], last = controls.at(-1);
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 
   $("dur-chips").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
@@ -1235,7 +1301,7 @@
       const on = !!sub && Notification.permission === "granted";
       btn.classList.toggle("on", on);
       btn.title = on ? "Notifications on — tap to turn off" : "Turn on notifications";
-    } catch (_) {}
+    } catch {}
   }
 
   async function enableNotifications() {
@@ -1289,7 +1355,7 @@
         keys: json.keys,
         device_label: navigator.userAgent.slice(0, 80),
       });
-    } catch (_) {
+    } catch {
       // Best effort: a failed resync must never block the app from loading.
     }
   }
@@ -1330,6 +1396,7 @@
     const btn = $("notif-btn");
     if (btn) {
       btn.addEventListener("click", async () => {
+        if (!pushSupported()) { enableNotifications(); return; }
         const reg = await navigator.serviceWorker.ready.catch(() => null);
         const sub = reg && (await reg.pushManager.getSubscription().catch(() => null));
         if (sub && Notification.permission === "granted") disableNotifications();
@@ -1426,18 +1493,29 @@
     }
   }, 3600000);
 
+  function logicalNowMinutes() {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes() + (now.getHours() < 4 ? 1440 : 0);
+  }
   setInterval(() => {
+    if (dragging || document.hidden) return;
     if (sameDay(state.selected, getLogicalToday())) {
-      const nl = document.querySelector(".now-line");
+      const list = $("list");
+      const top0 = Number(list.dataset.top0);
+      const m = logicalNowMinutes();
+      let nl = document.querySelector(".now-line");
+      if (!nl && list.querySelector(".row") && m >= top0 && m <= Number(list.dataset.endMin)) {
+        nl = document.createElement("div");
+        nl.className = "now-line";
+        list.appendChild(nl);
+      }
       if (nl) {
-        const timed = state.items.filter((t) => t.start_time);
-        const mins = timed.map((t) => timeToMin(t.start_time));
-        const startH = timed.length ? Math.min(0, ...mins.map((m) => Math.floor(m / 60))) : 0;
-        const top0 = startH * 60;
-        const now = new Date();
-        let m = now.getHours() * 60 + now.getMinutes();
-        if (now.getHours() < 4) m += 24 * 60;
         nl.style.top = `${(m - top0) * PX_PER_MIN}px`;
+        nl.setAttribute("aria-label", `Current time ${fmtClock(m)}`);
+        nl.classList.toggle("hidden", m < top0 || m > Number(list.dataset.endMin));
+      }
+      for (const row of document.querySelectorAll("#list .row")) {
+        row.classList.toggle("active", !row._task.done && m >= row._startMin && m < row._endMin);
       }
     }
   }, 60000);

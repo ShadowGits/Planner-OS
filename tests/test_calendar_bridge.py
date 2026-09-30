@@ -51,7 +51,7 @@ class MemoryGateway:
     def __init__(self, workspace_row):
         self.tables = {"workspaces": [workspace_row]}
 
-    def select(self, table, *, filters, columns="*", limit=None):
+    def select(self, table, *, filters, columns="*", limit=None, query_string=None):
         rows = [row for row in self.tables.get(table, []) if self._matches(row, filters)]
         return rows[:limit] if limit else rows
 

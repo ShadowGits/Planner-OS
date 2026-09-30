@@ -186,14 +186,14 @@ def test_push_subscribe_rejects_missing_fields(client) -> None:
     assert r.status_code == 400
 
     # Missing keys
-    r = client.post("/v2/push/subscribe", json={"endpoint": "https://fcm.example.com/sub"}, headers=headers)
+    r = client.post("/v2/push/subscribe", json={"endpoint": "https://fcm.googleapis.com/fcm/send"}, headers=headers)
     assert r.status_code == 400
 
 
 def test_push_subscribe_and_unsubscribe(client) -> None:
     headers = {"Authorization": "Bearer valid-token"}
     sub = {
-        "endpoint": "https://fcm.example.com/sub/abc",
+        "endpoint": "https://fcm.googleapis.com/fcm/send/abc",
         "keys": {"p256dh": "pubkey123", "auth": "authkey456"},
         "device_label": "MacBook",
     }
@@ -241,7 +241,9 @@ def test_milestone_api_crud(client) -> None:
     assert resp.status_code == 400  # blank name rejected
 
 
-def test_project_tasks_with_milestone(client) -> None:
+def test_project_tasks_with_milestone(client, runtime) -> None:
+    runtime.service_client.insert("projects", {"id": "proj-test-456", "user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID), "name": "Owned project"})
+    runtime.service_client.insert("milestones", {"id": "ms-abc", "user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID), "project_id": "proj-test-456", "name": "Owned milestone"})
     headers = {"Authorization": "Bearer valid-token"}
     project_id = "proj-test-456"
 
@@ -307,3 +309,105 @@ def test_reminders_still_go_out_when_recurring_charges_blow_up(client, monkeypat
 
     assert response.status_code == 200
     assert response.json()["data"]["recurring_posted"] == 0
+
+
+def test_push_subscription_uses_authenticated_user_not_configured_owner(client, runtime, monkeypatch):
+    monkeypatch.setenv("MCP_USER_ID", str(uuid4()))
+    response = client.post("/v2/push/subscribe", json={
+        "endpoint": "https://fcm.googleapis.com/fcm/send/test",
+        "keys": {"p256dh": "pub", "auth": "auth"},
+    }, headers={"Authorization": "Bearer valid-token"})
+    assert response.status_code == 200
+    assert runtime.service_client.tables["push_subscriptions"][0]["user_id"] == str(USER_ID)
+
+
+def test_push_subscription_rejects_ssrf(client, runtime):
+    response = client.post("/v2/push/subscribe", json={
+        "endpoint": "https://169.254.169.254/metadata", "keys": {"p256dh": "p", "auth": "a"},
+    }, headers={"Authorization": "Bearer valid-token"})
+    assert response.status_code == 400
+    assert not runtime.service_client.tables.get("push_subscriptions")
+
+
+def _file_project(runtime):
+    return runtime.service_client.insert("projects", {
+        "user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID),
+        "name": "Private Project", "drive_folder_id": "folder-1",
+    })[0]
+
+
+class FakeDrive:
+    def __init__(self, parents=None):
+        self.parents = parents or []
+        self.calls = []
+    def files(self):
+        return self
+    def get(self, **kwargs):
+        self.calls.append(("get", kwargs))
+        return self
+    def update(self, **kwargs):
+        self.calls.append(("update", kwargs))
+        return self
+    def execute(self):
+        return {"id": "drive-1", "parents": self.parents, "trashed": False}
+
+
+def test_drive_cannot_delete_or_download_file_outside_project(client, runtime, monkeypatch):
+    import planner_api.v2 as v2
+    project = _file_project(runtime)
+    service = FakeDrive(parents=["other-project-folder"])
+    monkeypatch.setattr(v2, "get_drive_service", lambda *_, **kw: service)
+    headers = {"Authorization": "Bearer valid-token"}
+    base = f"/v2/projects/{project['id']}/files/arbitrary-drive-id"
+    assert client.delete(base, headers=headers).status_code == 404
+    assert client.get(base + "/download", headers=headers).status_code == 404
+    assert not any(kind == "update" for kind, _ in service.calls)
+
+
+def test_drive_delete_uses_owned_row_drive_id_and_scoped_database_delete(client, runtime, monkeypatch):
+    import planner_api.v2 as v2
+    project = _file_project(runtime)
+    row = runtime.service_client.insert("project_files", {
+        "user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID),
+        "project_id": project["id"], "drive_file_id": "drive-1", "name": "Mine",
+    })[0]
+    other_row = runtime.service_client.insert("project_files", {
+        "user_id": str(uuid4()), "workspace_id": str(uuid4()),
+        "project_id": project["id"], "drive_file_id": "drive-1", "name": "Other tenant",
+    })[0]
+    service = FakeDrive(parents=["folder-1"])
+    monkeypatch.setattr(v2, "get_drive_service", lambda *_, **kw: service)
+    result = client.delete(f"/v2/projects/{project['id']}/files/{row['id']}",
+                           headers={"Authorization": "Bearer valid-token"})
+    assert result.status_code == 200
+    assert ("update", {"fileId": "drive-1", "body": {"trashed": True}}) in service.calls
+    assert runtime.service_client.tables["project_files"] == [other_row]
+
+
+def test_drive_create_unconfigured_returns_failure_without_fake_rows(client, runtime, monkeypatch):
+    import planner_api.v2 as v2
+    project = _file_project(runtime)
+    monkeypatch.setattr(v2, "get_drive_service", lambda *_, **kw: None)
+    response = client.post(f"/v2/projects/{project['id']}/files/create-document", json={"name": "My document"},
+                           headers={"Authorization": "Bearer valid-token"})
+    assert response.status_code == 409
+    assert response.json()["success"] is False
+    assert not runtime.service_client.tables.get("project_files")
+
+
+def test_drive_create_api_failure_returns_failure_without_fake_rows(client, runtime, monkeypatch):
+    import planner_api.v2 as v2
+    project = _file_project(runtime)
+    monkeypatch.setattr(v2, "get_drive_service", lambda *_, **kw: object())
+    monkeypatch.setattr(v2, "get_or_create_project_folder", lambda *_, **kw: "folder-1")
+    monkeypatch.setattr(v2, "create_drive_document", lambda *_, **kw: None)
+    response = client.post(f"/v2/projects/{project['id']}/files/create-document", json={"name": "My document"},
+                           headers={"Authorization": "Bearer valid-token"})
+    assert response.status_code == 502
+    assert response.json()["success"] is False
+    assert not runtime.service_client.tables.get("project_files")
+
+
+def test_global_service_account_drive_cleanup_is_retired(client):
+    response = client.post("/v2/admin/cleanup-duplicates", headers={"Authorization": "Bearer valid-token"})
+    assert response.status_code == 410

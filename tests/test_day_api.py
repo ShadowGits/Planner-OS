@@ -259,7 +259,8 @@ def test_delete_day_task(client) -> None:
     assert client.delete(f"/v2/day/tasks/{task_id}").status_code == 401
 
 
-def test_patch_task_milestone_id(client) -> None:
+def test_patch_task_milestone_id(client, runtime) -> None:
+    runtime.service_client.insert("milestones", {"id": "ms-123", "user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID), "name": "Owned milestone"})
     created = client.post(
         "/v2/day/tasks",
         json={"title": "Review SOP", "date": "2026-07-22"},

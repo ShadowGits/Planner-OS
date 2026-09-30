@@ -928,7 +928,9 @@ class TaskService:
 
         # One lookup for the whole window instead of three per day.
         habits_by_day: dict[str, list[dict[str, Any]]] = {}
-        for occurrence in self.habits.occurrences(today, last_day):
+        # Reconciliation removes events absent from this snapshot, so a
+        # failed database read must abort instead of looking like an empty day.
+        for occurrence in self.habits.occurrences(today, last_day, strict=True):
             habits_by_day.setdefault(str(occurrence["scheduled_date"]), []).append(occurrence)
 
         blocks: list[ScheduledBlock] = []
@@ -939,6 +941,7 @@ class TaskService:
                 on_date.isoformat(),
                 habit_items=habits_by_day.get(on_date.isoformat(), []),
                 with_slot_context=False,
+                strict=True,
             )["data"]["items"]
             for block in _blocks_for_day(items, on_date, self.timezone):
                 # A task timed just after midnight is shown on the previous
@@ -962,7 +965,7 @@ class TaskService:
             f"{totals['created']} created, {totals['updated']} updated, "
             f"{totals['deleted']} removed over {days} day(s)"
         )
-        return _envelope(True, message, {**totals, "errors": list(result.errors), "days": days})
+        return _envelope(result.success, message, {**totals, "errors": list(result.errors), "days": days})
 
     def _umbrella_ids(self, rows: list[dict[str, Any]]) -> set[str]:
         """Which of these rows have been split into slots.
@@ -1076,13 +1079,15 @@ class TaskService:
         on_date: str | None = None,
         habit_items: list[dict[str, Any]] | None = None,
         with_slot_context: bool = True,
+        strict: bool = False,
     ) -> dict[str, Any]:
         """Tasks belonging to one date, shaped for a timeline: tasks with a
         start_time carry their slot, the rest form the unscheduled tray.
 
         habit_items lets a caller that already worked out a whole range of
         occurrences hand this day's share in, instead of every day querying
-        the habit tables again for itself."""
+        the habit tables again for itself. strict propagates snapshot read
+        errors for callers that reconcile external data from this view."""
         target = _parse_date(on_date) or _local_today(self.timezone)
         items: list[dict[str, Any]] = []
         target_str = target.isoformat()
@@ -1092,7 +1097,7 @@ class TaskService:
             f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},"
             f"and(scheduled_date.eq.{next_day_str},start_time.lt.{SPILLOVER_CUTOFF}))"
         )
-        all_rows = self.repository.list_rows("planner_tasks", query_string=qs)
+        all_rows = self.repository.list_rows("planner_tasks", query_string=qs, strict=strict)
         umbrellas = self._umbrella_ids(all_rows)
         # Naming a slot's parent costs two more queries, and the calendar sync
         # walks a whole window of days without ever reading those fields — so
@@ -1155,7 +1160,7 @@ class TaskService:
                 }
             )
         items.extend(
-            habit_items if habit_items is not None else self.habits.occurrences(target, target)
+            habit_items if habit_items is not None else self.habits.occurrences(target, target, strict=strict)
         )
         items.sort(
             key=lambda item: (
@@ -1373,10 +1378,10 @@ class HabitService:
         # Python weekday() is Monday=0; the column is Sunday=0 to match JS.
         return ((day.weekday() + 1) % 7) in {int(d) for d in days}
 
-    def occurrences(self, start: date, end: date) -> list[dict[str, Any]]:
+    def occurrences(self, start: date, end: date, *, strict: bool = False) -> list[dict[str, Any]]:
         """Every habit occurrence between two dates, overrides applied and
         completions marked. One query per table however wide the window."""
-        habits = [row for row in self.repository.list_rows("habits") if row.get("is_active")]
+        habits = [row for row in self.repository.list_rows("habits", strict=strict) if row.get("is_active")]
         if not habits:
             return []
         by_id = {str(row["id"]): row for row in habits}
@@ -1394,7 +1399,7 @@ class HabitService:
         overrides: dict[tuple[str, str], dict[str, Any]] = {}
         moved_in: list[dict[str, Any]] = []
         for row in self.repository.list_rows(
-            "habit_overrides", query_string=overrides_query
+            "habit_overrides", query_string=overrides_query, strict=strict
         ):
             overrides[(str(row["habit_id"]), str(row["on_date"])[:10])] = row
             landing = _parse_date(row.get("moved_to"))
@@ -1407,6 +1412,7 @@ class HabitService:
             "task_completions",
             columns="recurrence_key,completed_on",
             query_string=f"completed_on=gte.{start.isoformat()}&completed_on=lte.{end.isoformat()}",
+            strict=strict,
         ):
             if row.get("recurrence_key") in keys:
                 done.add((str(row["recurrence_key"]), str(row["completed_on"])[:10]))
@@ -2052,10 +2058,12 @@ class ReminderService:
         self.tasks = tasks
         self.timezone = timezone
 
-    def due_reminders(self, now: datetime | None = None) -> list[dict[str, Any]]:
+    def due_reminders(
+        self, now: datetime | None = None, *, sent_kinds: set[str] | None = None
+    ) -> list[dict[str, Any]]:
         current = now or datetime.now(ZoneInfo(self.timezone))
         today = current.date()
-        sent_today = {
+        sent_today = sent_kinds if sent_kinds is not None else {
             row["kind"]
             for row in self.repository.list_rows(
                 "reminder_log",

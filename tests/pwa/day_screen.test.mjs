@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { boot, settle, task, today, rows, rowFor } from "./harness.mjs";
+import { boot, settle, task, today, rowFor } from "./harness.mjs";
 
 /* ---------- ticking ---------- */
 
@@ -596,4 +596,80 @@ test("a timed task can be starred from its row, and leads the day by name", asyn
   assert.equal(chips.length, 1);
   assert.match(chips[0], /Deep work/);
   assert.ok(rowFor(doc, "Deep work").classList.contains("starred"));
+});
+
+/* ---------- scheduling and sheet usability ---------- */
+
+test("scheduling a todo opens the real edit sheet and saves its existing id", async (t) => {
+  const { doc, window, calls, errors, close } = await boot({
+    items: [task({ id: "loose", title: "Read book", start_time: null, estimated_minutes: 45 })],
+  });
+  t.after(close);
+  doc.querySelector(".act.sched").click();
+  await settle(window);
+  assert.deepEqual(errors, [], "scheduling hit missing form fields");
+  assert.equal(doc.getElementById("sheet").classList.contains("hidden"), false);
+  assert.equal(doc.getElementById("new-title").value, "Read book");
+  assert.ok(doc.getElementById("new-time").value, "a free time should be suggested");
+  doc.getElementById("sheet-save").click();
+  await settle(window);
+  assert.ok(calls.some((c) => c.method === "PATCH" && c.path === "/v2/day/tasks/loose"));
+  assert.equal(calls.some((c) => c.method === "POST" && c.path === "/v2/day/tasks"), false);
+});
+
+test("notification help works when service workers and push are unsupported", async (t) => {
+  const { doc, window, errors, close } = await boot();
+  t.after(close);
+  doc.getElementById("notif-btn").click();
+  await settle(window);
+  assert.deepEqual(errors, []);
+  assert.equal(doc.getElementById("toast").classList.contains("hidden"), false);
+  assert.match(doc.getElementById("toast").textContent, /Home Screen|unsupported|not support/i);
+});
+
+test("custom duration reflects each edited task rather than the last task", async (t) => {
+  const { doc, window, close } = await boot({ items: [
+    task({ id: "a", title: "Study", estimated_minutes: 180 }),
+    task({ id: "b", title: "Gym", start_time: "15:00", estimated_minutes: 45 }),
+  ] });
+  t.after(close);
+  rowFor(doc, "Study").click();
+  await settle(window);
+  assert.equal(doc.getElementById("custom-dur").value, "180");
+  doc.getElementById("sheet-backdrop").click();
+  rowFor(doc, "Gym").click();
+  await settle(window);
+  assert.equal(doc.getElementById("custom-dur").value, "");
+});
+
+test("the timeline starts near the first block and has no blank day for only todos", async (t) => {
+  const first = await boot({items:[task({title:"Late start",start_time:"09:00"})]});
+  t.after(first.close);
+  assert.equal(first.doc.getElementById("list").dataset.top0, "480");
+  assert.equal(rowFor(first.doc,"Late start").style.top,"108px");
+  const inboxOnly=await boot({items:[task({start_time:null})]});
+  t.after(inboxOnly.close);
+  assert.equal(inboxOnly.doc.getElementById("list").style.height,"0px");
+});
+
+test("completion updates accessible progress and today's wins together", async (t) => {
+ const {doc,window,close}=await boot({items:[task({title:"Important",starred:true})]});
+ t.after(close);
+ rowFor(doc,"Important").querySelector(".ring").click();
+ await settle(window);
+ assert.equal(doc.getElementById("day-progress").getAttribute("aria-valuenow"),"1");
+ assert.equal(doc.getElementById("day-progress-fill").style.width,"100%");
+ assert.match(doc.getElementById("wins").textContent,/Day won/);
+ assert.equal(rowFor(doc,"Important").querySelector(".ring").getAttribute("aria-pressed"),"true");
+});
+
+test("the task sheet closes with Escape and releases its inert background", async (t) => {
+ const {doc,window,close}=await boot();
+ t.after(close);
+ doc.getElementById("fab").click();
+ await settle(window);
+ assert.equal(doc.querySelector("main").inert,true);
+ doc.getElementById("new-title").dispatchEvent(new window.KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+ assert.ok(doc.getElementById("sheet").classList.contains("hidden"));
+ assert.equal(doc.querySelector("main").inert,false);
 });

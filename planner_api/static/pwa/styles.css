@@ -94,7 +94,8 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body { height: 100%; }
+html, body { min-height: 100%; }
+html { scroll-padding-top: 160px; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
@@ -132,7 +133,16 @@ body {
   padding: calc(env(safe-area-inset-top) + var(--s-3)) var(--s-5) var(--s-2);
 }
 
-.top-row { display: flex; align-items: baseline; justify-content: space-between; }
+.top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.day-heading { min-width: 0; }
+.day-date { font-size: var(--t-xs); color: var(--ink-2); margin-top: var(--s-1); white-space: nowrap; }
+.jump-now {
+  border: 1px solid var(--line); background: var(--surface); color: var(--wine);
+  border-radius: var(--r-pill); min-height: 36px; padding: 0 var(--s-3);
+  font-size: var(--t-sm); font-weight: var(--w-med); cursor: pointer;
+}
+.day-progress { height: 3px; background: var(--line); border-radius: var(--r-pill); overflow: hidden; margin-top: var(--s-3); }
+.day-progress > div { height: 100%; background: var(--wine); border-radius: inherit; transition: width 180ms ease; }
 
 #day-title { font-size: var(--t-2xl); font-weight: var(--w-bold); letter-spacing: -0.5px; }
 #day-title .chev { color: var(--ink-3); font-weight: var(--w-med); }
@@ -299,11 +309,11 @@ body {
 .now-line {
   position: absolute;
   left: 60px; right: var(--s-3); height: 2px;
-  background: var(--now); border-radius: 2px; z-index: 6;
+  background: var(--now); border-radius: 2px; z-index: 0;
 }
 .now-line::before {
   content: "";
-  position: absolute; left: var(--s-3); top: -3.5px;
+  position: absolute; left: -8px; top: -3.5px;
   width: 9px; height: 9px; border-radius: 50%; background: var(--now);
 }
 
@@ -318,7 +328,7 @@ body {
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
-  z-index: 0;
+  z-index: 1;
 }
 
 /* Moved out of app.js, where the whole row body was styled inline. Inline
@@ -436,6 +446,9 @@ body {
   font-size: var(--t-lg); font-weight: var(--w-bold); letter-spacing: -0.2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.row.active .body, .row.active .ov-body { background: var(--wine-soft); border-radius: var(--r-md); }
+.row.active .meta::after { content: "Now"; color: var(--wine); font-size: var(--t-xs); font-weight: var(--w-bold); margin-left: auto; }
+.row.active .time-shape, .row.active .ov-time-shape { box-shadow: 0 0 0 2px var(--wine), 0 0 0 6px var(--bg); }
 .row.done .title { text-decoration: line-through; color: var(--ink-2); }
 .row.done .icon, .row.done .time-shape { filter: grayscale(0.4); opacity: 0.7; }
 
@@ -445,8 +458,10 @@ body {
   border: 2.5px solid var(--ring, var(--ink-3));
   background: transparent; cursor: pointer;
   display: grid; place-items: center; color: #fff; font-size: var(--t-md);
-  transition: transform 0.12s;
+  transition: transform 0.12s; position: relative;
 }
+/* Keep the hollow circle small while its invisible touch target is 44px. */
+.ring::before { content: ""; position: absolute; inset: -11px; }
 .ring:active { transform: scale(0.85); }
 .ring.checked { background: var(--ring, var(--wine)); }
 .ring.checked::after { content: "✓"; }
@@ -475,7 +490,7 @@ body {
 }
 .gap .gap-note {
   font-size: var(--t-sm); font-weight: var(--w-reg); color: var(--ink-2);
-  display: flex; align-items: center; gap: var(--s-2);
+  display: flex; align-items: flex-start; gap: var(--s-2); line-height: 1.45;
 }
 .gap .gap-note b { color: var(--ink); font-weight: var(--w-bold); }
 .gap-add {
@@ -497,7 +512,7 @@ body {
 
 .fab {
   position: fixed;
-  right: max(var(--s-5), env(safe-area-inset-right));
+  right: max(var(--s-5), calc((100vw - 640px) / 2 + var(--s-5)), env(safe-area-inset-right));
   bottom: calc(env(safe-area-inset-bottom) + var(--s-5));
   width: 58px; height: 58px; border-radius: 50%;
   border: none; background: var(--wine); color: #fff;
@@ -511,7 +526,7 @@ body {
    scroll away with the tray. Tapping it jumps to the tray. */
 .unsched-pill {
   position: fixed;
-  left: max(var(--s-5), env(safe-area-inset-left));
+  left: max(var(--s-5), calc((100vw - 640px) / 2 + var(--s-5)), env(safe-area-inset-left));
   bottom: calc(env(safe-area-inset-bottom) + var(--s-5));
   display: inline-flex; align-items: center; gap: var(--s-2);
   padding: 0 var(--s-4) 0 var(--s-3); height: var(--tap); border-radius: var(--r-pill);
@@ -546,6 +561,13 @@ body {
   padding: var(--s-3) var(--s-5) calc(env(safe-area-inset-bottom) + var(--s-5));
   z-index: 51; box-shadow: var(--shadow-lift);
   animation: rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  max-height: calc(100dvh - env(safe-area-inset-top) - var(--s-4));
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.sheet-close {
+  position: absolute; top: var(--s-3); right: var(--s-4); width: var(--tap); height: var(--tap);
+  background: var(--chip); color: var(--ink-2); border: none; border-radius: 50%;
+  font-size: var(--t-xl); cursor: pointer;
 }
 @keyframes rise { from { transform: translateY(60%); } to { transform: translateY(0); } }
 
@@ -553,7 +575,7 @@ body {
   width: 40px; height: 5px; background: var(--line);
   border-radius: var(--r-pill); margin: var(--s-1) auto var(--s-4);
 }
-.sheet h2 { font-size: var(--t-xl); font-weight: var(--w-bold); margin-bottom: var(--s-3); }
+.sheet h2 { font-size: var(--t-xl); font-weight: var(--w-bold); margin-bottom: var(--s-3); padding-right: var(--tap); }
 
 .sheet input[type="text"] {
   width: 100%; border: 1px solid var(--line); background: var(--chip);
@@ -565,13 +587,16 @@ body {
   display: flex; flex-direction: column; gap: var(--s-2);
   font-size: var(--t-xs); font-weight: var(--w-bold); text-transform: uppercase;
   letter-spacing: 0.5px; color: var(--ink-2);
+  flex: 1 1 120px; min-width: 0;
 }
+.sheet-label:last-child { width: 100%; flex-basis: 100%; }
 .sheet input[type="time"], .sheet input[type="date"] {
   border: 1px solid var(--line); background: var(--chip); border-radius: var(--r-sm);
   padding: var(--s-2) var(--s-3); font-size: var(--t-field); color: var(--ink);
-  outline: none; font-family: inherit; min-height: 38px;
+  outline: none; font-family: inherit; min-height: 38px; width: 100%; min-width: 0;
 }
-.chips { display: flex; gap: var(--s-2); }
+#custom-dur { font-size: var(--t-field) !important; width: 100px !important; }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .chips button {
   border: 1px solid var(--line); background: var(--chip); color: var(--ink-2);
   font-size: var(--t-sm); font-weight: var(--w-bold); border-radius: var(--r-sm);
@@ -587,6 +612,7 @@ body {
 .sheet-delete {
   width: 100%; margin-top: var(--s-3); border: none; background: none; color: #d9534f;
   font-size: var(--t-md); font-weight: var(--w-med); padding: var(--s-3); cursor: pointer;
+  border-radius: var(--r-sm);
 }
 
 /* ---------- key gate / toast ---------- */
@@ -617,7 +643,8 @@ body {
   background: var(--ink); color: var(--bg);
   font-size: var(--t-md); font-weight: var(--w-med); border-radius: var(--r-md);
   padding: var(--s-3) var(--s-4);
-  z-index: 90; box-shadow: var(--shadow-lift); white-space: nowrap;
+  z-index: 90; box-shadow: var(--shadow-lift); max-width: calc(100vw - var(--s-6)); width: max-content;
+  text-align: center; overflow-wrap: anywhere;
 }
 
 /* A task that has been added on screen but not yet confirmed by the server.
@@ -626,7 +653,8 @@ body {
 .row.pending .ring { pointer-events: none; }
 
 /* Notification bell in the header. Muted until on, then it fills in. */
-.top-right { display: flex; align-items: center; gap: var(--s-2); }
+.top-right { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--s-2); max-width: 148px; }
+.top-right .day-count { flex-basis: 100%; text-align: right; font-variant-numeric: tabular-nums; }
 .notif-btn {
   border: none; background: none; cursor: pointer;
   font-size: var(--t-lg); line-height: 1; opacity: 0.4;
@@ -641,3 +669,12 @@ body {
 /* A finished todo: dimmed and struck through. Was set inline from JS. */
 .inbox-card.done { opacity: 0.55; }
 .inbox-card.done .t { text-decoration: line-through; }
+
+@media (max-width: 360px) {
+  .top { padding-left: var(--s-4); padding-right: var(--s-4); }
+  .sheet { padding-left: var(--s-4); padding-right: var(--s-4); }
+  .inbox-card { gap: var(--s-2); }
+  .inbox-card .acts { gap: var(--s-1); }
+  .day-pill { width: 32px; }
+  .row .meta { flex-wrap: wrap; font-size: var(--t-xs); }
+}

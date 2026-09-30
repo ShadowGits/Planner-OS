@@ -110,7 +110,7 @@ def register_calendar_routes(api: FastAPI, cloud: Any) -> None:
         except Exception as error:
             data["apple_error"] = str(error)
 
-        return _envelope(True, result["message"], data)
+        return _envelope(result["success"], result["message"], data)
 
     @api.post("/v2/calendar/import-apple")
     def import_apple_calendar(

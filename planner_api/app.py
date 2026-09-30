@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from html import escape
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
@@ -212,7 +213,8 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             workspace = repository.activate(user.user_id, workspace.id)
             return envelope(True, "Planner workspace created", data={"workspace": _workspace(workspace)})
         except Exception as error:
-            raise _api_error(400, "WORKSPACE_CREATE_FAILED", str(error)) from error
+            logger.error("Workspace creation failed (%s)", type(error).__name__)
+            raise _api_error(400, "WORKSPACE_CREATE_FAILED", "Workspace could not be created") from error
 
     @api.post("/api/workspaces/{workspace_id}/activate")
     def activate_workspace(workspace_id: UUID, user=Depends(current_user)):
@@ -305,11 +307,13 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
     from planner_api.dashboard import register_dashboard_routes
     from planner_api.day import register_day_routes
     from planner_api.v2 import register_v2_routes
+    from planner_api.native import register_native_routes
 
     register_v2_routes(api, cloud, current_user)
     register_day_routes(api, cloud)
     register_dashboard_routes(api, cloud)
     register_calendar_routes(api, cloud)
+    register_native_routes(api, cloud)
 
     if cloud_mcp_app is not None and oauth_provider is not None:
         @api.get("/oauth/authorize/confirm", response_class=HTMLResponse)
@@ -320,6 +324,22 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             code_challenge: str = Query(...),
             redirect_uri_provided_explicitly: bool = Query(True),
         ):
+            client = await oauth_provider.get_client(client_id)
+            if client is None:
+                raise _api_error(400, "OAUTH_REQUEST_INVALID", "Unknown OAuth client")
+            try:
+                from pydantic import AnyUrl
+                params = AuthorizationParams(
+                    state=state, scopes=[], code_challenge=code_challenge,
+                    redirect_uri=AnyUrl(redirect_uri),
+                    redirect_uri_provided_explicitly=redirect_uri_provided_explicitly,
+                )
+                oauth_provider.validate_authorization_params(client, params)
+            except ValueError as error:
+                raise _api_error(400, "OAUTH_REQUEST_INVALID", "Invalid OAuth authorization request") from error
+            client_id, redirect_uri, state, code_challenge = (
+                escape(value, quote=True) for value in (client_id, redirect_uri, state, code_challenge)
+            )
             return f"""<!doctype html>
 <html><head><title>Planner OS — Authorize</title>
 <style>
@@ -373,17 +393,22 @@ def create_app(*, runtime: CloudRuntime | None = None, verifier: SupabaseJWTVeri
             if client is None:
                 return HTMLResponse("<html><body><h2>Unknown client.</h2></body></html>", status_code=400)
 
-            from pydantic import AnyUrl
-            params = AuthorizationParams(
-                state=state,
-                scopes=[],
-                code_challenge=code_challenge,
-                redirect_uri=AnyUrl(redirect_uri_str),
-                redirect_uri_provided_explicitly=redirect_uri_explicit,
-            )
-            code = await oauth_provider.create_authorization_code(client, params, matched_user)
+            try:
+                from pydantic import AnyUrl
+                params = AuthorizationParams(
+                    state=state, scopes=[], code_challenge=code_challenge,
+                    redirect_uri=AnyUrl(redirect_uri_str),
+                    redirect_uri_provided_explicitly=redirect_uri_explicit,
+                )
+                oauth_provider.validate_authorization_params(client, params)
+                code = await oauth_provider.create_authorization_code(client, params, matched_user)
+            except ValueError as error:
+                raise _api_error(400, "OAUTH_REQUEST_INVALID", "Invalid OAuth authorization request") from error
 
-            target = f"{redirect_uri_str}?{urlencode({'code': code, 'state': state})}"
+            from urllib.parse import parse_qsl, urlsplit, urlunsplit
+            parts = urlsplit(redirect_uri_str)
+            query = urlencode([*parse_qsl(parts.query, keep_blank_values=True), ("code", code), ("state", state)])
+            target = urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
             from starlette.responses import RedirectResponse
             return RedirectResponse(target, status_code=302)
 
@@ -434,8 +459,6 @@ except Exception as _e:
             content=envelope(
                 False,
                 "Planner OS API configuration is incomplete",
-                errors=[_startup_error or "Unknown startup error"],
+                errors=["API_CONFIGURATION_INCOMPLETE"],
             ),
         )
-
-

@@ -76,8 +76,8 @@ def test_a_subscription_that_times_out_does_not_stop_the_rest(fake_pywebpush, mo
         def select(self, table, *, filters=None, **kwargs):
             assert table == "push_subscriptions"
             return [
-                {"id": "1", "endpoint": "https://push/dead", "p256dh": "p", "auth": "a"},
-                {"id": "2", "endpoint": "https://push/live", "p256dh": "p", "auth": "a"},
+                {"id": "1", "endpoint": "https://web.push.apple.com/dead", "p256dh": "p", "auth": "a"},
+                {"id": "2", "endpoint": "https://web.push.apple.com/live", "p256dh": "p", "auth": "a"},
             ]
 
         def delete(self, table, *, filters):
@@ -106,7 +106,7 @@ def test_an_expired_subscription_is_retired(fake_pywebpush, monkeypatch):
             self.deleted: list = []
 
         def select(self, table, *, filters=None, **kwargs):
-            return [{"id": "1", "endpoint": "https://push/x", "p256dh": "p", "auth": "a"}]
+            return [{"id": "1", "endpoint": "https://web.push.apple.com/x", "p256dh": "p", "auth": "a"}]
 
         def delete(self, table, *, filters):
             self.deleted.append(filters)
@@ -115,4 +115,20 @@ def test_an_expired_subscription_is_retired(fake_pywebpush, monkeypatch):
     result = push.send_push_to_all(gateway, "user", "workspace", "Title", "Body")
 
     assert result["expired"] == 1
-    assert gateway.deleted == [{"id": "1"}]
+    assert gateway.deleted == [{"id": "1", "user_id": "user", "workspace_id": "workspace"}]
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://web.push.apple.com/abc", "https://127.0.0.1/secrets",
+    "https://169.254.169.254/computeMetadata/v1/", "https://internal.local/push",
+    "https://web.push.apple.com.attacker.test/x", "https://web.push.apple.com:8443/x",
+    "https://user@web.push.apple.com/x", "https://web.push.apple.com/x#fragment",
+])
+def test_untrusted_push_endpoint_never_reaches_http(fake_pywebpush, endpoint):
+    assert send_push(_subscription(endpoint), "Title", "Body") is False
+    assert fake_pywebpush == []
+
+
+def test_push_redirects_are_disabled(fake_pywebpush):
+    assert send_push(_subscription(), "Title", "Body") is True
+    assert fake_pywebpush[0]["requests_session"].max_redirects == 0

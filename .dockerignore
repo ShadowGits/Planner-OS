@@ -31,6 +31,11 @@ backups/
 logs/
 data/
 examples/
+android/
+artifacts/
+.planner-os/
+credentials.json
+token.json
 
 # Misc
 .DS_Store

@@ -25,6 +25,8 @@ import logging
 import os
 import secrets
 import time
+import re
+from urllib.parse import urlencode
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -35,17 +37,10 @@ from mcp.server.auth.provider import (
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
     RefreshToken,
+    TokenError,
 )
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-try:
-    from mcp.server.fastmcp import FastMCP
-except (ImportError, ModuleNotFoundError):
-    try:
-        from fastmcp import FastMCP
-    except (ImportError, ModuleNotFoundError):
-        class FastMCP:
-            def __init__(self, *args, **kwargs):
-                pass
+from mcp.server.fastmcp import FastMCP
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 
@@ -124,14 +119,28 @@ class ApiKeyOAuthProvider:
     def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
-        return (
-            f"{self._public_url}/oauth/authorize/confirm"
-            f"?client_id={client.client_id}"
-            f"&redirect_uri={params.redirect_uri}"
-            f"&state={params.state or ''}"
-            f"&code_challenge={params.code_challenge}"
-            f"&redirect_uri_provided_explicitly={params.redirect_uri_provided_explicitly}"
-        )
+        self.validate_authorization_params(client, params)
+        return f"{self._public_url}/oauth/authorize/confirm?" + urlencode({
+            "client_id": client.client_id,
+            "redirect_uri": str(params.redirect_uri),
+            "state": params.state or "",
+            "code_challenge": params.code_challenge,
+            "redirect_uri_provided_explicitly": params.redirect_uri_provided_explicitly,
+        })
+
+    @staticmethod
+    def validate_authorization_params(client, params) -> None:
+        # The confirmation routes are public too, so they must repeat the
+        # redirect/PKCE validation performed at the SDK authorize endpoint.
+        from mcp.shared.auth import InvalidRedirectUriError
+        try:
+            client.validate_redirect_uri(params.redirect_uri)
+        except InvalidRedirectUriError as error:
+            raise ValueError("OAuth redirect is not registered") from error
+        if params.redirect_uri.fragment:
+            raise ValueError("OAuth redirects cannot contain fragments")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", params.code_challenge):
+            raise ValueError("A valid S256 PKCE challenge is required")
 
     @_offload_blocking
     def create_authorization_code(
@@ -140,6 +149,7 @@ class ApiKeyOAuthProvider:
         params: AuthorizationParams,
         user_id: str,
     ) -> str:
+        self.validate_authorization_params(client, params)
         code = secrets.token_urlsafe(32)
         record = AuthorizationCode(
             code=code,
@@ -177,7 +187,11 @@ class ApiKeyOAuthProvider:
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
-        self._store.delete("auth_code", self._digest(authorization_code.code))
+        if authorization_code.client_id != client.client_id or time.time() >= authorization_code.expires_at:
+            raise TokenError("invalid_grant", "Invalid authorization code")
+        payload = self._store.consume("auth_code", self._digest(authorization_code.code))
+        if payload is None or payload.get("client_id") != client.client_id:
+            raise TokenError("invalid_grant", "Authorization code was already redeemed or expired")
         return self._issue_tokens(
             client.client_id, authorization_code.scopes, authorization_code.subject
         )
@@ -240,7 +254,13 @@ class ApiKeyOAuthProvider:
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        self._store.delete("refresh_token", self._digest(refresh_token.token))
+        if refresh_token.client_id != client.client_id or (refresh_token.expires_at and time.time() >= refresh_token.expires_at):
+            raise TokenError("invalid_grant", "Invalid refresh token")
+        if not set(scopes).issubset(refresh_token.scopes):
+            raise TokenError("invalid_scope", "Refresh cannot expand authorized scopes")
+        payload = self._store.consume("refresh_token", self._digest(refresh_token.token))
+        if payload is None or payload.get("client_id") != client.client_id:
+            raise TokenError("invalid_grant", "Refresh token was already redeemed or expired")
         return self._issue_tokens(
             client.client_id, scopes or refresh_token.scopes, refresh_token.subject
         )

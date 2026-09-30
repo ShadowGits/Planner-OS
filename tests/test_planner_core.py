@@ -1943,3 +1943,46 @@ def test_milestone_health_ignores_a_start_date_after_its_target(services):
     # Half done, a third of the way through the real span: on track, not red.
     assert row["status"] == "green"
     assert row["start_date"] == (today - timedelta(days=10)).isoformat()
+
+
+class SnapshotCalendarClient:
+    def __init__(self, errors=None):
+        self.calls = []
+        self.errors = errors or []
+
+    def sync_plan(self, plan, **kwargs):
+        from planner_integrations.google_calendar import CalendarSyncResult
+        self.calls.append(plan)
+        return CalendarSyncResult(errors=self.errors)
+
+
+@pytest.mark.parametrize("failed_read", [
+    "planner_tasks", "habits", "habit_overrides", "task_completions", "split_parents", "later_day",
+])
+def test_calendar_sync_aborts_before_reconcile_if_any_snapshot_read_fails(repo, services, monkeypatch, failed_read):
+    tasks, _, _, _ = services
+    tasks.create_task("Keep this calendar block", scheduled_date=_today().isoformat(), start_time="09:00", estimated_minutes=60)
+    tasks.habits.add_habit("Daily work", start_time="10:00", start_date=_today().isoformat())
+    select = repo.gateway.select
+    day_reads = 0
+
+    def flaky_select(table, **kwargs):
+        nonlocal day_reads
+        if table == "planner_tasks" and kwargs.get("columns") == "*":
+            day_reads += 1
+        if table == failed_read or (failed_read == "split_parents" and kwargs.get("columns") == "parent_task_id") or (failed_read == "later_day" and day_reads == 2):
+            raise RuntimeError("snapshot database unavailable")
+        return select(table, **kwargs)
+
+    monkeypatch.setattr(repo.gateway, "select", flaky_select)
+    client = SnapshotCalendarClient()
+    with pytest.raises(RuntimeError, match="snapshot database unavailable"):
+        tasks.sync_calendar(client, days=2)
+    assert client.calls == [], "An incomplete snapshot must never reconcile/delete Calendar events"
+
+
+def test_calendar_sync_reports_calendar_api_errors_as_failure(services):
+    tasks, _, _, _ = services
+    result = tasks.sync_calendar(SnapshotCalendarClient(errors=["Google rejected an event update"]), days=1)
+    assert result["success"] is False
+    assert result["data"]["errors"] == ["Google rejected an event update"]

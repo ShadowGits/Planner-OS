@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Day</title>
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-180.png?v=cat">
   <link rel="icon" type="image/png" href="icon-180.png?v=cat">
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
   <div id="key-gate" class="key-gate hidden">
@@ -29,12 +29,15 @@
 
   <header class="top">
     <div class="top-row">
-      <h1 id="day-title">Today <span class="chev">›</span></h1>
+      <div class="day-heading"><h1 id="day-title">Today</h1><p id="day-date" class="day-date"></p></div>
       <div class="top-right">
+        <button id="jump-now" class="jump-now hidden" aria-label="Jump to the current time">Now</button>
+        <button id="jump-today" class="jump-now hidden">Today</button>
         <button id="notif-btn" class="notif-btn hidden" aria-label="Turn on notifications" title="Notifications">🔔</button>
         <span id="day-count" class="day-count"></span>
       </div>
     </div>
+    <div id="day-progress" class="day-progress hidden" role="progressbar" aria-label="Tasks completed" aria-valuemin="0"><div id="day-progress-fill"></div></div>
     <div class="week-row">
       <button id="week-prev" class="week-nav" aria-label="Previous week">‹</button>
       <div id="week-strip" class="week-strip"></div>
@@ -65,10 +68,11 @@
   <button id="fab" class="fab" aria-label="Add task">+</button>
 
   <div id="sheet-backdrop" class="sheet-backdrop hidden"></div>
-  <div id="sheet" class="sheet hidden">
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <div class="sheet-handle"></div>
+    <button id="sheet-close" class="sheet-close" aria-label="Close task editor">×</button>
     <h2 id="sheet-title">New task</h2>
-    <input id="new-title" type="text" placeholder="What are you doing?" autocomplete="off">
+    <input id="new-title" type="text" placeholder="What are you doing?" aria-label="Task name" autocomplete="off">
     <div class="sheet-row">
       <label class="sheet-label">Date
         <input id="new-date" type="date">
@@ -101,8 +105,8 @@
     </div>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v30";
+const CACHE = "day-planner-v31";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -12,7 +12,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k.startsWith("day-planner-") && k !== CACHE).map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
@@ -20,18 +20,28 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.pathname.startsWith("/v2/")) return;
+  const scope = new URL(self.registration.scope);
+  const relative = url.pathname.slice(scope.pathname.length);
+  // Only cache public app-shell files. OAuth pages, authenticated APIs and
+  // external responses must never be stored in the offline shell cache.
+  if (event.request.method !== "GET" || url.origin !== scope.origin ||
+      !url.pathname.startsWith(scope.pathname) ||
+      !["", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"].includes(relative)) return;
+  const cacheKey = new URL(url);
+  cacheKey.search = "";
   // Network-first: always try the latest, fall back to cache when offline.
   // cache:"reload" skips the browser's own HTTP cache, which could otherwise
   // hand back a stale app.js and hide a deploy from the phone entirely.
   event.respondWith(
     fetch(event.request, { cache: "reload" })
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(event.request, copy));
+        if (res.ok) {
+          const copy = res.clone();
+          event.waitUntil(caches.open(CACHE).then((c) => c.put(cacheKey.href, copy)));
+        }
         return res;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(cacheKey.href))
   );
 });
 
@@ -42,7 +52,7 @@ self.addEventListener("push", (event) => {
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
-  } catch (_) {
+  } catch {
     data = { title: "Planner OS", body: event.data ? event.data.text() : "" };
   }
   const title = data.title || "Planner OS";
@@ -81,7 +91,7 @@ self.addEventListener("pushsubscriptionchange", (event) => {
         for (const client of clients) {
           client.postMessage({ type: "push-subscription-changed", subscription: sub.toJSON() });
         }
-      } catch (_) {
+      } catch {
         // Nothing useful to do here; the next app launch re-syncs.
       }
     })()
@@ -91,7 +101,12 @@ self.addEventListener("pushsubscriptionchange", (event) => {
 // Tapping a notification focuses an open app window, or opens one.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || "/app/";
+  const scope = new URL(self.registration.scope);
+  let target = scope.href;
+  try {
+    const requested = new URL((event.notification.data && event.notification.data.url) || scope.href, scope);
+    if (requested.origin === scope.origin && requested.pathname.startsWith(scope.pathname)) target = requested.href;
+  } catch {}
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
