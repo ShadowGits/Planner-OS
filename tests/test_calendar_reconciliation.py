@@ -96,3 +96,22 @@ def test_failed_write_does_not_remove_other_existing_data():
     result = client.sync_plan(plan_with(block("New")))
     assert not result.success and result.deleted == 0
     assert client.service.events_data == [stale]
+
+
+def test_delete_retries_plain_google_quota_errors_without_replaying_successes():
+    client = GoogleCalendarClient(service=FakeService())
+    client.service.delete_errors = [HttpErrorish(403, b"Quota exceeded for quota metric 'Queries'")]
+    with patch("planner_integrations.google_calendar._sleep"):
+        result = client.batch_delete_events(["retry", "success"])
+    assert result["errors"] == {}
+    assert set(result["deleted"]) == {"retry", "success"}
+    ids = [args["eventId"] for name, args in client.service.calls if name == "delete"]
+    assert ids == ["retry", "success", "retry"]
+
+
+def test_large_delete_is_paced_after_the_short_burst():
+    client = GoogleCalendarClient(service=FakeService())
+    with patch("planner_integrations.google_calendar._sleep") as sleep:
+        result = client.batch_delete_events([str(i) for i in range(151)])
+    assert len(result["deleted"]) == 151
+    assert sleep.call_count == 2

@@ -21,7 +21,7 @@ sessions and notifications. It adds active-block navigation, day progress,
 usable timeline bounds and accessible sheets, and fixes todo scheduling and
 stale completion/duration state.
 
-Validation: 253 Python tests passed (one optional dependency test skipped),
+Validation: 255 Python tests passed (one optional dependency test skipped),
 39 PWA JavaScript tests passed, and real Chrome checks passed at 320px, 390px
 light/dark, and 1024px. The clean production Python dependency audit found no
 known vulnerabilities. npm dependency audit, production build, TypeScript
@@ -50,11 +50,18 @@ persisted foreground focus timer with a draggable overlay, pause/resume and
 overtime. The new /v2/native/reminders feed preserves the existing reminder
 rules with per-device deduplication.
 
-The initial installable APK compiled, passed seven timer tests, had no lint
-errors, and installed/launched in an Android16 ARM emulator. The user selected
-a bright-white interface with colorful pastels; that revision and final live
-verification are the next checkpoint. Physical Samsung S24 Ultra validation
-remains necessary for One UI background restrictions and overlay behavior.
+The bright-white, colorful pastel revision is built and delivered as
+artifacts/Planner-OS-Android.apk (17MB, debug signed). SHA256:
+c0b42efaa8cddd1acdff0cc0c16e8cb0668a02d3e653b0a9f46285495816cc8e.
+Eleven timer/reminder tests pass; lint has no errors and 24 warnings. Real
+Android16 ARM emulator checks passed for installation, the live day feed,
+offline cached days, background floating timer/notification, dragging,
+pause/resume, and timer recovery after force-stop/relaunch. No production tasks
+were modified. Physical Samsung S24 Ultra validation remains necessary for
+One UI background restrictions and overlay behavior.
+
+The first live cleanup pass removed 5,544 copies; 166 quota-limited deletions
+were retried. Delete batches now pace writes and retry quota refusals too.
 
 Future APK updates must use the retained private signing key. Account keys,
 SDK files and signing keys are never committed. See android/README.md for

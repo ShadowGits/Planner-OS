@@ -38,6 +38,7 @@ _RATE_LIMIT_REASONS = (
     "ratelimitexceeded",
     "userratelimitexceeded",
     "quotaexceeded",
+    "quota exceeded",
     "backenderror",
 )
 
@@ -96,14 +97,14 @@ class GoogleCalendarClient:
     """Synchronize Planner OS scheduled blocks to Google Calendar."""
 
     # Google allows roughly 600 write queries per minute per user, and counts
-    # every request inside a batch separately. At 50 per chunk, a five second
-    # gap holds the sustained rate at about ten a second — just under it.
+    # every request inside a batch separately. At 50 per chunk, a six second
+    # gap leaves room for the listing, mapping reads and concurrent reminders.
     #
     # The first chunks go out with no gap at all: short bursts are tolerated,
     # and a week's sync fits inside one, so the common case pays nothing for
     # this. Only a backlog large enough to actually threaten the quota slows
     # down, and it slows to the fastest rate that still succeeds.
-    BATCH_PACING_SECONDS = 5.0
+    BATCH_PACING_SECONDS = 6.0
     BATCH_BURST_CHUNKS = 2
     RATE_LIMIT_BACKOFF_SECONDS = 2.0
     RATE_LIMIT_MAX_ATTEMPTS = 4
@@ -285,26 +286,40 @@ class GoogleCalendarClient:
         service = self.authenticate()
         deleted: list[str] = []
         errors: dict[str, str] = {}
+        throttled: set[str] = set()
 
         def _handle(request_id: str, _response: Any, exception: Exception | None) -> None:
             if exception is None:
                 deleted.append(request_id)
+                errors.pop(request_id, None)
                 return
             status = getattr(getattr(exception, "resp", None), "status", None)
             if status in (404, 410):  # already gone — treat as deleted
                 deleted.append(request_id)
+                errors.pop(request_id, None)
             else:
                 errors[request_id] = str(exception)
+                if _is_rate_limited(exception):
+                    throttled.add(request_id)
 
-        for offset in range(0, len(event_ids), chunk_size):
-            chunk = event_ids[offset : offset + chunk_size]
-            batch = service.new_batch_http_request(callback=_handle)
-            for event_id in chunk:
-                batch.add(
-                    service.events().delete(calendarId=self.calendar_id, eventId=event_id),
-                    request_id=event_id,
-                )
-            batch.execute()
+        pending = list(dict.fromkeys(event_ids))
+        for attempt in range(self.RATE_LIMIT_MAX_ATTEMPTS):
+            throttled.clear()
+            for index, offset in enumerate(range(0, len(pending), chunk_size)):
+                if index >= self.BATCH_BURST_CHUNKS:
+                    _sleep(self.BATCH_PACING_SECONDS)
+                batch = service.new_batch_http_request(callback=_handle)
+                for event_id in pending[offset : offset + chunk_size]:
+                    batch.add(
+                        service.events().delete(calendarId=self.calendar_id, eventId=event_id),
+                        request_id=event_id,
+                    )
+                batch.execute()
+            if not throttled or attempt == self.RATE_LIMIT_MAX_ATTEMPTS - 1:
+                break
+            delay = self.RATE_LIMIT_BACKOFF_SECONDS * (2**attempt)
+            _sleep(delay + random.uniform(0, delay / 2))
+            pending = [event_id for event_id in pending if event_id in throttled]
         return {"deleted": deleted, "errors": errors}
 
     def batch_write_events(
