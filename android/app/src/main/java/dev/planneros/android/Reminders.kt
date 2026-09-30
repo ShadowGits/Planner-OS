@@ -8,79 +8,175 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.*
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.*
+import java.util.UUID
 import java.util.concurrent.TimeUnit
+
+data class ReminderSession(val connection:Long,val epoch:String)
 
 object Reminders {
     private val lock=Any()
+    private fun prefs(c:Context)=c.getSharedPreferences("reminders",Context.MODE_PRIVATE)
+    fun revision(c:Context):Long=prefs(c).getLong("schedule_revision",0L)
+    fun invalidateSchedule(c:Context)=synchronized(lock){
+        prefs(c).edit().putLong("schedule_revision",revision(c)+1).commit()
+    }
+    fun session(c:Context):ReminderSession=synchronized(lock){
+        val p=prefs(c)
+        val epoch=p.getString("epoch",null)?:UUID.randomUUID().toString().also{p.edit().putString("epoch",it).commit()}
+        ReminderSession(SecureConfig(c).generation,epoch)
+    }
+    private fun matches(c:Context,expected:ReminderSession)=expected==session(c)
     fun setup(c:Context){
         val manager=WorkManager.getInstance(c)
-        if(SecureConfig(c).reminders){
+        if(SecureConfig(c).configured&&SecureConfig(c).reminders){
             val constraints=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             manager.enqueueUniquePeriodicWork("planner-reminders",ExistingPeriodicWorkPolicy.UPDATE,PeriodicWorkRequestBuilder<ReminderWorker>(15,TimeUnit.MINUTES).setConstraints(constraints).build())
             manager.enqueueUniqueWork("planner-refresh",ExistingWorkPolicy.KEEP,OneTimeWorkRequestBuilder<ReminderWorker>().setConstraints(constraints).build())
-        }else{manager.cancelUniqueWork("planner-reminders");manager.cancelUniqueWork("planner-refresh");cancelAlarms(c)}
+        }else{synchronized(lock){
+            manager.cancelUniqueWork("planner-reminders");manager.cancelUniqueWork("planner-refresh");cancelAlarms(c)
+            // Turning reminders off invalidates an in-flight worker even if
+            // the user switches them on again before cancellation completes.
+            prefs(c).edit().putString("epoch",UUID.randomUUID().toString()).commit()
+        }}
     }
     private fun alarmIntent(c:Context,id:String)=Intent(c,ReminderReceiver::class.java).setAction("dev.planneros.REMINDER").setData(android.net.Uri.parse("planneros://reminder/${android.net.Uri.encode(id)}"))
     private fun pending(c:Context,id:String,flags:Int,intent:Intent=alarmIntent(c,id)):PendingIntent?=PendingIntent.getBroadcast(c,0,intent,flags or PendingIntent.FLAG_IMMUTABLE)
-    fun cancelAlarms(c:Context){val prefs=c.getSharedPreferences("reminders",Context.MODE_PRIVATE);val manager=c.getSystemService(AlarmManager::class.java);prefs.getStringSet("alarms",emptySet()).orEmpty().forEach{id->pending(c,id,PendingIntent.FLAG_NO_CREATE)?.let{manager.cancel(it);it.cancel()}};prefs.edit().remove("alarms").apply()}
-    fun schedule(c:Context,day:Day){
-        if(!SecureConfig(c).reminders)return
+    fun cancelAlarms(c:Context)=synchronized(lock){
+        val p=prefs(c);val manager=c.getSystemService(AlarmManager::class.java)
+        p.getStringSet("alarms",emptySet()).orEmpty().forEach{id->pending(c,id,PendingIntent.FLAG_NO_CREATE)?.let{manager.cancel(it);it.cancel()}}
+        p.edit().remove("alarms").putString("alarm_generation",UUID.randomUUID().toString()).commit()
+    }
+    fun reset(c:Context)=synchronized(lock){
+        val manager=WorkManager.getInstance(c)
+        manager.cancelUniqueWork("planner-reminders");manager.cancelUniqueWork("planner-refresh")
         cancelAlarms(c)
-        val prefs=c.getSharedPreferences("reminders",Context.MODE_PRIVATE)
-        prefs.edit().putString("zone",day.timezone).apply()
-        val manager=c.getSystemService(AlarmManager::class.java);val ids=mutableSetOf<String>();val now=System.currentTimeMillis()
-        for(task in day.tasks.filter{!it.done&&it.time!=null}){
-            val minutes=task.clockMinutes
-            val startLocal=LocalDate.parse(day.date).atStartOfDay(ZoneId.of(day.timezone)).plusMinutes(minutes.toLong())
-            val alarmDate=startLocal.toLocalDate().toString()
-            val start=startLocal.toInstant().toEpochMilli()
-            for(lead in listOf(30,5)){
-                val trigger=start-lead*60_000L;if(trigger<=now)continue
-                val id="$alarmDate:event$lead:${task.id}";ids.add(id)
-                val clock="%02d:%02d".format((minutes/60)%24,minutes%60)
-                val i=alarmIntent(c,id).putExtra("kind","event$lead:${task.id}").putExtra("date",alarmDate).putExtra("title","${if(lead==30) "🟡" else "🟢"} IN $lead MINUTES : ${task.title}").putExtra("body","Starts at $clock · ${task.minutes} min")
-                val pi=pending(c,id,PendingIntent.FLAG_UPDATE_CURRENT,i)!!
-                if(Build.VERSION.SDK_INT<31||manager.canScheduleExactAlarms())manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,trigger,pi)
-                else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,trigger,pi)
+        // Epoch changes before the new config is saved: an old worker cannot
+        // re-arm an alarm in that reset/save interval, even if its response arrived.
+        prefs(c).edit().clear().putString("epoch",UUID.randomUUID().toString()).commit()
+        c.getSystemService(NotificationManager::class.java).cancelAll()
+    }
+    fun cancelTask(c:Context,taskId:String)=synchronized(lock){
+        val p=prefs(c);val ids=p.getStringSet("alarms",emptySet()).orEmpty();val manager=c.getSystemService(AlarmManager::class.java)
+        val removed=ids.filter{it.endsWith(":$taskId")}.toSet()
+        removed.forEach{id->pending(c,id,PendingIntent.FLAG_NO_CREATE)?.let{manager.cancel(it);it.cancel()}}
+        p.edit().putStringSet("alarms",ids-removed).putLong("schedule_revision",revision(c)+1).commit()
+        val notifications=c.getSystemService(NotificationManager::class.java)
+        notifications.activeNotifications.filter{it.tag?.endsWith(":event:$taskId")==true}
+            .forEach{notifications.cancel(it.tag,it.id)}
+    }
+    fun schedule(c:Context,day:Day,expected:ReminderSession=session(c))=synchronized(lock){
+        if(!SecureConfig(c).reminders||!matches(c,expected))return@synchronized
+        // The worker/UI use fresh responses; cached/offline days must never
+        // resurrect deleted or completed tasks' scheduled notifications.
+        if(day.cached||day.alarmRevision?.let{it!=revision(c)}==true)return@synchronized
+        val now=System.currentTimeMillis()
+        val alarms=day.tasks.filter{!it.done&&it.time!=null}.flatMap{task->
+            taskReminderAlarms(task.id,task.title,task.clockMinutes,task.minutes,day.date,day.timezone,now)
+        }
+        cancelAlarms(c)
+        val p=prefs(c);val generation=UUID.randomUUID().toString()
+        // Store membership before setting alarms, so even an alarm firing
+        // immediately is valid. Generation rejects an already-delivered old
+        // broadcast with the same task ID after its time/title was edited.
+        p.edit().putString("zone",day.timezone).putString("alarm_generation",generation)
+            .putStringSet("alarms",alarms.map{it.id}.toSet()).commit()
+        val manager=c.getSystemService(AlarmManager::class.java)
+        alarms.forEach{alarm->
+            val i=alarmIntent(c,alarm.id).putExtra("kind",alarm.kind).putExtra("date",alarm.date)
+                .putExtra("title",alarm.title).putExtra("body",alarm.body).putExtra("alarm_generation",generation)
+                .putExtra("connection_generation",expected.connection).putExtra("epoch",expected.epoch)
+            val pi=pending(c,alarm.id,PendingIntent.FLAG_UPDATE_CURRENT,i)!!
+            try{
+                if(Build.VERSION.SDK_INT<31||manager.canScheduleExactAlarms())manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,alarm.triggerMillis,pi)
+                else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,alarm.triggerMillis,pi)
+            }catch(_:SecurityException){
+                // Exact alarm permission can be revoked between checking and
+                // scheduling; preserve the reminder using Android's fallback.
+                manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,alarm.triggerMillis,pi)
             }
         }
-        prefs.edit().putStringSet("alarms",ids).apply()
     }
-    fun sent(c:Context,date:String):Set<String> = c.getSharedPreferences("reminders",Context.MODE_PRIVATE).getStringSet("sent:$date",emptySet()).orEmpty()
-    fun notify(c:Context,date:String,kind:String,title:String,body:String){synchronized(lock){
-        if(!SecureConfig(c).reminders||kind in sent(c,date))return
-        if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
+    fun sent(c:Context,date:String):Set<String> = prefs(c).getStringSet("sent:$date",emptySet()).orEmpty().toSet()
+    /** Test the real reminder channel without enabling reminders or changing delivery history. */
+    fun test(c:Context):Boolean {
+        if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return false
         val manager=c.getSystemService(NotificationManager::class.java)
+        if(!manager.areNotificationsEnabled())return false
         manager.createNotificationChannel(NotificationChannel("reminders","Planner reminders",NotificationManager.IMPORTANCE_HIGH))
+        if(manager.getNotificationChannel("reminders")?.importance==NotificationManager.IMPORTANCE_NONE)return false
+        val open=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return try {
+            manager.notify("planner-notification-test",62,NotificationCompat.Builder(c,"reminders")
+                .setSmallIcon(R.drawable.ic_notification).setContentTitle("Planner OS notifications work")
+                .setContentText("Your Android reminder channel is ready.").setAutoCancel(true).setContentIntent(open).build())
+            true
+        }catch(_:SecurityException){false}
+    }
+    fun notify(c:Context,date:String,kind:String,title:String,body:String,expected:ReminderSession=session(c),expectedRevision:Long?=null)=synchronized(lock){
+        if(!SecureConfig(c).reminders||!matches(c,expected)||kind in sent(c,date)||expectedRevision?.let{it!=revision(c)}==true)return@synchronized
+        if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return@synchronized
+        val manager=c.getSystemService(NotificationManager::class.java)
+        if(!manager.areNotificationsEnabled())return@synchronized
+        manager.createNotificationChannel(NotificationChannel("reminders","Planner reminders",NotificationManager.IMPORTANCE_HIGH))
+        if(manager.getNotificationChannel("reminders")?.importance==NotificationManager.IMPORTANCE_NONE)return@synchronized
         val pi=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notificationTag=reminderNotificationTag(kind)
-        manager.notify(("$date:$notificationTag").hashCode(),NotificationCompat.Builder(c,"reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setAutoCancel(true).setContentIntent(pi).build())
-        val p=c.getSharedPreferences("reminders",Context.MODE_PRIVATE)
-        p.edit().putStringSet("sent:$date",sent(c,date)+kind).apply()
-        // A rolling week is enough to deduplicate retries; retain no permanent reminder history.
-        p.all.keys.filter{it.startsWith("sent:")&&it.removePrefix("sent:")<LocalDate.parse(date).minusDays(7).toString()}.forEach{p.edit().remove(it).apply()}
-    }}
+        // A string tag avoids hash collisions replacing another task's alert.
+        manager.notify("$date:$notificationTag",61,NotificationCompat.Builder(c,"reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setAutoCancel(true).setContentIntent(pi).build())
+        val p=prefs(c)
+        p.edit().putStringSet("sent:$date",sent(c,date)+kind).commit()
+        val cutoff=LocalDate.parse(date).minusDays(7).toString()
+        val edit=p.edit()
+        p.all.keys.filter{it.startsWith("sent:")&&it.removePrefix("sent:")<cutoff}.forEach{edit.remove(it)}
+        edit.apply()
+    }
+    fun receive(c:Context,i:Intent)=synchronized(lock){
+        val id=i.data?.lastPathSegment?:return@synchronized
+        val p=prefs(c)
+        if(id !in p.getStringSet("alarms",emptySet()).orEmpty()||i.getStringExtra("alarm_generation")!=p.getString("alarm_generation",null))return@synchronized
+        val expected=ReminderSession(i.getLongExtra("connection_generation",-1),i.getStringExtra("epoch")?:return@synchronized)
+        val date=i.getStringExtra("date")?:return@synchronized;val kind=i.getStringExtra("kind")?:return@synchronized
+        notify(c,date,kind,i.getStringExtra("title")?:"Planner OS",i.getStringExtra("body").orEmpty(),expected)
+        // Fired IDs are retired; stale broadcasts cannot notify again even if
+        // notification permission was denied and the ledger stayed untouched.
+        p.edit().putStringSet("alarms",p.getStringSet("alarms",emptySet()).orEmpty()-id).commit()
+    }
 }
-class ReminderReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){
-    // Canceled or replaced alarms cannot notify after a task edit.
-    val id=i.data?.lastPathSegment?:return
-    if(id !in c.getSharedPreferences("reminders",Context.MODE_PRIVATE).getStringSet("alarms",emptySet()).orEmpty())return
-    Reminders.notify(c,i.getStringExtra("date")?:return,i.getStringExtra("kind")?:return,i.getStringExtra("title")?:"Planner OS",i.getStringExtra("body").orEmpty())
+class ReminderReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){Reminders.receive(c,i)}}
+class BootReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){
+    if(i.action==Intent.ACTION_BOOT_COMPLETED){Reminders.cancelAlarms(c);Reminders.setup(c)}
 }}
-class BootReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){if(i.action==Intent.ACTION_BOOT_COMPLETED)Reminders.setup(c)}}
 class ReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p){override suspend fun doWork():Result{
-    if(!SecureConfig(applicationContext).reminders)return Result.success()
+    val c=applicationContext
+    if(!SecureConfig(c).reminders||!SecureConfig(c).configured)return Result.success()
+    val session=Reminders.session(c)
     return try{
-        val repo=PlannerRepository(applicationContext)
-        val zone=applicationContext.getSharedPreferences("reminders",Context.MODE_PRIVATE).getString("zone","Asia/Kolkata")!!
-        val date=LocalDate.now(ZoneId.of(zone));val day=repo.day(date);Reminders.schedule(applicationContext,day)
-        val body=JSONObject().put("sent_kinds",JSONArray(Reminders.sent(applicationContext,day.date).toList()))
-        val data=repo.request("POST","/v2/native/reminders",body).getJSONObject("data")
+        val repo=PlannerRepository(c)
+        val zone=c.getSharedPreferences("reminders",Context.MODE_PRIVATE).getString("zone","Asia/Kolkata")!!
+        var day=repo.day(LocalDate.now(ZoneId.of(zone)))
+        val actualDate=LocalDate.now(ZoneId.of(day.timezone))
+        if(day.date!=actualDate.toString())day=repo.day(actualDate)
+        Reminders.schedule(c,day,session)
+        fun ledger(date:String)=JSONObject().put("sent_kinds",JSONArray(Reminders.sent(c,date).toList()))
+        var sentDate=day.date
+        val responseRevision=Reminders.revision(c)
+        var data=repo.request("POST","/v2/native/reminders",ledger(sentDate)).getJSONObject("data")
+        // The server's local day is authoritative. A response crossing
+        // midnight must use that day's ledger, not suppress another day's kinds.
+        if(data.getString("date")!=sentDate){
+            sentDate=data.getString("date")
+            data=repo.request("POST","/v2/native/reminders",ledger(sentDate)).getJSONObject("data")
+        }
+        if(data.getString("date")!=sentDate||responseRevision!=Reminders.revision(c))return Result.retry()
         val a=data.getJSONArray("reminders")
-        for(index in 0 until a.length()){val r=a.getJSONObject(index);Reminders.notify(applicationContext,data.getString("date"),r.getString("kind"),r.optString("title",reminderTitle(r.getString("kind"))),r.getString("message"))}
+        for(index in 0 until a.length()){
+            val r=a.getJSONObject(index)
+            Reminders.notify(c,sentDate,r.getString("kind"),r.optString("title",reminderTitle(r.getString("kind"))),r.getString("message"),session,responseRevision)
+        }
         Result.success()
-    }catch(_:Exception){Result.retry()}
+    }catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){Result.retry()}
 }}

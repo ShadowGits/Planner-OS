@@ -60,8 +60,17 @@ pause/resume, and timer recovery after force-stop/relaunch. No production tasks
 were modified. Physical Samsung S24 Ultra validation remains necessary for
 One UI background restrictions and overlay behavior.
 
-The first live cleanup pass removed 5,544 copies; 166 quota-limited deletions
-were retried. Delete batches now pace writes and retry quota refusals too.
+The first live cleanup pass removed 5,544 copies; all 166 quota-limited deletions
+were retried successfully. Final audit: 2,018 events, 1,615 Planner-owned events,
+zero duplicate groups. All 779 canonical mapped events and all 403 non-Planner
+events were retained. Hourly calendar sync was resumed. Delete batches now pace
+writes and retry quota refusals too. Live deployment and a second sync were
+verified: no events were created, updated or deleted on that second sync.
+
+The first Android APK above was a checkpoint, not a complete PWA parity release:
+it lacked drag scheduling, named Top Wins and proportional overlap layout.
+The 2026-10-01 follow-up is tracked in docs/ANDROID_PARITY.md and must be checked
+against the rebuilt APK before being called complete.
 
 Future APK updates must use the retained private signing key. Account keys,
 SDK files and signing keys are never committed. See android/README.md for

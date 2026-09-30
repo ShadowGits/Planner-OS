@@ -10,6 +10,12 @@ data class TimerState(val taskId: String, val title: String, val durationMs: Lon
     fun toggle(nowElapsed: Long,nowWall: Long,nowBoot: Int): TimerState = if(running)
         copy(elapsedBeforeMs=elapsed(nowElapsed,nowWall,nowBoot),running=false) else
         copy(anchorElapsedMs=nowElapsed,anchorWallMs=nowWall,bootCount=nowBoot,running=true)
+    /** Reboot recovery uses wall time once, then returns to a monotonic clock. */
+    fun recover(nowElapsed: Long,nowWall: Long,nowBoot: Int): TimerState = if(nowBoot==bootCount) this else
+        copy(elapsedBeforeMs=elapsed(nowElapsed,nowWall,nowBoot),anchorElapsedMs=nowElapsed,
+            anchorWallMs=nowWall,bootCount=nowBoot)
+    fun metadata(newTitle: String,newDurationMs: Long): TimerState =
+        copy(title=newTitle,durationMs=newDurationMs.coerceAtLeast(1))
 }
 fun timerText(remainingMs: Long): String {
     val seconds=kotlin.math.abs(remainingMs)/1000
