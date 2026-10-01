@@ -127,9 +127,6 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
     def _core():
         return build_core(cloud.service_client, _configured_user_id())
 
-    from planner_api.day_planning import register_day_planning_routes
-    register_day_planning_routes(api, cloud, _authorize)
-
     @api.get("/v2/day")
     def get_day(
         on_date: str | None = Query(default=None, alias="date"),
