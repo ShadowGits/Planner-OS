@@ -150,11 +150,21 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
 }
 
 @Composable internal fun InboxCard(task:Task,dark:Boolean,enabled:Boolean,edit:()->Unit,done:()->Unit,star:()->Unit,schedule:()->Unit,overdue:Boolean=false){
-    Surface(onClick=edit,enabled=enabled&&!task.id.startsWith("pending:"),color=taskTint(task,dark),shape=RoundedCornerShape(18.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=6.dp).alpha(if(task.done).6f else 1f)){
-        Column(Modifier.padding(12.dp)){
-            if(overdue)Surface(color=if(dark)Color(0xFF573D24)else Color(0xFFFFE7C9),shape=RoundedCornerShape(6.dp),modifier=Modifier.padding(start=34.dp,bottom=5.dp)){Text("Overdue"+(task.date?.let{" · $it"}.orEmpty())+(task.time?.let{" · $it"}.orEmpty()),color=if(dark)Color(0xFFFFCF91)else Color(0xFF80502F),fontSize=11.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(horizontal=7.dp,vertical=3.dp))}
-            Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=done,enabled=enabled,modifier=Modifier.size(32.dp)){Icon(if(task.done)Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,"${if(task.done)"Reopen" else "Complete"} ${task.title}")};Text("${taskEmoji(task.title)} ${task.title}",modifier=Modifier.weight(1f),fontWeight=FontWeight.SemiBold,maxLines=4,textDecoration=if(task.done)TextDecoration.LineThrough else null);IconButton(onClick=star,enabled=enabled,modifier=Modifier.size(32.dp)){Icon(if(task.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,"Choose ${task.title} as Top Win",tint=MaterialTheme.colorScheme.primary)}}
-            Row(verticalAlignment=Alignment.CenterVertically){Text(durationLabel(task.minutes)+(if(task.parent!=null)" · Part ${task.partIndex?:"?"}/${task.partCount?:"?"}" else if(task.habit)" · Habit" else ""),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f).padding(start=34.dp));TextButton(onClick=schedule,enabled=enabled){Icon(Icons.Rounded.Schedule,null,modifier=Modifier.size(17.dp));Text(" Schedule")}}
+    val interactive=enabled&&!task.id.startsWith("pending:")
+    Column(Modifier.fillMaxWidth().padding(horizontal=12.dp).alpha(if(task.done).6f else 1f)){
+        Row(Modifier.fillMaxWidth().heightIn(min=64.dp),verticalAlignment=Alignment.CenterVertically){
+            IconButton(onClick=done,enabled=interactive,modifier=Modifier.size(44.dp)){
+                Icon(if(task.done)Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,"${if(task.done)"Reopen" else "Complete"} ${task.title}",tint=if(task.done)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(Modifier.weight(1f).clickable(enabled=interactive,onClick=edit).padding(vertical=9.dp,horizontal=4.dp)){
+                Text(task.title,fontSize=15.sp,fontWeight=FontWeight.Medium,maxLines=3,overflow=TextOverflow.Ellipsis,textDecoration=if(task.done)TextDecoration.LineThrough else null)
+                val dated=task.dueDate?:task.date
+                val stamp=dated?.let{runCatching{LocalDate.parse(it).format(DateTimeFormatter.ofPattern("MMM d"))}.getOrDefault(it)}
+                Text(listOfNotNull(if(overdue&&dated!=null)"Overdue" else if(task.done)"Done" else if(task.time==null)"Unscheduled" else null,stamp,task.time?.take(5),durationLabel(task.minutes),if(task.parent!=null)"Part ${task.partIndex?:"?"}/${task.partCount?:"?"}" else if(task.habit)"Habit" else null).joinToString(" · "),
+                    fontSize=11.sp,color=if(overdue&&dated!=null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)
+            }
+            if(!task.done)IconButton(onClick=schedule,enabled=interactive,modifier=Modifier.size(44.dp)){Icon(Icons.Rounded.Schedule,"Schedule ${task.title}",modifier=Modifier.size(20.dp))}
         }
+        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f),modifier=Modifier.padding(start=48.dp,end=8.dp))
     }
 }

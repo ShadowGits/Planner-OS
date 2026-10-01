@@ -33,6 +33,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +84,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     val lifecycle=LocalLifecycleOwner.current
     val context=LocalContext.current;val repo=remember{PlannerRepository(context)}
     val scope=rememberCoroutineScope();val snackbar=remember{SnackbarHostState()};val density=LocalDensity.current.density
+    val compactNavigation=LocalConfiguration.current.screenWidthDp<360&&LocalDensity.current.fontScale>1.25f
     var selectedIso by rememberSaveable{mutableStateOf(logicalToday(ZonedDateTime.now(ZoneId.of("Asia/Kolkata"))).toString())}
     val selected=LocalDate.parse(selectedIso)
     var day by remember{mutableStateOf<Day?>(repo.cached(selected))}
@@ -99,6 +101,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var recovery by remember{mutableStateOf<EditorValues?>(null)}
     var adding by rememberSaveable{mutableStateOf(false)};var suggestedDate by rememberSaveable{mutableStateOf<String?>(null)};var suggestedTime by rememberSaveable{mutableStateOf<String?>(null)}
     var inbox by rememberSaveable{mutableStateOf(false)};var timer by remember{mutableStateOf(TimerStore.read(context))};var remaining by remember{mutableLongStateOf(0L)}
+    var inboxFilter by rememberSaveable{mutableStateOf("Open")}
     var replacement by remember{mutableStateOf<Task?>(null)};var deleteTarget by remember{mutableStateOf<Task?>(null)}
     val scroll=rememberScrollState();val inboxScroll=androidx.compose.foundation.lazy.rememberLazyListState()
     var drag by remember{mutableStateOf<DragState?>(null)};var viewportTop by remember{mutableFloatStateOf(0f)};var viewportBottom by remember{mutableFloatStateOf(0f)}
@@ -274,24 +277,25 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }}}
             Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=20.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
                 TextButton(onClick={inbox=false},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.ViewDay,null,modifier=Modifier.size(22.dp));Text("Timeline",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.ViewDay,"Timeline",modifier=Modifier.size(22.dp));Text(if(compactNavigation)"Day" else "Timeline",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
                 }
                 FilledIconButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},modifier=Modifier.size(50.dp),shape=CircleShape){Icon(Icons.Rounded.Add,"Add a task")}
                 TextButton(onClick={inbox=true},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Inbox,null,modifier=Modifier.size(22.dp));Text("Inbox $unfinishedInbox",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Inbox,"Inbox",modifier=Modifier.size(22.dp));Text(if(compactNavigation)"Inbox" else "Inbox $unfinishedInbox",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                }
+                TextButton(onClick={context.startActivity(Intent(context,DashboardActivity::class.java))},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Dashboard,"Dashboard",modifier=Modifier.size(22.dp));Text(if(compactNavigation)"Dash" else "Dashboard",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
                 }
             }}
         }
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
             Row(Modifier.fillMaxWidth().padding(start=20.dp,end=8.dp,top=9.dp),verticalAlignment=Alignment.CenterVertically){
-                Column(Modifier.weight(1f).clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()}){
-                    Text(when(selected){today->"TODAY";today.minusDays(1)->"YESTERDAY";today.plusDays(1)->"TOMORROW";else->selected.dayOfWeek.name},fontSize=10.sp,letterSpacing=1.5.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
-                    Text(selected.format(DateTimeFormatter.ofPattern("MMMM d")),fontSize=29.sp,fontWeight=FontWeight.Bold)
-                }
+                Text(if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=21.sp,fontWeight=FontWeight.SemiBold,
+                    modifier=Modifier.weight(1f).then(if(inbox)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()}))
                 IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{refresh(true,false,true);if(inbox)refreshInbox(true)}}){Icon(Icons.Rounded.Refresh,"Refresh day")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
             }
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+            if(!inbox)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 IconButton(onClick={selectedIso=selected.minusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronLeft,"Previous week")}
                 val start=selected.minusDays((selected.dayOfWeek.value-1).toLong())
                 for(index in 0..6){val d=start.plusDays(index.toLong());val isSelected=d==selected
@@ -304,12 +308,13 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 }
                 IconButton(onClick={selectedIso=selected.plusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronRight,"Next week")}
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),verticalAlignment=Alignment.CenterVertically){
+            if(!inbox)Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),verticalAlignment=Alignment.CenterVertically){
                 Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
                 TextButton(onClick={selectedIso=today.toString();if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
             }
-            if(currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
-            WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
+            if(!inbox&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
+            if(!inbox)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
+            if(inbox)InboxOverview(unscheduled,currentTasks,if(selected==today)"Today" else selected.format(DateTimeFormatter.ofPattern("MMM d")),unscheduled.count{isOverdue(it,clock)},inboxFilter){inboxFilter=it}
             if(loading||inbox&&inboxLoading)LinearProgressIndicator(Modifier.fillMaxWidth().height(1.dp))
             error?.let{Surface(color=MaterialTheme.colorScheme.primary.copy(alpha=.055f),shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=5.dp)){Text((if(day?.cached==true)"Offline · " else "")+it,fontSize=11.sp,modifier=Modifier.padding(8.dp))}}
             val swipe=Modifier.pointerInput(selectedIso,drag!=null){
@@ -326,9 +331,14 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 }
             }
             if(inbox){
+                val visible=when(inboxFilter){"Overdue"->unscheduled.filter{isOverdue(it,clock)};"Done"->currentTasks.filter{it.done};else->unscheduled.filterNot{it.done}}
+                val sections=if(inboxFilter=="Open")listOf("Overdue" to visible.filter{isOverdue(it,clock)},"Unscheduled" to visible.filterNot{isOverdue(it,clock)})else listOf(inboxFilter to visible)
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=inboxScroll,contentPadding=PaddingValues(bottom=24.dp)){
-                    if(unscheduled.isEmpty())item{EmptyState("Your inbox is clear","Add an idea. Schedule it when you're ready.")}
-                    items(unscheduled,key={it.id}){task->InboxCard(task,dark,!taskBusy(task),{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{schedule(task)},overdue=isOverdue(task,clock))}
+                    if(visible.isEmpty())item{EmptyState(if(inboxFilter=="Done")"No completed inbox tasks" else "Your ${inboxFilter.lowercase()} list is clear",if(inboxFilter=="Done")"Completed tasks appear here for this day." else "Add an idea. Schedule it when you're ready.")}
+                    sections.forEach{(label,rows)->if(rows.isNotEmpty()){
+                        item(key="section:$label"){InboxSection(label,rows.size,rows.sumOf{it.minutes})}
+                        items(rows,key={it.id}){task->InboxCard(task,dark,!taskBusy(task),{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{schedule(task)},overdue=isOverdue(task,clock))}
+                    }}
                 }
             }else if(timed.isEmpty()){
                 Box(Modifier.weight(1f).fillMaxWidth().then(swipe),contentAlignment=Alignment.Center){EmptyState("A little space to breathe",if(unscheduled.isEmpty())"Add your first block for this day." else "${unfinishedInbox} inbox items are ready to schedule.")}

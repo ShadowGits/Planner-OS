@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -70,6 +71,7 @@ class SecureConfig(private val context: Context) {
             Reminders.reset(context)
             context.getSharedPreferences("day-cache",Context.MODE_PRIVATE).edit().clear().commit()
             context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE).edit().clear().commit()
+            context.getSharedPreferences("dashboard-cache",Context.MODE_PRIVATE).edit().clear().commit()
         }
         check(prefs.edit().putString("url",origin).putString("secret",Base64.encodeToString(cipher.iv,Base64.NO_WRAP)+":"+Base64.encodeToString(encrypted,Base64.NO_WRAP)).putLong("generation",generation + if(changed) 1 else 0).commit()) { "Connection settings could not be saved." }
     }
@@ -79,6 +81,7 @@ class SecureConfig(private val context: Context) {
         prefs.edit().clear().putLong("generation",nextGeneration).commit()
         context.getSharedPreferences("day-cache",Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("dashboard-cache",Context.MODE_PRIVATE).edit().clear().commit()
     }
 }
 
@@ -161,7 +164,7 @@ class PlannerRepository(private val context: Context) {
             .put("project_id",task.projectId?:JSONObject.NULL).put("recurrence_key",task.recurrenceKey?:JSONObject.NULL)
             .put("parent_title",task.parentTitle?:JSONObject.NULL).put("part_index",task.partIndex?:JSONObject.NULL).put("part_total",task.partCount?:JSONObject.NULL).put("due_date",task.dueDate?:JSONObject.NULL)
     }))
-    suspend fun request(method: String,path: String,body: JSONObject?=null): JSONObject = withContext(Dispatchers.IO) {
+    suspend fun request(method: String,path: String,body: JSONObject?=null,dispatcher:CoroutineDispatcher=Dispatchers.IO): JSONObject = withContext(dispatcher) {
         val connection = config.connection()
         check(connection.first.isNotEmpty() && connection.second.isNotEmpty()){ "Connect to your Planner OS server in Settings." }
         require(path.startsWith("/v2/") && !path.contains("://")) { "Invalid planner API path." }

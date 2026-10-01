@@ -17,7 +17,7 @@ fun isOverdue(task:Task,now:ZonedDateTime):Boolean {
     val scheduled=task.date?.let(LocalDate::parse)
     if(scheduled!=null&&scheduled<today)return true
     if(scheduled==today&&task.time!=null)return task.clockMinutes+task.minutes<=now.hour*60+now.minute
-    return scheduled==null&&task.dueDate==null
+    return false // An undated idea belongs in Inbox, but has no missed deadline.
 }
 fun belongsInInbox(task:Task,now:ZonedDateTime):Boolean = !task.done &&
     (isOverdue(task,now)||(task.time==null&&(task.date==null||LocalDate.parse(task.date)<=now.toLocalDate())))

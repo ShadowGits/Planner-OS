@@ -10,6 +10,7 @@ class InboxPolicyTest {
     @Test fun expiredBlockJoinsInboxButOngoingDoesNot(){assertTrue(isOverdue(task(),now));assertFalse(isOverdue(task(time="11:45"),now));assertTrue(isOverdue(task(time="11:30"),now))}
     @Test fun pastDateAndDeadlineRemainOverdueEvenWithFutureSlot(){assertTrue(isOverdue(task(date="2026-09-30"),now));assertTrue(isOverdue(task(date="2026-10-03",due="2026-09-30"),now))}
     @Test fun completedAndFutureTasksDoNotJoinGlobalInbox(){assertFalse(belongsInInbox(task(done=true),now));assertFalse(belongsInInbox(task(date="2026-10-03"),now));assertTrue(belongsInInbox(task(date=null,time=null),now))}
+    @Test fun undatedIdeasAreInboxWorkWithoutBeingMarkedOverdue(){val idea=task(date=null,time=null);assertTrue(belongsInInbox(idea,now));assertFalse(isOverdue(idea,now))}
     @Test fun overdueKeepsOriginalDateAndTimeAndTimeline(){val t=task(date="2026-09-30");val view=Day("2026-10-01","Asia/Kolkata",emptyList());val rows=inboxRows(view,view.copy(tasks=listOf(t)),now);assertEquals(listOf(t),rows);assertTrue(view.tasks.isEmpty())}
     @Test fun selectedVersionSuppressesStaleBacklogDone(){val t=task();val view=Day("2026-10-01","Asia/Kolkata",listOf(t.copy(done=true)));assertTrue(inboxRows(view,view.copy(tasks=listOf(t)),now).isEmpty())}
     @Test fun ordinarySelectedInboxRetainsCompletedItems(){val t=task(time=null,done=true);assertEquals(listOf(t),inboxRows(Day("2026-10-01","Asia/Kolkata",listOf(t)),null,now))}
