@@ -15,3 +15,7 @@ Validation: 271 Python tests passed, one skipped; 39 PWA tests passed; 65 Androi
 APK version 1.0.3, versionCode 5. SHA-256: `693ec54a9ac0d9bcdbcb9ae7b8b578cb1bf806d71cedf3ddc7fc7bcd90bee21d`.
 
 The deliver script puts the installable APK in the established Google Drive `PLANNER OS LATEST APP/Planner-OS-Android.apk` folder, plus local artifact copies. Install over the existing version; do not uninstall to preserve connection/cache settings.
+
+## 1.0.4 minimize follow-up
+
+Floating timer now has separate Minimize/Expand and Hide controls. The compact pill retains task name and whole-second countdown; the service, sounds and lock-screen timer continue running. Minimized preference survives service recovery. VersionCode6, version1.0.4, SHA256 `6687d47b6beb894e0039d1269ee06a9a15c6717a1df12677abaf88bc4679b298`. Final Android test/lint/assembly checks passed (65 tests, zero lint errors). The wooden activity was verified over a temporary emulator PIN lock with Pause/Resume, and completion sound event was verified at the end of a real one-minute timer. The live authenticated Inbox endpoint returned HTTP200 on revision9b01d38.

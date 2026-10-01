@@ -56,20 +56,22 @@ class TimerService:Service(){
     private var dialView:StopwatchDialView?=null
     private var toggleView:TextView?=null
     private var titleView:TextView?=null
+    private var compactClock:TextView?=null
     private var bubbleDark:Boolean?=null
     private lateinit var windows:WindowManager
     private var hidden=false
+    private var minimized=false
     private val ticker=object:Runnable{override fun run(){
         var s=state?:return
         s.claimCompletion(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(this@TimerService))?.let{finished->
             s=finished;state=finished;TimerStore.save(this@TimerService,finished);TimerSounds.completed(this@TimerService,finished)
         }
         if(bubble!=null&&!Settings.canDrawOverlays(this@TimerService))removeBubble()
-        titleView?.text=s.title;dialView?.display(s,TimerStore.remaining(this@TimerService,s));toggleView?.text=if(s.running)"Ⅱ Pause" else "▶ Resume"
+        titleView?.text=s.title;compactClock?.text=timerText(TimerStore.remaining(this@TimerService,s));dialView?.display(s,TimerStore.remaining(this@TimerService,s));toggleView?.text=if(s.running)"Ⅱ Pause" else "▶ Resume"
         getSystemService(NotificationManager::class.java).notify(FOCUS_ID,notification(s));handler.postDelayed(this,1000)
     }}
     override fun onCreate(){
-        super.onCreate();TimerSounds.setup(this);windows=getSystemService(WindowManager::class.java)
+        super.onCreate();minimized=getSharedPreferences("focus",MODE_PRIVATE).getBoolean("minimized",false);TimerSounds.setup(this);windows=getSystemService(WindowManager::class.java)
         val manager=getSystemService(NotificationManager::class.java)
         val previous=manager.getNotificationChannel("focus")
         // LOW can disappear entirely from the lockscreen. A new channel is
@@ -166,8 +168,9 @@ class TimerService:Service(){
         val cancel=label("Cancel",11f).apply{minimumHeight=dp(48);minimumWidth=dp(60);gravity=Gravity.CENTER;contentDescription="Cancel timer without completing task";setOnClickListener{TimerStore.action(this@TimerService,"STOP")}}
         val close=label("×",18f).apply{minimumHeight=dp(48);minimumWidth=dp(48);gravity=Gravity.CENTER;contentDescription="Hide floating timer, keep timer running";setOnClickListener{hidden=true;removeBubble()}}
         buttons.addView(toggleView);buttons.addView(cancel);buttons.addView(finish)
-        val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;addView(title,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));addView(close)}
-        box.addView(header);box.addView(dialView);box.addView(buttons)
+        val resize=label(if(minimized)"↗"else "−",18f).apply{minimumHeight=dp(48);minimumWidth=dp(48);gravity=Gravity.CENTER;contentDescription=if(minimized)"Expand floating timer"else "Minimize floating timer";setOnClickListener{minimized=!minimized;getSharedPreferences("focus",MODE_PRIVATE).edit().putBoolean("minimized",minimized).apply();removeBubble();state?.let{showBubble(it)}}}
+        val header=LinearLayout(this).apply{minimumWidth=dp(192);gravity=Gravity.CENTER_VERTICAL;addView(title,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));addView(resize);addView(close)}
+        box.addView(header);if(!minimized){box.addView(dialView);box.addView(buttons)}else{dialView=null;toggleView=null;compactClock=label(timerText(TimerStore.remaining(this,s)),14f).apply{setTextColor(wine);typeface=Typeface.MONOSPACE;contentDescription="Minimized timer countdown"};box.addView(compactClock)}
         val position=getSharedPreferences("focus",MODE_PRIVATE)
         val p=WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START;x=position.getInt("bubble_x",dp(12)).coerceIn(0,(resources.displayMetrics.widthPixels-dp(200)).coerceAtLeast(0));y=position.getInt("bubble_y",dp(90)).coerceIn(0,(resources.displayMetrics.heightPixels-dp(180)).coerceAtLeast(0))}
         var startX=0;var startY=0;var touchX=0f;var touchY=0f
@@ -176,7 +179,7 @@ class TimerService:Service(){
         try{windows.addView(box,p);bubble=box;bubbleDark=dark}catch(_:SecurityException){removeBubble()}catch(_:WindowManager.BadTokenException){removeBubble()}
     }
     private fun LinearLayout.padding(value:Int){setPadding(value,value,value,value)}
-    private fun removeBubble(){bubble?.let{runCatching{windows.removeView(it)}};bubble=null;dialView=null;toggleView=null;titleView=null;bubbleDark=null}
+    private fun removeBubble(){bubble?.let{runCatching{windows.removeView(it)}};bubble=null;dialView=null;toggleView=null;titleView=null;compactClock=null;bubbleDark=null}
     override fun onDestroy(){handler.removeCallbacksAndMessages(null);state=null;removeBubble();super.onDestroy()}
     companion object{const val FOCUS_ID=51;const val FOCUS_CHANNEL="focus-timer"}
 }
