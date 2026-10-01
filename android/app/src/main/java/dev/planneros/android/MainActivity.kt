@@ -86,6 +86,8 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var selectedIso by rememberSaveable{mutableStateOf(logicalToday(ZonedDateTime.now(ZoneId.of("Asia/Kolkata"))).toString())}
     val selected=LocalDate.parse(selectedIso)
     var day by remember{mutableStateOf<Day?>(repo.cached(selected))}
+    var backlog by remember{mutableStateOf(repo.cachedInbox())}
+    var inboxLoading by remember{mutableStateOf(false)}
     val mutations=remember{MutationCoordinator()}
     val pendingWrites=remember{mutableStateListOf<Pair<Day,Day>>()}
     val drafts=remember{mutableStateMapOf<String,EditorValues>()}
@@ -105,7 +107,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var lastToday by rememberSaveable{mutableStateOf(today.toString())}
     val currentTasks=day?.takeIf{it.date==selectedIso}?.tasks.orEmpty()
     val timed=currentTasks.filter{it.time!=null}.sortedBy{it.clockMinutes}
-    val unscheduled=currentTasks.filter{it.time==null}.sortedWith(compareByDescending<Task>{it.starred}.thenBy{it.done}.thenBy{it.title})
+    val unscheduled=inboxRows(day?.takeIf{it.date==selectedIso},backlog,clock)
     val unfinishedInbox=unscheduled.count{!it.done}
     val editor=editorId?.let{id->currentTasks.find{it.id==id}?:editorBackup?.takeIf{it.id==id}}
     fun closeEditor(){adding=false;editorId=null;editorBackup=null;suggestedDate=null;suggestedTime=null;recovery=null}
@@ -140,30 +142,46 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
         }finally{if(serial==requestSerial)loading=false}
     }
+    suspend fun refreshInbox(force:Boolean=false){
+        if(!repo.config.configured)return
+        val generation=repo.config.generation
+        inboxLoading=backlog==null
+        try{
+            val fresh=repo.inbox(force)
+            if(generation==repo.config.generation)backlog=pendingWrites.fold(fresh){view,(before,after)->applyInboxChanges(view,before,after,clock)}
+        }catch(cancel:CancellationException){throw cancel}catch(e:Exception){
+            if(generation==repo.config.generation&&e.message!="Plan changed while refreshing. Refresh Inbox again."){
+                error=if(backlog==null)e.message?:"Couldn't load Inbox." else "Saved Inbox is here. Reconnect to refresh."
+            }
+        }finally{inboxLoading=false}
+    }
     fun reconcile(){
         reconcileJob?.cancel()
         reconcileJob=scope.launch{
             delay(350)
             while(pendingWrites.isNotEmpty()||drag!=null||editorId!=null||adding)delay(100)
             refresh(true,true,true)
+            if(inbox)refreshInbox(true)
         }
     }
     fun optimistic(keys:Set<String>,change:(Day)->Day,write:suspend()->Unit,onSuccess:()->Unit={},onFailure:()->Unit={},needsReconcile:Boolean=false){
-        val before=day?.takeIf{it.date==selectedIso}?:return
+        val view=day?.takeIf{it.date==selectedIso}?:return
+        val missing=backlog?.tasks.orEmpty().filter{it.id in keys&&view.tasks.none{row->row.id==it.id}}
+        val before=view.copy(tasks=view.tasks+missing)
         if(!mutations.begin(keys))return
         val generation=repo.config.generation
         val after=change(before);val ticket=before to after
-        requestSerial++;loading=false;day=projectChanges(before,before,after);error=null;pendingWrites.add(ticket)
-        repo.beginSnapshotWrite();repo.saveSnapshot(before,after)
+        requestSerial++;loading=false;day=projectChanges(view,before,after);error=null;pendingWrites.add(ticket)
+        repo.beginSnapshotWrite();repo.saveSnapshot(before,after);backlog=repo.cachedInbox()
         scope.launch{
             var failure:String?=null
             try{write();if(generation==repo.config.generation){
                 onSuccess()
                 AutoFocusScheduler.syncChanges(context,after.tasks.filter{it.id in changedTaskIds(before,after)&&!it.id.startsWith("pending:")},after.date,after.timezone)
             }}
-            catch(cancel:CancellationException){if(generation==repo.config.generation){day=day?.let{projectChanges(it,after,before)};repo.saveSnapshot(after,before)};throw cancel}
+            catch(cancel:CancellationException){if(generation==repo.config.generation){day=day?.let{projectChanges(it,after,before)};repo.saveSnapshot(after,before);backlog=repo.cachedInbox()};throw cancel}
             catch(e:Exception){
-                if(generation==repo.config.generation){day=day?.let{projectChanges(it,after,before)};repo.saveSnapshot(after,before);onFailure()}
+                if(generation==repo.config.generation){day=day?.let{projectChanges(it,after,before)};repo.saveSnapshot(after,before);backlog=repo.cachedInbox();onFailure()}
                 failure=e.message?:"Change couldn't be saved; restored the previous task."
             }finally{
                 mutations.end(keys);pendingWrites.remove(ticket);repo.endSnapshotWrite()
@@ -228,6 +246,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         drag=null;scroll.scrollTo(0);refresh(false)
 
     }
+    LaunchedEffect(inbox,connectionRevision){if(inbox)refreshInbox()}
     LaunchedEffect(selectedIso,connectionRevision){while(true){delay(60*60*1000L);refresh(true)}}
     LaunchedEffect(Unit){while(true){timer=TimerStore.read(context);remaining=timer?.let{TimerStore.remaining(context,it)}?:0;clock=ZonedDateTime.now(ZoneId.of(day?.timezone?:"Asia/Kolkata"));delay(1000)}}
     LaunchedEffect(clock.toLocalDate(),clock.hour,clock.minute){if(lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))AutoFocusScheduler.catchUp(context)}
@@ -240,16 +259,18 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         if(actual!=lastToday){if(selectedIso==lastToday)selectedIso=actual;lastToday=actual}
         Reminders.setup(context);AutoFocusScheduler.catchUp(context)
         if(TimerStore.read(context)!=null)TimerStore.action(context,"SHOW")
-        scope.launch{refresh(true)}
+        scope.launch{refresh(true);if(inbox)refreshInbox()}
     })
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_RESUME)latestResume() else if(event==Lifecycle.Event.ON_PAUSE)drag=null};lifecycle.lifecycle.addObserver(observer);onDispose{lifecycle.lifecycle.removeObserver(observer)}}
     Scaffold(containerColor=MaterialTheme.colorScheme.background,snackbarHost={SnackbarHost(snackbar)},bottomBar={
         Column{
-            timer?.let{s->Surface(color=MaterialTheme.colorScheme.primary.copy(alpha=.08f)){Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically){
-                Icon(Icons.Rounded.HourglassBottom,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(s.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold);Text("${timerText(remaining)} · ${if(s.running)"Focus" else "Paused"}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+            timer?.let{s->Surface(color=if(dark)Color(0xFF332A23)else Color(0xFFF2E8D9)){Column{Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically){
+                Icon(Icons.Rounded.HourglassBottom,null,tint=if(dark)Color(0xFFD2A570)else Color(0xFF80502F));Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(s.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold);Text("${timerText(remaining)} · ${if(s.running)"Focus" else "Paused"}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 IconButton(onClick={TimerStore.action(context,"TOGGLE")}){Icon(if(s.running)Icons.Rounded.Pause else Icons.Rounded.PlayArrow,"Pause or resume timer")}
                 IconButton(onClick={TimerStore.action(context,"STOP")}){Icon(Icons.Rounded.Close,"Cancel timer")}
-                IconButton(onClick={context.startActivity(Intent(context,MainActivity::class.java).putExtra("finish_timer",s.taskId).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))}){Icon(Icons.Rounded.Check,"Finish timer",tint=MaterialTheme.colorScheme.primary)}
+                IconButton(onClick={context.startActivity(Intent(context,MainActivity::class.java).putExtra("finish_timer",s.taskId).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))}){Icon(Icons.Rounded.Check,"Finish timer",tint=if(dark)Color(0xFFD2A570)else Color(0xFF80502F))}
+            }
+                LinearProgressIndicator(progress={(remaining.toFloat()/s.durationMs.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp),color=if(dark)Color(0xFFD2A570)else Color(0xFF80502F),trackColor=if(dark)Color(0xFF4C3C2E)else Color(0xFFDCC7AE))
             }}}
             Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=20.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
                 TextButton(onClick={inbox=false},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
@@ -268,7 +289,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     Text(when(selected){today->"TODAY";today.minusDays(1)->"YESTERDAY";today.plusDays(1)->"TOMORROW";else->selected.dayOfWeek.name},fontSize=10.sp,letterSpacing=1.5.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
                     Text(selected.format(DateTimeFormatter.ofPattern("MMMM d")),fontSize=29.sp,fontWeight=FontWeight.Bold)
                 }
-                IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{refresh(true,false,true)}}){Icon(Icons.Rounded.Refresh,"Refresh day")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
+                IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{refresh(true,false,true);if(inbox)refreshInbox(true)}}){Icon(Icons.Rounded.Refresh,"Refresh day")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
             }
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 IconButton(onClick={selectedIso=selected.minusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronLeft,"Previous week")}
@@ -289,7 +310,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
             if(currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
             WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
-            if(loading)LinearProgressIndicator(Modifier.fillMaxWidth().height(1.dp))
+            if(loading||inbox&&inboxLoading)LinearProgressIndicator(Modifier.fillMaxWidth().height(1.dp))
             error?.let{Surface(color=MaterialTheme.colorScheme.primary.copy(alpha=.055f),shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=5.dp)){Text((if(day?.cached==true)"Offline · " else "")+it,fontSize=11.sp,modifier=Modifier.padding(8.dp))}}
             val swipe=Modifier.pointerInput(selectedIso,drag!=null){
                 if(drag==null)awaitEachGesture{
@@ -307,7 +328,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             if(inbox){
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=inboxScroll,contentPadding=PaddingValues(bottom=24.dp)){
                     if(unscheduled.isEmpty())item{EmptyState("Your inbox is clear","Add an idea. Schedule it when you're ready.")}
-                    items(unscheduled,key={it.id}){task->InboxCard(task,dark,!taskBusy(task),{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{schedule(task)})}
+                    items(unscheduled,key={it.id}){task->InboxCard(task,dark,!taskBusy(task),{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{schedule(task)},overdue=isOverdue(task,clock))}
                 }
             }else if(timed.isEmpty()){
                 Box(Modifier.weight(1f).fillMaxWidth().then(swipe),contentAlignment=Alignment.Center){EmptyState("A little space to breathe",if(unscheduled.isEmpty())"Add your first block for this day." else "${unfinishedInbox} inbox items are ready to schedule.")}
@@ -323,7 +344,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         }
     }
     if(settings)ConnectionSettings(repo,appearance,onAppearance,{settings=false},requestNotification,{
-        closeEditor();day=null;connectionRevision++;scope.launch{refresh(false)}
+        closeEditor();day=null;backlog=repo.cachedInbox();connectionRevision++;scope.launch{refresh(false)}
     })
     if(adding||editor!=null)PlannerEditor(editor,selected,suggestedDate,suggestedTime,editor?.let{taskBusy(it)}?:false,recovery,::closeEditor,{title,date,time,minutes,notes->
         val original=editor?.let{edit->currentTasks.find{it.id==edit.id}?:edit};val oldId=editorId
@@ -337,7 +358,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         },{
             if(original==null){val id=repo.create(title,date,time,minutes,notes);val source=Day(viewDate.toString(),day?.timezone?:"Asia/Kolkata",listOf(pending))
                 val resolved=source.copy(tasks=listOf(pending.copy(id=id)))
-                repo.saveSnapshot(source,resolved);day=day?.let{projectChanges(it,source,resolved)}
+                repo.saveSnapshot(source,resolved);backlog=repo.cachedInbox();day=day?.let{projectChanges(it,source,resolved)}
                 AutoFocusScheduler.syncChanges(context,resolved.tasks,source.date,source.timezone)}
             else repo.patch(original,JSONObject().put("title",title).put("scheduled_date",date.toString()).put("start_time",time?:JSONObject.NULL).put("estimated_minutes",minutes))
         },onFailure={val saved=EditorValues(title,date,time,minutes,notes);drafts[original?.id?:"new"]=saved
@@ -360,7 +381,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     if(finishId!=null){val s=TimerStore.read(context)
         if(s==null||s.taskId!=finishId)LaunchedEffect(finishId){finishHandled()}
         else AlertDialog(onDismissRequest=finishHandled,title={Text("Finish ${s.title}?")},text={Text("${timerText(TimerStore.remaining(context,s))} remaining. Mark the task complete, or just end this timer.")},confirmButton={TextButton(enabled=!mutations.pending(s.taskId),onClick={
-            val task=currentTasks.find{it.id==s.taskId}
+            val task=currentTasks.find{it.id==s.taskId}?:backlog?.tasks?.find{it.id==s.taskId}
             val keys=task?.let(::mutationKeys)?:setOf(s.taskId)
             if(mutations.begin(keys))scope.launch{
                 var message:String?=null

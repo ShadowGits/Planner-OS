@@ -22,7 +22,6 @@ class StopwatchDialView(context:Context):View(context) {
     private val point=FloatArray(2)
     private val medium=Typeface.create("sans-serif-medium",Typeface.NORMAL)
     private val condensed=Typeface.create("sans-serif-condensed",Typeface.BOLD)
-    private val regular=Typeface.create("sans-serif",Typeface.NORMAL)
     private var cx=0f;private var cy=0f;private var radius=0f
     private var trackLength=0f
     private var model:TimerState?=null
@@ -37,7 +36,7 @@ class StopwatchDialView(context:Context):View(context) {
         invalidate()
     }
     override fun onMeasure(widthMeasureSpec:Int,heightMeasureSpec:Int){
-        setMeasuredDimension(resolveSize((204*density).roundToInt(),widthMeasureSpec),resolveSize((220*density).roundToInt(),heightMeasureSpec))
+        setMeasuredDimension(resolveSize((180*density).roundToInt(),widthMeasureSpec),resolveSize((190*density).roundToInt(),heightMeasureSpec))
     }
     private fun color(light:String,night:String)=Color.parseColor(if(dark)night else light)
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){super.onSizeChanged(w,h,oldw,oldh);faceBitmap?.recycle();faceBitmap=null}
@@ -49,14 +48,14 @@ class StopwatchDialView(context:Context):View(context) {
         radius=min(width*.45f,height*.42f)
         val outer=RectF(cx-radius,cy-radius,cx+radius,cy+radius)
         val edge=18*density
-        paint.style=Paint.Style.FILL;paint.color=color("#C69A70","#79533C")
+        paint.style=Paint.Style.FILL;paint.color=color("#A47547","#79533C")
         canvas.drawRoundRect(outer,edge,edge,paint)
-        paint.color=color("#E4BD94","#A27351")
+        paint.color=color("#C09261","#A27351")
         canvas.drawRoundRect(cx-12*density,outer.top-10*density,cx+12*density,outer.top-3*density,3*density,3*density,paint)
         val clip=Path().apply{addRoundRect(outer,edge,edge,Path.Direction.CW)}
         canvas.save();canvas.clipPath(clip)
         // Deterministic grain is painted locally: no downloaded texture or network.
-        paint.style=Paint.Style.STROKE;paint.strokeWidth=.7f*density;paint.color=color("#AD7B52","#573A2D");paint.alpha=85
+        paint.style=Paint.Style.STROKE;paint.strokeWidth=.7f*density;paint.color=color("#6F4829","#573A2D");paint.alpha=85
         for(row in 0..26){
             val grain=Path();val y=outer.top+row*7*density
             for(step in 0..24){val x=outer.left+step*outer.width()/24;val gy=y+sin(step*.55+row*.9).toFloat()*2.4f*density
@@ -64,8 +63,8 @@ class StopwatchDialView(context:Context):View(context) {
             canvas.drawPath(grain,paint)
         }
         canvas.restore();paint.alpha=255
-        val face=RectF(outer.left+8*density,outer.top+8*density,outer.right-8*density,outer.bottom-8*density)
-        paint.style=Paint.Style.FILL;paint.color=color("#FFFBF4","#26212A")
+        val face=RectF(outer.left+10*density,outer.top+10*density,outer.right-10*density,outer.bottom-10*density)
+        paint.style=Paint.Style.FILL;paint.color=color("#FFF7E7","#282018")
         canvas.drawRoundRect(face,12*density,12*density,paint)
         val rim=RectF(face.left+4*density,face.top+4*density,face.right-4*density,face.bottom-4*density)
         val corner=9*density
@@ -77,13 +76,13 @@ class StopwatchDialView(context:Context):View(context) {
             lineTo(rim.left,rim.top+corner);quadTo(rim.left,rim.top,rim.left+corner,rim.top);lineTo(cx,rim.top)
         }
         measure.setPath(track,true);trackLength=measure.length;val length=trackLength
-        paint.style=Paint.Style.STROKE;paint.strokeWidth=2.5f*density;paint.color=color("#E7DAD1","#4C3443")
+        paint.style=Paint.Style.STROKE;paint.strokeWidth=4f*density;paint.color=color("#D8C3A9","#57422E")
         canvas.drawPath(track,paint)
         for(tick in 0 until 60){
             measure.getPosTan(length*tick/60f,point,null)
             val dx=cx-point[0];val dy=cy-point[1];val norm=hypot(dx,dy).coerceAtLeast(1f)
             val major=tick%5==0;val inset=5*density;val size=(if(major)7 else 3)*density
-            paint.color=if(major)color("#8A727D","#C5ABB7") else color("#DCC8C1","#654956");paint.strokeWidth=(if(major)1.5f else .8f)*density
+            paint.color=if(major)color("#8C694C","#CBB18A") else color("#CBB89A","#735B3D");paint.strokeWidth=(if(major)1.5f else .8f)*density
             canvas.drawLine(point[0]+dx/norm*inset,point[1]+dy/norm*inset,point[0]+dx/norm*(inset+size),point[1]+dy/norm*(inset+size),paint)
         }
         faceBitmap=bitmap
@@ -94,13 +93,13 @@ class StopwatchDialView(context:Context):View(context) {
         if(faceBitmap==null)prepareFace()
         faceBitmap?.let{canvas.drawBitmap(it,0f,0f,null)}
         val left=receivedRemaining-if(state.running)(SystemClock.elapsedRealtime()-receivedAt).coerceAtLeast(0)else 0
-        val wine=color("#A32C53","#F286A8")
-        val ink=color("#292A35","#F7F2F5")
-        val muted=color("#8A727D","#C5ABB7")
+        val wine=color("#80502F","#D2A570")
+        val ink=color("#3C2B1F","#FFF5E4")
+        val muted=color("#8C694C","#CBB18A")
         val length=trackLength
         val progress=(left.toDouble()/state.durationMs.coerceAtLeast(1)).coerceIn(0.0,1.0).toFloat()
         remainingTrack.rewind();measure.getSegment(0f,length*progress,remainingTrack,true)
-        paint.style=Paint.Style.STROKE;paint.strokeWidth=2.5f*density;paint.color=wine;paint.strokeCap=Paint.Cap.ROUND
+        paint.style=Paint.Style.STROKE;paint.strokeWidth=4f*density;paint.color=wine;paint.strokeCap=Paint.Cap.ROUND
         canvas.drawPath(remainingTrack,paint)
         val phase=Math.floorMod(left,60_000L).toFloat()/60_000f
         measure.getPosTan(length*phase,point,null)
@@ -118,8 +117,6 @@ class StopwatchDialView(context:Context):View(context) {
         val maxWidth=radius*1.5f
         if(paint.measureText(digits)>maxWidth)paint.textSize*=maxWidth/paint.measureText(digits)
         paint.color=ink;canvas.drawText(digits,cx,cy+12*density,paint)
-        paint.typeface=regular;paint.textSize=12*resources.displayMetrics.scaledDensity;paint.color=wine
-        canvas.drawText(".%02d".format((abs(left)%1000)/10),cx,cy+32*density,paint)
         paint.color=color("#D6EADF","#3B5A4D");canvas.drawCircle(cx,cy+49*density,3*density,paint)
         if(state.running&&isShown)postInvalidateDelayed(50)
     }

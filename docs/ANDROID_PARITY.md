@@ -123,3 +123,7 @@ writes. The requested low-egress behavior replaces automatic neighboring-day
 prefetch with on-demand cached navigation. Automatic focus is an additional
 Android feature; existing reminder rules, dragging, Top Wins and split behavior
 remain present.
+
+## Android 1.0.3 follow-up
+
+Global overdue Inbox retains original planned slots and all task actions. Feed loads on demand, caches separately, and projects ordinary edits/rollback without whole-day downloads. Timers add once-only start/end chimes, compact brown wooden face, thicker countdown track and whole-second digits. The timer notification requests Android 16 Live Update promotion; tapping opens a wooden timer window above keyguard. Automatic secure-lockscreen floating overlays are unavailable; Samsung privacy settings and physical-device verification remain relevant. Existing task reminders are unchanged.

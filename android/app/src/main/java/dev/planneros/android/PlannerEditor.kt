@@ -35,7 +35,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
 @Composable internal fun PlannerEditor(task:Task?,selected:LocalDate,suggestedDate:String?,suggestedTime:String?,busy:Boolean,draft:EditorValues?,dismiss:()->Unit,
     save:(String,LocalDate,String?,Int,String?)->Unit,star:(Task)->Unit,split:(Task)->Unit,delete:(Task)->Unit,focus:(Task)->Unit){
     val c=LocalContext.current;val dark=MaterialTheme.colorScheme.surface.luminance()<.5f
-    val existing=task?.time?.let{normalizeSlot(selected,task.clockMinutes)}
+    val existing=task?.time?.let{normalizeSlot(if(task.clockMinutes<1440)task.date?.let(LocalDate::parse)?:selected else selected,task.clockMinutes)}
     var title by rememberSaveable(task?.id){mutableStateOf(draft?.title?:task?.title.orEmpty())}
     var date by rememberSaveable(task?.id){mutableStateOf(draft?.date?.toString()?:suggestedDate?:existing?.date?.toString()?:task?.date?:selected.toString())}
     var time by rememberSaveable(task?.id){mutableStateOf(if(draft!=null)draft.time.orEmpty() else suggestedTime?:existing?.clock.orEmpty())}
@@ -100,6 +100,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Text(if(enabled)"System notifications enabled" else "System notifications blocked",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick={if(!enabled)notification();testResult=if(Reminders.test(c))"Test sent — check your notification shade." else "Notifications are blocked. Allow notifications and the Planner reminders channel in Android Settings, then test again."}){Icon(Icons.Rounded.NotificationsNone,null);Text(" Test notification")}
         testResult?.let{Text(it,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        Text("Lock-screen timer: allow lock-screen notifications and Show content for Planner OS in Samsung Settings. Tap the timer card to open the wooden dial while locked; Android decides whether Live Updates appear in the Now Bar.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick={c.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,c.packageName))}){Text(" Android notification settings")}
         Text("Same 30/5-minute task reminders and daily briefs. Disable browser notifications on this phone to avoid receiving both. On Samsung, allow background battery usage for dependable delivery.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Offline: saved days remain readable. Reconnect to save edits. Focus timers run without network access.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))

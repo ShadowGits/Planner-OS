@@ -39,4 +39,26 @@ class TimerStateTest {
         assertEquals(-10_000,updated.remaining(21_000,30_000,3))
         assertTrue(updated.running)
     }
+    @Test fun completionSoundsOnceAtZeroAndNeverOnSubsequentTicks(){
+        assertNull(start.claimCompletion(60_999,70_000,3))
+        val claimed=start.claimCompletion(61_000,70_000,3)!!
+        assertTrue(claimed.completionAlerted)
+        assertNull(claimed.claimCompletion(62_000,71_000,3))
+        assertNull(claimed.claimCompletion(121_000,130_000,3))
+    }
+    @Test fun pausedTimersNeverSignalCompletion(){
+        val paused=start.toggle(21_000,30_000,3)
+        assertNull(paused.claimCompletion(121_000,130_000,3))
+        assertNull(start.copy(running=false,elapsedBeforeMs=70_000).claimCompletion(121_000,130_000,3))
+    }
+    @Test fun completionClaimSurvivesRecoveryAndMetadataEdits(){
+        val claimed=start.claimCompletion(61_000,70_000,3)!!
+        assertNull(claimed.recover(1000,90_000,4).claimCompletion(2000,91_000,4))
+        assertNull(claimed.metadata("Changed",30_000).claimCompletion(121_000,130_000,3))
+    }
+    @Test fun lateTickAfterRebootSignalsCompletionOnce(){
+        val restored=start.recover(1000,90_000,4)
+        val claimed=restored.claimCompletion(1000,90_000,4)!!
+        assertNull(claimed.claimCompletion(2000,91_000,4))
+    }
 }

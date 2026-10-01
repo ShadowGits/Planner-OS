@@ -816,6 +816,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_delete_transaction",
         "core_finance_goals",
         "core_finance_summary",
+        "core_inbox_view",
         "core_list_habits",
         "core_list_project_widgets",
         "core_list_projects",

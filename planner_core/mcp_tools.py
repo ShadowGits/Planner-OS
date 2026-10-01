@@ -241,6 +241,14 @@ def register_core_tools(server: Any) -> None:
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.list_tasks(status=status, project_id=project_id)
 
+    @server.tool(name="core_inbox_view")
+    def core_inbox_view(on_date: str | None = None) -> dict:
+        """List all open overdue, missed scheduled and unplanned tasks across the workspace. Optional YYYY-MM-DD date defaults to today. Original dates/times are retained; this does not move calendar blocks."""
+        core = _core()
+        result = core.tasks.inbox_view(on_date)
+        result["data"]["timezone"] = core.timezone
+        return result
+
     @server.tool(name="core_today")
     def core_today() -> dict:
         """Today's view: scheduled tasks, due today, overdue, and completions so far."""

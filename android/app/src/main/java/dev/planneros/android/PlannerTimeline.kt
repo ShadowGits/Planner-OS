@@ -149,9 +149,10 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
     }
 }
 
-@Composable internal fun InboxCard(task:Task,dark:Boolean,enabled:Boolean,edit:()->Unit,done:()->Unit,star:()->Unit,schedule:()->Unit){
+@Composable internal fun InboxCard(task:Task,dark:Boolean,enabled:Boolean,edit:()->Unit,done:()->Unit,star:()->Unit,schedule:()->Unit,overdue:Boolean=false){
     Surface(onClick=edit,enabled=enabled&&!task.id.startsWith("pending:"),color=taskTint(task,dark),shape=RoundedCornerShape(18.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=6.dp).alpha(if(task.done).6f else 1f)){
         Column(Modifier.padding(12.dp)){
+            if(overdue)Surface(color=if(dark)Color(0xFF573D24)else Color(0xFFFFE7C9),shape=RoundedCornerShape(6.dp),modifier=Modifier.padding(start=34.dp,bottom=5.dp)){Text("Overdue"+(task.date?.let{" · $it"}.orEmpty())+(task.time?.let{" · $it"}.orEmpty()),color=if(dark)Color(0xFFFFCF91)else Color(0xFF80502F),fontSize=11.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(horizontal=7.dp,vertical=3.dp))}
             Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=done,enabled=enabled,modifier=Modifier.size(32.dp)){Icon(if(task.done)Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,"${if(task.done)"Reopen" else "Complete"} ${task.title}")};Text("${taskEmoji(task.title)} ${task.title}",modifier=Modifier.weight(1f),fontWeight=FontWeight.SemiBold,maxLines=4,textDecoration=if(task.done)TextDecoration.LineThrough else null);IconButton(onClick=star,enabled=enabled,modifier=Modifier.size(32.dp)){Icon(if(task.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,"Choose ${task.title} as Top Win",tint=MaterialTheme.colorScheme.primary)}}
             Row(verticalAlignment=Alignment.CenterVertically){Text(durationLabel(task.minutes)+(if(task.parent!=null)" · Part ${task.partIndex?:"?"}/${task.partCount?:"?"}" else if(task.habit)" · Habit" else ""),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f).padding(start=34.dp));TextButton(onClick=schedule,enabled=enabled){Icon(Icons.Rounded.Schedule,null,modifier=Modifier.size(17.dp));Text(" Schedule")}}
         }

@@ -1074,6 +1074,80 @@ class TaskService:
                 items.append(occ)
         return items
 
+    def inbox_view(self, on_date: str | None = None) -> dict[str, Any]:
+        """Open loose tasks and missed blocks across the workspace.
+
+        This deliberately stays separate from day_view: overdue entries retain
+        their original calendar slots, and opening a day does not download the
+        backlog. A missed planned block belongs here even with a later deadline;
+        this does not change the deadline semantics used by metrics/reminders.
+        """
+        now = datetime.now(ZoneInfo(self.timezone))
+        target = _parse_date(on_date) or now.date()
+        stamp = target.isoformat()
+        columns = (
+            "id,title,status,start_time,estimated_minutes,priority,due_date,"
+            "scheduled_date,notes,project_id,parent_task_id,starred"
+        )
+        rows = self.repository.list_rows(
+            "planner_tasks",
+            {"status": sorted(OPEN_TASK_STATUSES)},
+            columns=columns,
+            query_string=(
+                f"or=(due_date.lt.{stamp},scheduled_date.lte.{stamp},"
+                f"and(scheduled_date.is.null,or(due_date.is.null,due_date.lte.{stamp})))"
+                "&order=scheduled_date.asc.nullslast,due_date.asc.nullslast,id.asc"
+            ),
+            strict=True,
+        )
+        # A large backlog must not turn the split-parent lookup into one huge
+        # URL. Each projected read is scoped to the candidate IDs and follows
+        # every PostgREST page; no inbox or split lookup has a truncating limit.
+        umbrellas: set[str] = set()
+        for start in range(0, len(rows), 100):
+            umbrellas.update(self._umbrella_ids(rows[start:start + 100]))
+        items = []
+        for row in rows:
+            if row.get("status") not in OPEN_TASK_STATUSES or str(row["id"]) in umbrellas:
+                continue
+            planned = _parse_date(row.get("scheduled_date"))
+            due = _parse_date(row.get("due_date"))
+            deadline_late = due is not None and due < target
+            missed = planned is not None and planned < target
+            if planned == target == now.date() and row.get("start_time"):
+                start_time = _parse_time(row["start_time"])
+                end = datetime.combine(planned, start_time, ZoneInfo(self.timezone)) + timedelta(
+                    minutes=int(row.get("estimated_minutes") or 30)
+                )
+                missed = end <= now
+            loose = not row.get("start_time") and (
+                (planned is not None and planned <= target)
+                or (planned is None and (due is None or due <= target))
+            )
+            dateless = planned is None and due is None
+            if not (deadline_late or missed or loose or dateless):
+                continue
+            overdue = deadline_late or missed or dateless
+            items.append({
+                **{field: row.get(field) for field in columns.split(",")},
+                "done": False,
+                "starred": bool(row.get("starred")),
+                "overdue": overdue,
+                "overdue_reason": "deadline" if deadline_late else "missed_slot" if missed else "unplanned",
+            })
+        items.sort(key=lambda item: (
+            not item["overdue"],
+            str(item.get("scheduled_date") or item.get("due_date") or "9999-12-31"),
+            item["title"],
+            str(item["id"]),
+        ))
+        return _envelope(True, "Inbox", {
+            "date": stamp,
+            "items": items,
+            "total_count": len(items),
+            "overdue_count": sum(item["overdue"] for item in items),
+        })
+
     def day_view(
         self,
         on_date: str | None = None,
