@@ -1968,7 +1968,7 @@ def test_calendar_sync_aborts_before_reconcile_if_any_snapshot_read_fails(repo, 
 
     def flaky_select(table, **kwargs):
         nonlocal day_reads
-        if table == "planner_tasks" and kwargs.get("columns") == "*":
+        if table == "planner_tasks" and "or=(scheduled_date.eq." in (kwargs.get("query_string") or ""):
             day_reads += 1
         if table == failed_read or (failed_read == "split_parents" and kwargs.get("columns") == "parent_task_id") or (failed_read == "later_day" and day_reads == 2):
             raise RuntimeError("snapshot database unavailable")
@@ -1986,3 +1986,98 @@ def test_calendar_sync_reports_calendar_api_errors_as_failure(services):
     result = tasks.sync_calendar(SnapshotCalendarClient(errors=["Google rejected an event update"]), days=1)
     assert result["success"] is False
     assert result["data"]["errors"] == ["Google rejected an event update"]
+
+
+def test_day_snapshot_transfers_only_visible_rows_without_metadata(repo, services, monkeypatch):
+    import json
+    tasks, _, _, _ = services
+    today = "2026-10-01"
+    tasks.create_task("Visible task", scheduled_date=today, start_time="09:00", estimated_minutes=45, notes="Keep notes")
+    tasks.create_task("Due inbox", due_date=today)
+    tasks.create_task("Scheduled elsewhere", due_date=today, scheduled_date="2026-10-20", start_time="11:00")
+    tasks.create_task("Overnight", scheduled_date="2026-10-02", start_time="01:30")
+    for row in repo.gateway.tables["planner_tasks"]:
+        row["metadata"] = {"large_import": "x" * 100_000}
+    original = repo.gateway.select
+    transferred = []
+    def projected(table, **kwargs):
+        rows = original(table, **kwargs)
+        columns = kwargs.get("columns", "*")
+        rows = rows if columns == "*" else [{key: row.get(key) for key in columns.split(",")} for row in rows]
+        transferred.extend(rows)
+        return rows
+    monkeypatch.setattr(repo.gateway, "select", projected)
+    items = tasks.day_view(today)["data"]["items"]
+    assert {item["title"] for item in items} == {"Visible task", "Due inbox", "Overnight"}
+    assert next(item for item in items if item["title"] == "Visible task")["notes"] == "Keep notes"
+    assert next(item for item in items if item["title"] == "Overnight")["start_time"].startswith("25:30")
+    assert not any(row.get("title") == "Scheduled elsewhere" for row in transferred)
+    assert len(json.dumps(transferred)) < 5000
+
+
+def test_occurrence_mutations_read_only_selected_day_not_entire_history(repo, habits, monkeypatch):
+    habit = habits.add_habit("Gym", start_date="2026-01-01")["data"]["habit"]
+    habit_id, key = habit["id"], habit["recurrence_key"]
+    for offset in range(200):
+        stamp = (date(2026, 1, 1) + timedelta(days=offset)).isoformat()
+        repo.insert_row("task_completions", {"recurrence_key": key, "completed_on": stamp, "source": "api"})
+        repo.insert_row("habit_overrides", {"habit_id": habit_id, "on_date": stamp, "starred": False})
+    original = repo.gateway.select
+    history_reads = []
+    def limited(table, **kwargs):
+        rows = original(table, **kwargs)
+        if table in {"task_completions", "habit_overrides"}:
+            history_reads.append((table, len(rows)))
+        return rows
+    monkeypatch.setattr(repo.gateway, "select", limited)
+    chosen = date(2026, 4, 1)
+    habits.complete_occurrence(habit_id, chosen)
+    habits.reopen_occurrence(habit_id, chosen)
+    habits.star_occurrence(habit_id, chosen, True)
+    assert history_reads and all(count <= 1 for _, count in history_reads)
+    assert len(repo.gateway.tables["task_completions"]) == 199
+    assert sum(bool(row.get("starred")) for row in repo.gateway.tables["habit_overrides"]) == 1
+
+
+def test_habit_snapshot_excludes_inactive_rules_and_large_metadata(repo, habits, monkeypatch):
+    import json
+    active = habits.add_habit("Active", start_date="2026-01-01")["data"]["habit"]
+    inactive = habits.add_habit("Inactive", start_date="2026-01-01")["data"]["habit"]
+    habits.update_habit(inactive["id"], {"is_active": False})
+    for row in repo.gateway.tables["habits"]:
+        row["metadata"] = {"history": "x" * 100_000}
+    repo.insert_row("habit_overrides", {"habit_id": active["id"], "on_date": "2026-10-01", "estimated_minutes": 75, "starred": True, "metadata": "x" * 100_000})
+    original = repo.gateway.select
+    transferred = []
+    def projected(table, **kwargs):
+        rows = original(table, **kwargs)
+        columns = kwargs.get("columns", "*")
+        rows = rows if columns == "*" else [{key: row.get(key) for key in columns.split(",")} for row in rows]
+        transferred.extend(rows)
+        return rows
+    monkeypatch.setattr(repo.gateway, "select", projected)
+    items = habits.occurrences(date(2026, 10, 1), date(2026, 10, 1))
+    assert len(items) == 1 and items[0]["title"] == "Active"
+    assert items[0]["estimated_minutes"] == 75 and items[0]["starred"]
+    assert len(json.dumps(transferred)) < 3000
+
+
+@pytest.mark.parametrize("table,operation", [("habit_overrides", "star"), ("habit_overrides", "complete"), ("task_completions", "complete"), ("task_completions", "reopen")])
+def test_occurrence_mutation_never_writes_after_failed_lookup(repo, habits, monkeypatch, table, operation):
+    habit = habits.add_habit("Gym", start_date="2026-01-01")["data"]["habit"]
+    original = repo.gateway.select
+    def broken(name, **kwargs):
+        if name == table:
+            raise RuntimeError("database unavailable")
+        return original(name, **kwargs)
+    monkeypatch.setattr(repo.gateway, "select", broken)
+    chosen = date(2026, 10, 1)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        if operation == "star":
+            habits.star_occurrence(habit["id"], chosen, True)
+        elif operation == "complete":
+            habits.complete_occurrence(habit["id"], chosen)
+        else:
+            habits.reopen_occurrence(habit["id"], chosen)
+    assert not repo.gateway.tables.get("task_completions")
+    assert not repo.gateway.tables.get("habit_overrides")

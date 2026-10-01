@@ -8,20 +8,24 @@ The generated `artifacts/Planner-OS-Android.apk` is a debug-signed, installable 
 
 On first launch, enter your existing HTTPS backend origin (without `/app/`) and `PWA_ACCESS_KEY` in Settings. No server key is embedded. The key is AES-GCM encrypted with a non-exportable Android Keystore key; backups and cleartext network traffic are disabled. HTTP redirects are rejected to keep credentials from following a redirect to another host.
 
-Use **Allow floating timer** to grant “Appear on top” in Samsung Settings. Focus still works through the foreground notification without overlay permission. Grant notification permission and, optionally, **Allow precise reminders** for exact 30/5-minute alerts. Enable **Native reminders** only if you want them on this device, and disable PWA/browser notifications on this Android phone to avoid duplicate deliveries. Your iPhone PWA reminders can stay enabled.
+Use **Allow floating timer** to grant “Appear on top” in Samsung Settings. Focus still works through the foreground notification without overlay permission. Grant notification permission and, optionally, **Allow precise alarms** for exact 30/5-minute alerts. Enable **Native reminders** only if you want them on this device, and disable PWA/browser notifications on this Android phone to avoid duplicate deliveries. Your iPhone PWA reminders can stay enabled.
 
 For Samsung background delivery, Settings → Apps → Planner OS → Battery → Unrestricted, and remove it from sleeping/deep-sleeping apps. Android force-stop prevents services, alarms, and jobs until you open the app again. Do Not Disturb, denied notification permission, offline state, and OS power management can delay notification delivery.
 
 ## Features
 
-Version 1.0.1 (version code 2) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
+Version 1.0.2 (version code 4) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
 * Proportional, overlapping day timeline with a dotted spine, duration/end-time labels, current-time marker and active block. Hold a block to drag on a five-minute grid; move sideways while dragging to choose the previous/next date. Failed saves restore the original schedule.
 * Named Top Wins chips, direct stars in timeline/inbox, completion progress, week arrows, day swipes and native date/time pickers. Today rolls at 04:00 in the workspace timezone.
 * Starred-first inbox with a Schedule action that finds a gap fitting the full task duration. Presets/custom durations, category icons, recurrence and split-session metadata are retained.
 * Add/edit/reschedule/delete blocks and habits; split regular blocks into sessions using the existing parent-task model.
+* Scheduled blocks start their timer automatically (enabled by default). Grant **Allow precise alarms** for starts while the app is closed; foreground catch-up otherwise starts the currently active block with its original end time. Pausing or canceling suppresses that occurrence, while the next scheduled block can still start. With overlapping blocks, the most recently starting active block wins.
+* Square wooden watch dial with a reverse-moving seconds hand, countdown digits, local smooth animation, and task name. Public lockscreen notification carries task name, a system countdown chronometer, and pause/cancel/finish actions; lockscreen content still follows your phone settings.
 * One active countdown per task, pause/resume, overtime, task name, draggable floating overlay, notification controls and explicit confirmation before marking done.
 * Stored timer survives app process loss. Monotonic time handles manual clock changes while running; a wall-time anchor recovers after reboot. Relaunch to restore the foreground timer after reboot. Force-stop cannot be bypassed.
+* Task saves update locally without a global loading lock or a whole-day download. Conflicting edits serialize by task/parent; unrelated tasks remain usable. Failed writes restore only their own task. Cross-day cache copies update together, and pending snapshots are never treated as confirmed schedules.
+* Fresh selected-day views are reused for 10 minutes on resume/navigation. Automatic neighboring-day prefetch is removed. Ordinary edits, stars, completion, deletion, and dragging send only their write; split/parent completion reconciles affected backend group changes. Background schedules reuse today for 30 minutes and tomorrow for six hours; successful reminder-feed polls have a 15-minute minimum interval. Animation makes no API calls. These are freshness tradeoffs for remote edits; manual refresh remains available.
 * Saved day views are readable offline; timers need no network. Edits require the server and errors remain visible.
 * Local 30/5-minute task alarms plus the backend's unchanged morning/evening/deadline rules through `/v2/native/reminders`. A per-device delivery ledger prevents repeated notifications on retries. WorkManager polls every15minutes; task alarms use exact alarms when the user grants permission, otherwise Android may defer them.
 

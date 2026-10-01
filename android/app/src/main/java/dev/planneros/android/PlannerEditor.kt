@@ -83,6 +83,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
     val notificationManager=c.getSystemService(android.app.NotificationManager::class.java)
     val enabled=notificationManager.areNotificationsEnabled()&&(Build.VERSION.SDK_INT<33||androidx.core.content.ContextCompat.checkSelfPermission(c,android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED)
     var url by remember{mutableStateOf(repo.config.baseUrl)};var key by remember{mutableStateOf("")};var reminders by remember{mutableStateOf(repo.config.reminders)};var error by remember{mutableStateOf<String?>(null)}
+    var automatic by remember{mutableStateOf(AutoFocusScheduler.enabled(c))}
     AlertDialog(onDismissRequest=dismiss,title={Text("Your Planner OS")},text={Column(Modifier.verticalScroll(rememberScrollState())){
         Text("Connect to the same server as your PWA.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(url,{url=it},label={Text("HTTPS server URL")},singleLine=true,modifier=Modifier.padding(top=10.dp))
@@ -92,7 +93,9 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("system","light","dark").forEach{mode->FilterChip(selected=appearance==mode,onClick={onAppearance(mode)},label={Text(mode.replaceFirstChar(Char::titlecase))})}}
         if(TimerStore.read(c)!=null)TextButton(onClick={TimerStore.action(c,"SHOW")}){Icon(Icons.Rounded.PictureInPictureAlt,null);Text(" Show floating timer")}
         TextButton(onClick={c.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${c.packageName}")))}){Icon(Icons.Rounded.PictureInPicture,null);Text(" Allow floating timer")}
-        if(Build.VERSION.SDK_INT>=31)TextButton(onClick={c.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:${c.packageName}")))}){Icon(Icons.Rounded.NotificationsActive,null);Text(" Allow precise reminders")}
+        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text("Start focus with scheduled blocks",modifier=Modifier.weight(1f));Switch(automatic,{automatic=it})}
+        Text(if(AutoFocusScheduler.backgroundAvailable(c))"Automatic timers can start in the background. Pausing or canceling a block keeps that occurrence stopped." else "Automatic timers start while Planner OS is open. Allow precise alarms to start them in the background. Pausing or canceling keeps that occurrence stopped.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(Build.VERSION.SDK_INT>=31)TextButton(onClick={c.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:${c.packageName}")))}){Icon(Icons.Rounded.NotificationsActive,null);Text(" Allow precise alarms")}
         Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text("Native reminders",modifier=Modifier.weight(1f));Switch(reminders,{reminders=it;if(it)notification()})}
         Text(if(enabled)"System notifications enabled" else "System notifications blocked",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick={if(!enabled)notification();testResult=if(Reminders.test(c))"Test sent — check your notification shade." else "Notifications are blocked. Allow notifications and the Planner reminders channel in Android Settings, then test again."}){Icon(Icons.Rounded.NotificationsNone,null);Text(" Test notification")}
@@ -101,5 +104,5 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Text("Same 30/5-minute task reminders and daily briefs. Disable browser notifications on this phone to avoid receiving both. On Samsung, allow background battery usage for dependable delivery.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Offline: saved days remain readable. Reconnect to save edits. Focus timers run without network access.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
         error?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp)}
-    }},confirmButton={TextButton(onClick={try{repo.config.save(url,key.ifBlank{repo.config.key()});repo.config.reminders=reminders;Reminders.setup(c);saved();dismiss()}catch(e:Exception){error=e.message}}){Text("Save")}},dismissButton={TextButton(onClick=dismiss){Text("Close")}})
+    }},confirmButton={TextButton(onClick={try{repo.config.save(url,key.ifBlank{repo.config.key()});repo.config.reminders=reminders;AutoFocusScheduler.setEnabled(c,automatic);Reminders.setup(c);saved();dismiss()}catch(e:Exception){error=e.message}}){Text("Save")}},dismissButton={TextButton(onClick=dismiss){Text("Close")}})
 }

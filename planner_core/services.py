@@ -1094,10 +1094,15 @@ class TaskService:
         next_day = target + timedelta(days=1)
         next_day_str = next_day.isoformat()
         qs = (
-            f"or=(scheduled_date.eq.{target_str},due_date.eq.{target_str},"
+            f"or=(scheduled_date.eq.{target_str},and(scheduled_date.is.null,due_date.eq.{target_str}),"
             f"and(scheduled_date.eq.{next_day_str},start_time.lt.{SPILLOVER_CUTOFF}))"
         )
-        all_rows = self.repository.list_rows("planner_tasks", query_string=qs, strict=strict)
+        all_rows = self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,parent_task_id,starred",
+            query_string=qs,
+            strict=strict,
+        )
         umbrellas = self._umbrella_ids(all_rows)
         # Naming a slot's parent costs two more queries, and the calendar sync
         # walks a whole window of days without ever reading those fields — so
@@ -1381,7 +1386,11 @@ class HabitService:
     def occurrences(self, start: date, end: date, *, strict: bool = False) -> list[dict[str, Any]]:
         """Every habit occurrence between two dates, overrides applied and
         completions marked. One query per table however wide the window."""
-        habits = [row for row in self.repository.list_rows("habits", strict=strict) if row.get("is_active")]
+        habits = self.repository.list_rows(
+            "habits", {"is_active": True},
+            columns="id,title,recurrence_key,cadence,days_of_week,start_time,estimated_minutes,project_id,start_date,end_date,is_active",
+            strict=strict,
+        )
         if not habits:
             return []
         by_id = {str(row["id"]): row for row in habits}
@@ -1399,7 +1408,7 @@ class HabitService:
         overrides: dict[tuple[str, str], dict[str, Any]] = {}
         moved_in: list[dict[str, Any]] = []
         for row in self.repository.list_rows(
-            "habit_overrides", query_string=overrides_query, strict=strict
+            "habit_overrides", columns="id,habit_id,on_date,moved_to,skipped,start_time,estimated_minutes,starred", query_string=overrides_query, strict=strict
         ):
             overrides[(str(row["habit_id"]), str(row["on_date"])[:10])] = row
             landing = _parse_date(row.get("moved_to"))
@@ -1478,7 +1487,7 @@ class HabitService:
 
     def _shown_on(self, habit_id: str, rule_day: date) -> date:
         """Where the occurrence actually sits once any override is applied."""
-        for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id}):
+        for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id, "on_date": rule_day.isoformat()}, columns="id,on_date,moved_to", strict=True):
             if str(row.get("on_date"))[:10] == rule_day.isoformat():
                 landing = _parse_date(row.get("moved_to"))
                 return landing or rule_day
@@ -1493,7 +1502,7 @@ class HabitService:
         habit = self._habit_for(habit_id)
         on_date = self._shown_on(habit_id, rule_day)
         key = str(habit.get("recurrence_key"))
-        for row in self.repository.list_rows("task_completions", {"recurrence_key": key}):
+        for row in self.repository.list_rows("task_completions", {"recurrence_key": key, "completed_on": on_date.isoformat()}, columns="id,completed_on", strict=True):
             if str(row.get("completed_on"))[:10] == on_date.isoformat():
                 return _envelope(True, f"Already done: {habit['title']}", {"habit": habit})
         self.repository.insert_row(
@@ -1512,13 +1521,13 @@ class HabitService:
         habit = self._habit_for(habit_id)
         on_date = self._shown_on(habit_id, rule_day)
         key = str(habit.get("recurrence_key"))
-        for row in self.repository.list_rows("task_completions", {"recurrence_key": key}):
+        for row in self.repository.list_rows("task_completions", {"recurrence_key": key, "completed_on": on_date.isoformat()}, columns="id,completed_on", strict=True):
             if str(row.get("completed_on"))[:10] == on_date.isoformat():
                 self.repository.delete_row("task_completions", str(row["id"]))
         return _envelope(True, f"Reopened: {habit['title']}", {"habit": habit})
 
     def _upsert_override(self, habit_id: str, rule_day: date, patch: dict[str, Any]) -> dict[str, Any]:
-        for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id}):
+        for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id, "on_date": rule_day.isoformat()}, columns="id,on_date,moved_to", strict=True):
             if str(row.get("on_date"))[:10] == rule_day.isoformat():
                 return self.repository.update_row("habit_overrides", str(row["id"]), patch)
         return self.repository.insert_row(

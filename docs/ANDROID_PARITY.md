@@ -114,3 +114,12 @@ The final layout APK is version **1.0.1**, version code **2**, SHA-256 `4422082f
 | Launcher icon | Actual launcher rendered the adaptive cream/rose background, wine clock, mint check and gold accent without clipping; label was Planner OS. Monochrome v33 resource wiring was reviewed in source; themed launcher appearance was not enabled. [Launcher](../android/artifacts/parity-launcher-icon.png). |
 
 These observed flows do not check every acceptance box above. Still requiring broader or physical-device verification: Samsung S24 Ultra / One UI battery restrictions and real reminder delivery; notification/overlay permission denial; actual reboot and arbitrary OS reclamation; multi-touch/canceled drag edges; rapid day changes during failed writes; four or more overlap columns; landscape and TalkBack. The 04:00 boundary, full-duration free-slot math, overlap allocation, API-envelope failure, reminder rules and timer policy also have automated coverage. A local fixture feed returning no reminders does not establish real background reminder delivery. Browser service-worker/PWA regression coverage remains a separate obligation.
+
+## Android 1.0.2 performance and automatic timer evidence
+
+See `MILESTONE_2026-10-01_TIMER_PERFORMANCE.md` for measured request counts and
+validation. Ordinary writes no longer reload a whole day or block unrelated
+writes. The requested low-egress behavior replaces automatic neighboring-day
+prefetch with on-demand cached navigation. Automatic focus is an additional
+Android feature; existing reminder rules, dragging, Top Wins and split behavior
+remain present.

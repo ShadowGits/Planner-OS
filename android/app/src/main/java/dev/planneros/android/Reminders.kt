@@ -32,10 +32,15 @@ object Reminders {
     private fun matches(c:Context,expected:ReminderSession)=expected==session(c)
     fun setup(c:Context){
         val manager=WorkManager.getInstance(c)
-        if(SecureConfig(c).configured&&SecureConfig(c).reminders){
+        if(!SecureConfig(c).reminders)synchronized(lock){
+            cancelAlarms(c)
+            prefs(c).edit().putString("epoch",UUID.randomUUID().toString()).commit()
+        }
+        if(SecureConfig(c).configured&&(SecureConfig(c).reminders||AutoFocusScheduler.enabled(c))){
             val constraints=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             manager.enqueueUniquePeriodicWork("planner-reminders",ExistingPeriodicWorkPolicy.UPDATE,PeriodicWorkRequestBuilder<ReminderWorker>(15,TimeUnit.MINUTES).setConstraints(constraints).build())
-            manager.enqueueUniqueWork("planner-refresh",ExistingWorkPolicy.KEEP,OneTimeWorkRequestBuilder<ReminderWorker>().setConstraints(constraints).build())
+            if(System.currentTimeMillis()-prefs(c).getLong("last_refresh",0L)>15*60*1000L)
+                manager.enqueueUniqueWork("planner-refresh",ExistingWorkPolicy.KEEP,OneTimeWorkRequestBuilder<ReminderWorker>().setConstraints(constraints).build())
         }else{synchronized(lock){
             manager.cancelUniqueWork("planner-reminders");manager.cancelUniqueWork("planner-refresh");cancelAlarms(c)
             // Turning reminders off invalidates an in-flight worker even if
@@ -54,6 +59,7 @@ object Reminders {
         val manager=WorkManager.getInstance(c)
         manager.cancelUniqueWork("planner-reminders");manager.cancelUniqueWork("planner-refresh")
         cancelAlarms(c)
+        AutoFocusScheduler.reset(c)
         // Epoch changes before the new config is saved: an old worker cannot
         // re-arm an alarm in that reset/save interval, even if its response arrived.
         prefs(c).edit().clear().putString("epoch",UUID.randomUUID().toString()).commit()
@@ -64,6 +70,7 @@ object Reminders {
         val removed=ids.filter{it.endsWith(":$taskId")}.toSet()
         removed.forEach{id->pending(c,id,PendingIntent.FLAG_NO_CREATE)?.let{manager.cancel(it);it.cancel()}}
         p.edit().putStringSet("alarms",ids-removed).putLong("schedule_revision",revision(c)+1).commit()
+        AutoFocusScheduler.invalidateTask(c,taskId)
         val notifications=c.getSystemService(NotificationManager::class.java)
         notifications.activeNotifications.filter{it.tag?.endsWith(":event:$taskId")==true}
             .forEach{notifications.cancel(it.tag,it.id)}
@@ -148,19 +155,27 @@ object Reminders {
 }
 class ReminderReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){Reminders.receive(c,i)}}
 class BootReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){
-    if(i.action==Intent.ACTION_BOOT_COMPLETED){Reminders.cancelAlarms(c);Reminders.setup(c)}
+    if(i.action==Intent.ACTION_BOOT_COMPLETED||i.action==AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED){Reminders.cancelAlarms(c);AutoFocusScheduler.rearm(c);Reminders.setup(c)}
 }}
 class ReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p){override suspend fun doWork():Result{
     val c=applicationContext
-    if(!SecureConfig(c).reminders||!SecureConfig(c).configured)return Result.success()
+    if(!SecureConfig(c).configured||(!SecureConfig(c).reminders&&!AutoFocusScheduler.enabled(c)))return Result.success()
     val session=Reminders.session(c)
+    val workerPrefs=c.getSharedPreferences("reminders",Context.MODE_PRIVATE)
+    if(System.currentTimeMillis()-workerPrefs.getLong("last_refresh",0L) in 0 until 15*60*1000L)return Result.success()
     return try{
         val repo=PlannerRepository(c)
         val zone=c.getSharedPreferences("reminders",Context.MODE_PRIVATE).getString("zone","Asia/Kolkata")!!
-        var day=repo.day(LocalDate.now(ZoneId.of(zone)))
+        if(repo.hasPendingSnapshots())return Result.retry()
+        suspend fun scheduleDay(date:LocalDate,ttl:Long)=repo.confirmedCached(date,ttl)?:repo.day(date)
+        var day=scheduleDay(LocalDate.now(ZoneId.of(zone)),30*60*1000L)
         val actualDate=LocalDate.now(ZoneId.of(day.timezone))
-        if(day.date!=actualDate.toString())day=repo.day(actualDate)
+        if(day.date!=actualDate.toString())day=scheduleDay(actualDate,30*60*1000L)
+        AutoFocusScheduler.sync(c,day)
         Reminders.schedule(c,day,session)
+        // Tomorrow's exact starts remain armed while the app stays closed.
+        if(AutoFocusScheduler.enabled(c))AutoFocusScheduler.sync(c,scheduleDay(actualDate.plusDays(1),6*60*60*1000L))
+        if(!SecureConfig(c).reminders){workerPrefs.edit().putLong("last_refresh",System.currentTimeMillis()).apply();return Result.success()}
         fun ledger(date:String)=JSONObject().put("sent_kinds",JSONArray(Reminders.sent(c,date).toList()))
         var sentDate=day.date
         val responseRevision=Reminders.revision(c)
@@ -177,6 +192,7 @@ class ReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p){override
             val r=a.getJSONObject(index)
             Reminders.notify(c,sentDate,r.getString("kind"),r.optString("title",reminderTitle(r.getString("kind"))),r.getString("message"),session,responseRevision)
         }
+        workerPrefs.edit().putLong("last_refresh",System.currentTimeMillis()).apply()
         Result.success()
     }catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){Result.retry()}
 }}

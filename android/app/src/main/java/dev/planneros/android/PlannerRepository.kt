@@ -30,7 +30,7 @@ data class Task(val id: String, val title: String, val time: String?, val minute
 }
 fun JSONObject.nullString(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
 fun JSONObject.nullInt(key: String): Int? = if (!has(key) || isNull(key)) null else optInt(key)
-data class Day(val date: String, val timezone: String, val tasks: List<Task>, val cached: Boolean = false, val starLimit: Int = 5, val alarmRevision: Long? = null) {
+data class Day(val date: String, val timezone: String, val tasks: List<Task>, val cached: Boolean = false, val starLimit: Int = 5, val alarmRevision: Long? = null, val connectionGeneration:Long?=null) {
     companion object { fun from(json: JSONObject, cached: Boolean = false): Day { val a=json.getJSONArray("items"); return Day(json.getString("date"),json.optString("timezone","Asia/Kolkata"),List(a.length()){Task.from(a.getJSONObject(it))},cached,json.optInt("starred_limit",5)) } }
 }
 
@@ -84,13 +84,64 @@ class PlannerRepository(private val context: Context) {
     companion object {
         private val cacheLock = Any()
         private var mutationRevision = 0L
+        private var activeSnapshotWrites = 0
+        private val pendingCacheKeys = mutableSetOf<String>()
     }
     val config=SecureConfig(context)
     private val cache=context.getSharedPreferences("day-cache",Context.MODE_PRIVATE)
     private fun invalidateDays() = synchronized(cacheLock) {
         mutationRevision++
-        cache.edit().clear().commit()
+        // Keep readable snapshots: quiet reconciliation replaces their contents.
     }
+    /** Project changed rows into every cached logical-day copy, keeping unrelated rows. */
+    fun isFresh(date:LocalDate,ttlMillis:Long=10*60*1000L):Boolean {
+        val data=cache.getString("${config.generation}:$date",null)?.let{runCatching{JSONObject(it)}.getOrNull()}?:return false
+        return !data.optBoolean("_dirty")&&!data.optBoolean("_pending")&&System.currentTimeMillis()-data.optLong("_saved_at",0) in 0..ttlMillis
+    }
+    fun beginSnapshotWrite()=synchronized(cacheLock){activeSnapshotWrites++}
+    fun endSnapshotWrite()=synchronized(cacheLock){activeSnapshotWrites=(activeSnapshotWrites-1).coerceAtLeast(0)}
+    fun hasPendingSnapshots()=synchronized(cacheLock){activeSnapshotWrites>0}
+    fun confirmedCached(date:LocalDate,ttlMillis:Long=10*60*1000L):Day? = synchronized(cacheLock){
+        if(!isFresh(date,ttlMillis))null else cached(date)?.copy(cached=false,alarmRevision=Reminders.revision(context),connectionGeneration=config.generation)
+    }
+    fun confirmSnapshots()=synchronized(cacheLock){
+        val edit=cache.edit()
+        pendingCacheKeys.filter{it.startsWith("${config.generation}:")}.forEach{key->
+            val data=runCatching{JSONObject(cache.getString(key,null)!!)}.getOrNull()?:return@forEach
+            if(data.optBoolean("_pending"))edit.putString(key,data.put("_pending",false).toString())
+        };edit.apply();pendingCacheKeys.clear()
+    }
+    fun markPropagation(task:Task)=synchronized(cacheLock){
+        val group=task.parent?:task.id;val edit=cache.edit()
+        cache.all.keys.filter{it.startsWith("${config.generation}:")}.forEach{key->
+            val data=runCatching{JSONObject(cache.getString(key,null)!!)}.getOrNull()?:return@forEach
+            val view=runCatching{Day.from(data)}.getOrNull()?:return@forEach
+            if(view.tasks.any{it.id==group||it.parent==group})edit.putString(key,data.put("_dirty",true).toString())
+        };edit.apply()
+    }
+    fun saveSnapshot(before:Day,after:Day)=synchronized(cacheLock){
+        mutationRevision++
+        val generation=config.generation
+        val views=cache.all.keys.filter{it.startsWith("$generation:")}.mapNotNull{key->
+            runCatching{Day.from(JSONObject(cache.getString(key,null)!!),true)}.getOrNull()
+        }.associateBy{it.date}.toMutableMap()
+        views.putIfAbsent(before.date,before)
+        val edit=cache.edit()
+        views.values.forEach{view->
+            val key="$generation:${view.date}"
+            pendingCacheKeys.add(key)
+            val previous=cache.getString(key,null)?.let{runCatching{JSONObject(it)}.getOrNull()}
+            edit.putString(key,encodeDay(projectChanges(view,before,after)).put("_pending",true).put("_saved_at",previous?.optLong("_saved_at",0)?:0).put("_dirty",previous?.optBoolean("_dirty")?:false).toString())
+        }
+        edit.apply()
+    }
+    private fun encodeDay(day:Day)=JSONObject().put("date",day.date).put("timezone",day.timezone).put("starred_limit",day.starLimit).put("items",JSONArray(day.tasks.map{task->
+        JSONObject().put("id",task.id).put("title",task.title).put("start_time",task.time?:JSONObject.NULL)
+            .put("estimated_minutes",task.minutes).put("done",task.done).put("starred",task.starred).put("is_habit",task.habit)
+            .put("parent_task_id",task.parent?:JSONObject.NULL).put("scheduled_date",task.date?:JSONObject.NULL).put("notes",task.notes?:JSONObject.NULL)
+            .put("project_id",task.projectId?:JSONObject.NULL).put("recurrence_key",task.recurrenceKey?:JSONObject.NULL)
+            .put("parent_title",task.parentTitle?:JSONObject.NULL).put("part_index",task.partIndex?:JSONObject.NULL).put("part_total",task.partCount?:JSONObject.NULL)
+    }))
     suspend fun request(method: String,path: String,body: JSONObject?=null): JSONObject = withContext(Dispatchers.IO) {
         val connection = config.connection()
         check(connection.first.isNotEmpty() && connection.second.isNotEmpty()){ "Connect to your Planner OS server in Settings." }
@@ -138,11 +189,14 @@ class PlannerRepository(private val context: Context) {
         check(config.generation == generation) { "Connection changed. Refresh the current account." }
         synchronized(cacheLock) {
             check(cacheRevision == mutationRevision) { "Plan changed while refreshing. Refresh this day again." }
-            cache.edit().putString("$generation:$date",data.toString()).commit()
+            cache.edit().putString("$generation:$date",data.put("_saved_at",System.currentTimeMillis()).toString()).apply()
         }
-        Day.from(data).copy(alarmRevision=alarmRevision)
+        Day.from(data).copy(alarmRevision=alarmRevision,connectionGeneration=generation)
     }
-    suspend fun patch(task: Task,body: JSONObject){request("PATCH","/v2/day/tasks/${java.net.URLEncoder.encode(task.id,"UTF-8")}",body)}
+    suspend fun patch(task: Task,body: JSONObject){
+        request("PATCH","/v2/day/tasks/${java.net.URLEncoder.encode(task.id,"UTF-8")}",body)
+        if(task.parent!=null&&body.has("done"))markPropagation(task)
+    }
     suspend fun create(title: String,date: LocalDate?,time: String?,minutes: Int,notes: String?=null,parent: String?=null,projectId: String?=null): String {
         val b=JSONObject().put("title",title).put("estimated_minutes",minutes)
         date?.let{b.put("date",it.toString())};time?.let{b.put("start_time",it)};notes?.let{b.put("notes",it)};parent?.let{b.put("parent_task_id",it)};projectId?.let{b.put("project_id",it)}
@@ -154,6 +208,7 @@ class PlannerRepository(private val context: Context) {
         if(TimerStore.read(context)?.taskId == task.id) TimerStore.reset(context)
     }
     suspend fun split(task: Task,date: LocalDate) {
+        markPropagation(task)
         require(!task.habit && task.minutes>=2){"Habits or one-minute blocks cannot be split."}
         // Both child slots preserve the original time budget. Never shorten the original before both exist.
         val first=(task.minutes+1)/2; val leader=task.parent ?: task.id
