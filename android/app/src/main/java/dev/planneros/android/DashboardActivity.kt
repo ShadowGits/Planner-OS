@@ -5,16 +5,22 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -22,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,6 +42,8 @@ import org.json.JSONObject
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
+import androidx.core.view.WindowInsetsControllerCompat
 
 class DashboardActivity:ComponentActivity(){
     private val dashboardSession=mutableStateOf("")
@@ -43,8 +53,8 @@ class DashboardActivity:ComponentActivity(){
         setContent{
             val theme=getSharedPreferences("appearance",MODE_PRIVATE).getString("theme","system")
             val dark=theme=="dark"||theme!="light"&&isSystemInDarkTheme()
-            val colors=if(dark)darkColorScheme(primary=Color(0xFFF286A8),onPrimary=Color(0xFF451027),background=Color(0xFF17181C),surface=Color(0xFF202127),onSurface=Color(0xFFF7F2F5),onSurfaceVariant=Color(0xFFCAC0C7))
-                else lightColorScheme(primary=Wine,onPrimary=Color.White,background=Color.White,surface=Color.White,onSurface=Color(0xFF292A35),onSurfaceVariant=Color(0xFF77707A))
+            val colors=plannerColorScheme(dark)
+            SideEffect{WindowInsetsControllerCompat(window,window.decorView).apply{isAppearanceLightStatusBars=!dark;isAppearanceLightNavigationBars=!dark}}
             MaterialTheme(colorScheme=colors){key(dashboardSession.value){DashboardScreen{finish()}}}
         }
     }
@@ -62,8 +72,11 @@ private fun tabs(group:String,project:String?):List<Pair<String,String>> = when 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun DashboardScreen(exit:()->Unit){
+    val compactNav=LocalConfiguration.current.screenWidthDp<360&&LocalDensity.current.fontScale>1.2f
     val context=LocalContext.current;val repo=remember{DashboardRepository(context)};val scope=rememberCoroutineScope()
     var group by rememberSaveable{mutableStateOf("Overview")};var subtab by rememberSaveable{mutableIntStateOf(0)}
+    var menuOpen by rememberSaveable{mutableStateOf(false)};var searchOpen by rememberSaveable{mutableStateOf(false)}
+    var projectInfo by rememberSaveable{mutableStateOf("{}")}
     var project by rememberSaveable{mutableStateOf<String?>(null)};var projectName by rememberSaveable{mutableStateOf("")}
     var query by rememberSaveable{mutableStateOf("")};var record by remember{mutableStateOf<JSONObject?>(null)}
     var weekDate by rememberSaveable{mutableStateOf(LocalDate.now().toString())}
@@ -97,6 +110,7 @@ private fun tabs(group:String,project:String?):List<Pair<String,String>> = when 
         }
     }
     fun selectProject(row:JSONObject){
+        projectInfo=row.toString()
         if(row.optString("name")=="Finance"){group="Money";subtab=1;project=null}
         else{group="Projects";project=row.nullString("id");projectName=row.optString("name","Project");subtab=0};query=""
     }
@@ -104,161 +118,85 @@ private fun tabs(group:String,project:String?):List<Pair<String,String>> = when 
         detailSerial+=1;val serial=detailSerial
         record=row;recordError=null;recordLoading=false
         val id=row.nullString("id")?:return
-        if(section=="week"||section.startsWith("finance_")&&section!="finance_transactions")return
-        val key=id;val recordPath=repo.path(section,if(group=="Projects")project else null,row=id)
+        val detailSection=row.nullString("_section")?:section
+        if(detailSection in listOf("overview","week")||detailSection.startsWith("finance_")&&detailSection!="finance_transactions"||runCatching{UUID.fromString(id)}.isFailure)return
+        val key=id;val recordPath=repo.path(detailSection,if(group=="Projects")project else null,row=id)
         recordLoading=true
         scope.launch{
-            try{val data=repo.load(recordPath);if(detailSerial==serial&&record?.nullString("id")==key&&generation==repo.generation)record=data.getJSONObject("record")}
+            try{val data=repo.load(recordPath);if(detailSerial==serial&&record?.nullString("id")==key&&generation==repo.generation)record=data.getJSONObject("record").put("_section",detailSection)}
             catch(cancel:CancellationException){throw cancel}catch(error:Exception){if(detailSerial==serial&&record?.nullString("id")==key)recordError=error.message}
             finally{if(detailSerial==serial&&record?.nullString("id")==key)recordLoading=false}
         }
     }
     LaunchedEffect(path,generation){query="";load()}
-    Scaffold(topBar={
-        TopAppBar(title={Text(if(project!=null&&group=="Projects")projectName else "Dashboard",fontSize=20.sp,maxLines=1,overflow=TextOverflow.Ellipsis)},
-            navigationIcon={IconButton(onClick={if(project!=null&&group=="Projects"){project=null;subtab=0}else exit()}){Icon(Icons.Rounded.ArrowBack,"Back to ${if(project!=null&&group=="Projects")"projects" else "day"}")}},
-            actions={IconButton(onClick={load(true)},enabled=!page.loading){Icon(Icons.Rounded.Refresh,"Refresh dashboard section")}})
+    BackHandler(enabled=project!=null&&group=="Projects"){project=null;subtab=0}
+    val data=page.data
+    val array=when(section){"finance_goals"->data?.optJSONArray("goals");"week"->data?.optJSONArray("items");else->data?.optJSONArray("rows")}?:JSONArray()
+    val rows=(0 until array.length()).mapNotNull{array.optJSONObject(it)}
+    val visible=rows.filter{query.isBlank()||dashboardFields(it).any{entry->entry.second.contains(query,true)}||rowTitle(it).contains(query,true)}
+    fun selectGroup(label:String){group=label;subtab=0;query="";searchOpen=false;menuOpen=false}
+    Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={
+        TopAppBar(title={Column{
+            Text(if(project!=null&&group=="Projects")projectName else if(group=="Overview")"Dashboard" else group,fontSize=22.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+            if(!compactNav)Text(if(project!=null&&group=="Projects")"Project workspace" else "Your work at a glance",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+        }},navigationIcon={IconButton(onClick={if(project!=null&&group=="Projects"){project=null;subtab=0}else exit()}){Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Back to "+if(project!=null&&group=="Projects")"projects" else "day")}},
+            actions={if(rows.isNotEmpty()&&section!="week")IconButton(onClick={searchOpen=!searchOpen;if(!searchOpen)query=""}){Icon(Icons.Rounded.Search,"Search this section")}
+                IconButton(onClick={load(true)},enabled=!page.loading){if(page.loading)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Rounded.Refresh,"Refresh dashboard section")}},
+            colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))
+    },bottomBar={
+        NavigationBar(containerColor=MaterialTheme.colorScheme.surface,tonalElevation=0.dp){
+            listOf("Overview","Projects","Money","Browse").forEach{label->
+                val selected=if(label=="Browse")group !in listOf("Overview","Projects","Money")else group==label
+                NavigationBarItem(selected=selected,onClick={if(label=="Browse")menuOpen=true else selectGroup(label)},icon={Icon(dashboardIcon(label),if(compactNav&&label=="Projects")"Projects"else null)},label={Text(if(label=="Overview")"Home"else if(label=="Projects"&&compactNav)"Work"else label,fontSize=12.sp,maxLines=1)},
+                    colors=NavigationBarItemDefaults.colors(selectedIconColor=Color.White,indicatorColor=PlannerPalette.Wine,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant))
+            }
+        }
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
-            ScrollableTabRow(selectedTabIndex=groups.indexOf(group),edgePadding=8.dp){groups.forEach{label->
-                Tab(selected=group==label,onClick={group=label;subtab=0;query=""},text={Text(label,fontSize=13.sp,maxLines=1)})
-            }}
-            if(choices.size>1)ScrollableTabRow(selectedTabIndex=subtab.coerceIn(choices.indices),edgePadding=8.dp){choices.forEachIndexed{index,choice->
-                Tab(selected=subtab==index,onClick={subtab=index;query=""},text={Text(choice.first,fontSize=12.sp,maxLines=1)})
-            }}
-            if(page.loading)LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+            if(choices.size>1)Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                choices.forEachIndexed{index,choice->
+                    val bringIntoView=remember(choice.second){BringIntoViewRequester()}
+                    LaunchedEffect(subtab,choice.second){if(subtab==index)bringIntoView.bringIntoView()}
+                    FilterChip(selected=subtab==index,onClick={subtab=index;query=""},modifier=Modifier.bringIntoViewRequester(bringIntoView),label={Text(choice.first,fontSize=14.sp)},leadingIcon={Icon(dashboardIcon(choice.second),null,modifier=Modifier.size(18.dp))},
+                    colors=FilterChipDefaults.filterChipColors(selectedContainerColor=PlannerPalette.Wine,selectedLabelColor=Color.White,selectedLeadingIconColor=Color.White))}
+            }
             if(section=="week"||section=="finance_summary"){
-                val anchor=LocalDate.parse(selectedDate)
-                Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){
-                    IconButton(onClick={if(section=="week")weekDate=anchor.minusWeeks(1).toString()else monthDate=anchor.minusMonths(1).toString()}){Icon(Icons.Rounded.ChevronLeft,"Previous ${if(section=="week")"week" else "month"}")}
-                    val displayDate=if(section=="week")anchor.minusDays((anchor.dayOfWeek.value-1).toLong())else anchor
-                    Text(displayDate.format(DateTimeFormatter.ofPattern(if(section=="week")"'Week of' d MMM" else "MMMM yyyy",Locale.getDefault())),fontSize=13.sp,modifier=Modifier.weight(1f))
-                    IconButton(onClick={if(section=="week")weekDate=anchor.plusWeeks(1).toString()else monthDate=anchor.plusMonths(1).toString()}){Icon(Icons.Rounded.ChevronRight,"Next ${if(section=="week")"week" else "month"}")}
+                val anchor=LocalDate.parse(selectedDate);val displayDate=if(section=="week")anchor.minusDays((anchor.dayOfWeek.value-1).toLong())else anchor
+                Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=2.dp),verticalAlignment=Alignment.CenterVertically){
+                    IconButton(onClick={if(section=="week")weekDate=anchor.minusWeeks(1).toString()else monthDate=anchor.minusMonths(1).toString()}){Icon(Icons.Rounded.ChevronLeft,"Previous "+if(section=="week")"week" else "month")}
+                    Text(displayDate.format(DateTimeFormatter.ofPattern(if(section=="week")if(displayDate.year==LocalDate.now().year)"'Week of' d MMM"else "'Week of' d MMM yyyy" else "MMMM yyyy",Locale.getDefault())),fontSize=17.sp,fontWeight=FontWeight.Medium,modifier=Modifier.weight(1f))
+                    IconButton(onClick={if(section=="week")weekDate=anchor.plusWeeks(1).toString()else monthDate=anchor.plusMonths(1).toString()}){Icon(Icons.Rounded.ChevronRight,"Next "+if(section=="week")"week" else "month")}
                 }
             }
-            page.error?.takeUnless{page.unavailable}?.let{message->Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
-                Text(message,color=MaterialTheme.colorScheme.error,fontSize=12.sp,modifier=Modifier.weight(1f));TextButton(onClick={load(true)}){Text("Retry")}
-            }}
-            val data=page.data
-            if(page.unavailable)EmptyState("Tracker not set up",page.error.orEmpty())
-            if(data==null&&!page.loading&&page.error==null)EmptyState("Choose a section","Your daily plan loads separately.")
-            if(data!=null&&!page.unavailable){
+            if(searchOpen)OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp),singleLine=true,label={Text("Search "+group.lowercase())},leadingIcon={Icon(Icons.Rounded.Search,null)})
+            if(page.unavailable)DashboardMessage(dashboardIcon(group),"Tracker not set up",page.error.orEmpty())
+            else if(page.error!=null&&data==null)DashboardMessage(Icons.Rounded.CloudOff,"Couldn't load this view",page.error.orEmpty()){load(true)}
+            else if(data==null)DashboardMessage(dashboardIcon(group),"Loading "+group.lowercase(),"Opening this view…",loading=true)
+            else{
+                page.error?.let{DashboardNotice(it)}
                 val warnings=data.optJSONArray("warnings")
-                if(warnings!=null&&warnings.length()>0)Text((0 until warnings.length()).joinToString(" "){warnings.optString(it)},fontSize=12.sp,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(16.dp))
-                if(section=="overview")DashboardOverview(data.optJSONObject("snapshot")?:JSONObject(),::selectProject)
-                else if(section=="finance_summary")FinanceSummary(data)
-                else if(section=="finance_plan")FundingPlan(data,::showRecord)
-                else{
-                    val array=when(section){"finance_goals"->data.optJSONArray("goals");"week"->data.optJSONArray("items");else->data.optJSONArray("rows")}?:JSONArray()
-                    val rows=(0 until array.length()).mapNotNull{array.optJSONObject(it)}
-                    if(rows.isNotEmpty())OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp),singleLine=true,label={Text("Find in this list")},leadingIcon={Icon(Icons.Rounded.Search,null)})
-                    val visible=rows.filter{query.isBlank()||visibleFields(it).any{entry->entry.second.contains(query,true)}}
-                    LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(bottom=24.dp)){
-                        item{Text("${visible.size} ${if(query.isBlank())"items" else "matches"}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(horizontal=20.dp,vertical=6.dp))}
-                        if(visible.isEmpty())item{EmptyState(if(query.isBlank())"Nothing here yet" else "No matches",if(query.isBlank())"This section is ready when you add records." else "Try another word.")}
-                        itemsIndexed(visible){_,row->DashboardRow(rowTitle(row),rowCaption(row),rowProgress(row),{if(section=="projects")selectProject(row)else showRecord(row)})}
-                        if(!data.isNull("next_offset")&&data.has("next_offset"))item{TextButton(enabled=!page.loading,onClick={load(offset=data.getInt("next_offset"))},modifier=Modifier.fillMaxWidth()){Text("Load more")}}
-                    }
+                if(section!="overview"&&warnings!=null&&warnings.length()>0)DashboardNotice((0 until warnings.length()).joinToString(" "){warnings.optString(it)})
+                when(section){
+                    "overview"->DashboardOverview(data.optJSONObject("snapshot")?:JSONObject(),::selectProject,::showRecord,{selectGroup("Projects")}){selectGroup("Week")}
+                    "finance_summary"->FinanceSummary(data)
+                    "finance_plan"->FundingPlan(data,::showRecord)
+                    "week"->DashboardWeek(data,::showRecord)
+                    else->DashboardRecords(section,visible,if(project!=null&&group=="Projects")runCatching{JSONObject(projectInfo)}.getOrNull()else null,::showRecord,::selectProject,
+                        !data.isNull("next_offset")&&data.has("next_offset"),page.loading){load(offset=data.optInt("next_offset"))}
                 }
             }
         }
     }
-    record?.let{row->ModalBottomSheet(onDismissRequest={detailSerial+=1;record=null}){
+    if(menuOpen)ModalBottomSheet(onDismissRequest={menuOpen=false},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)){
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=32.dp)){
-            Text(rowTitle(row),fontSize=21.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(bottom=12.dp))
-            if(recordLoading)LinearProgressIndicator(Modifier.fillMaxWidth())
-            recordError?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp)}
-            row.optJSONObject("config")?.let{config->
-                config.nullString("content")?.let{Text(android.text.Html.fromHtml(it,android.text.Html.FROM_HTML_MODE_COMPACT).toString(),fontSize=14.sp)}
-                config.optJSONObject("table")?.let{table->
-                    val headers=table.optJSONArray("headers")?:JSONArray();val values=table.optJSONArray("rows")?:JSONArray()
-                    for(i in 0 until values.length()){
-                        val cells=values.optJSONArray(i)?:continue
-                        Text((0 until cells.length()).joinToString("\n"){j->"${headers.optString(j,"Column ${j+1}")}: ${cells.optString(j)}"},fontSize=14.sp,modifier=Modifier.padding(vertical=10.dp))
-                        HorizontalDivider()
-                    }
+            Text("Explore your workspace",fontSize=24.sp,fontWeight=FontWeight.SemiBold)
+            Text("Choose what you want to see",fontSize=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp,bottom=16.dp))
+            groups.chunked(2).forEach{pair->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                pair.forEach{label->Surface(onClick={selectGroup(label)},shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.secondaryContainer,modifier=Modifier.weight(1f).padding(bottom=12.dp)){
+                    Column(Modifier.padding(16.dp)){Icon(dashboardIcon(label),null,modifier=Modifier.size(28.dp),tint=MaterialTheme.colorScheme.onSecondaryContainer);Text(label,fontSize=17.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.onSecondaryContainer,modifier=Modifier.padding(top=12.dp))}
                 }
-            }
-            visibleFields(row).forEach{(key,value)->
-                Text(key.replace('_',' ').replaceFirstChar{it.uppercase()},fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
-                Text(value,fontSize=14.sp)
-                if(value.startsWith("https://")&&runCatching{Uri.parse(value).host}.getOrNull()!=null)TextButton(onClick={context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(value)))}){Text("Open link")}
-            }
-        }
-    }}
-}
-
-private val hiddenFields=setOf("id","user_id","workspace_id","project_id","milestone_id","parent_task_id","created_at","updated_at","_saved_at","recurrence_key","config")
-private fun visibleFields(row:JSONObject):List<Pair<String,String>> = row.keys().asSequence().filter{it !in hiddenFields&&!row.isNull(it)}.map{key->key to when(val value=row.get(key)){
-    is JSONObject->value.keys().asSequence().filter{!value.isNull(it)}.joinToString("\n"){"$it: ${value.get(it)}"}
-    is JSONArray->(0 until value.length()).joinToString(", "){value.get(it).toString()}
-    else->value.toString()
-}}.filter{it.second.isNotBlank()}.toList()
-private fun rowTitle(row:JSONObject)=listOf("title","name","label","goal","book","question","test","university","professor","institute","description","topic","task","subject","month").firstNotNullOfOrNull{row.nullString(it)}?:"Record"
-private fun rowCaption(row:JSONObject):String {
-    val labels=listOf("status","scheduled_date","due_date","target_date","deadline","date","month","cadence","subject","author","progress","chapter","widget_type").mapNotNull{row.nullString(it)}.toMutableList()
-    if(row.has("total_tasks"))labels.add("${row.optInt("done_tasks")}/${row.optInt("total_tasks")} done")
-    if(row.has("streak_days"))labels.add("${row.optInt("streak_days")} day streak")
-    if(row.has("amount"))labels.add("${row.optString("currency")} ${row.optDouble("amount")}")
-    if(row.has("outstanding"))labels.add("${row.optDouble("outstanding")} outstanding")
-    if(row.has("target_amount"))labels.add("${row.optString("currency")} ${row.optDouble("saved_amount")} / ${row.optDouble("target_amount")}")
-    return labels.joinToString(" · ").ifBlank{row.nullString("answer")?:row.nullString("notes")?:"Tap for details"}
-}
-private fun rowProgress(row:JSONObject):Float?=when {
-    row.has("completion_pct")->(row.optDouble("completion_pct")/100).toFloat().coerceIn(0f,1f)
-    row.optInt("total_tasks")>0->row.optInt("done_tasks").toFloat()/row.optInt("total_tasks")
-    row.optInt("total_pages")>0->row.optInt("current_page").toFloat()/row.optInt("total_pages")
-    row.optDouble("target_amount")>0->(row.optDouble("saved_amount")/row.optDouble("target_amount")).toFloat().coerceIn(0f,1f)
-    else->null
-}
-@Composable private fun DashboardRow(title:String,caption:String,progress:Float?=null,onClick:(()->Unit)?=null){
-    Column(Modifier.fillMaxWidth().then(if(onClick!=null)Modifier.clickable(onClick=onClick)else Modifier).padding(horizontal=20.dp,vertical=12.dp)){
-        Row(verticalAlignment=Alignment.CenterVertically){Text(title,fontSize=15.sp,fontWeight=FontWeight.Medium,modifier=Modifier.weight(1f),maxLines=3,overflow=TextOverflow.Ellipsis);if(onClick!=null)Icon(Icons.Rounded.ChevronRight,null,tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.size(18.dp))}
-        Text(caption,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=3,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=4.dp))
-        if(progress!=null){LinearProgressIndicator(progress={progress.coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().padding(top=8.dp).height(3.dp));Text("${(progress*100).toInt()}%",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=3.dp))}
-    }
-    HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f),modifier=Modifier.padding(horizontal=20.dp))
-}
-@Composable private fun DashboardHeading(text:String){Text(text,fontSize=13.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(start=20.dp,top=20.dp,bottom=4.dp))}
-private fun JSONObject.objects(key:String):List<JSONObject>{val a=optJSONArray(key)?:return emptyList();return (0 until a.length()).mapNotNull{a.optJSONObject(it)}}
-
-@Composable private fun DashboardOverview(snapshot:JSONObject,onProject:(JSONObject)->Unit){
-    val totals=snapshot.optJSONObject("totals")?:JSONObject()
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp)){
-        item{DashboardHeading("Progress today");DashboardRow("${totals.optInt("completed_today")} completed","${totals.optInt("open_tasks")} open · ${totals.optInt("overdue_tasks")} overdue · ${totals.optInt("completions_last_7_days")} finished in 7 days")}
-        item{DashboardHeading("Projects")}
-        itemsIndexed(snapshot.objects("projects")){_,project->DashboardRow(project.optString("name"),"${project.optInt("open_tasks")} left"+project.nullString("target_date")?.let{" · Due $it"}.orEmpty(),rowProgress(project)){onProject(project)}}
-        item{DashboardHeading("Milestone health")}
-        itemsIndexed(snapshot.objects("milestone_health")){_,row->DashboardRow(row.optString("name"),"${row.optString("project_name")} · ${row.optString("status")} · ${row.optInt("done")}/${row.optInt("total")}",row.optDouble("progress").toFloat())}
-        item{DashboardHeading("Upcoming deadlines")}
-        itemsIndexed(snapshot.objects("upcoming_deadlines")){_,row->DashboardRow(row.optString("name"),row.optString("date")+if(row.optBoolean("overdue"))" · Overdue"else " · ${row.optInt("days_left")} days left")}
-        item{DashboardHeading("Habit streaks")}
-        val streaks=snapshot.optJSONObject("streaks")?:JSONObject()
-        streaks.keys().forEach{key->item{DashboardRow(key,"${streaks.optInt(key)} days")}}
-    }
-}
-@Composable private fun FinanceSummary(data:JSONObject){
-    val currencies=data.optJSONObject("currencies")?:JSONObject()
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp)){
-        item{DashboardHeading(data.optString("month_label","This month"))}
-        if(currencies.length()==0)item{EmptyState("No transactions this month","Your funding plan and earlier transactions have their own tabs.")}
-        currencies.keys().forEach{code->val values=currencies.getJSONObject(code);item{DashboardHeading(code);DashboardRow("Income ${values.optDouble("income")}","Expenses ${values.optDouble("expense")} · Net ${values.optDouble("net")}")}
-            itemsIndexed(values.objects("by_category")){_,row->DashboardRow(row.optString("category"),"$code ${row.optDouble("amount")}")}
+            }}}
         }
     }
-}
-@Composable private fun FundingPlan(data:JSONObject,onRecord:(JSONObject)->Unit){
-    val totals=data.optJSONObject("totals")?:JSONObject()
-    val currency=totals.optString("base_currency")
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp)){
-        if(data.isNull("plan"))item{EmptyState("No funding plan yet","Your expenses and saving goals remain available.")}
-        else{
-            item{DashboardHeading("Funding position")}
-            item{DashboardRow(totals.optString("headline","Funding plan"),totals.optString("status"))}
-            listOf("cost_estimate","cost_paid","cost_outstanding","fund_expected","fund_received","fund_outstanding","gap","loan_needed").forEach{key->if(totals.has(key))item{DashboardRow(key.replace('_',' ').replaceFirstChar{it.uppercase()},"$currency ${totals.get(key)}")}}
-            listOf("costs" to "Costs","funds" to "Funds").forEach{(key,label)->item{DashboardHeading(label)};itemsIndexed(data.objects(key)){_,row->DashboardRow(rowTitle(row),rowCaption(row),rowProgress(row)){onRecord(row)}}}
-            item{DashboardHeading("Cash flow timeline")}
-            itemsIndexed(data.optJSONObject("timeline")?.objects("months").orEmpty()){_,row->DashboardRow(row.optString("month"),"In $currency ${row.optDouble("in")} · Out ${row.optDouble("out")} · Balance ${row.optDouble("balance")}")}
-        }
-    }
+    record?.let{row->ModalBottomSheet(onDismissRequest={detailSerial+=1;record=null},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)){DashboardDetail(row,recordLoading,recordError)}}
 }

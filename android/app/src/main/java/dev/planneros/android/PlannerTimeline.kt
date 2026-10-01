@@ -31,7 +31,7 @@ import androidx.compose.ui.zIndex
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-internal val Wine = Color(0xFFA32C53)
+internal val Wine = PlannerPalette.Wine
 private val pastelLight = listOf(Color(0xFFFBD9D4),Color(0xFFFBE9C9),Color(0xFFDCECC8),Color(0xFFCBE8EC),Color(0xFFDFE4FB),Color(0xFFEFD6EC),Color(0xFFD3ECDF),Color(0xFFF8DDC0),Color(0xFFE0D9F7),Color(0xFFCFE8FA))
 private val pastelDark = listOf(Color(0xFF4B2F2D),Color(0xFF4B3E26),Color(0xFF33452C),Color(0xFF2B4348),Color(0xFF2F3555),Color(0xFF472F47),Color(0xFF2C4639),Color(0xFF4A3A27),Color(0xFF383152),Color(0xFF28404F))
 internal fun taskTint(task:Task,dark:Boolean):Color = (if(dark)pastelDark else pastelLight)[Math.floorMod(task.title.hashCode(),pastelLight.size)]

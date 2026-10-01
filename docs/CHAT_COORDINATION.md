@@ -10,9 +10,9 @@ Both chats use `/Users/sparsh/VibeCoding/Planner_OS`. Files are shared; conversa
 
 ## Next APK
 
-Current source version: **1.0.6**, versionCode **8**. Latest previously delivered APK: **1.0.5**, versionCode **7**, from committed timer work through `f478f4f`.
+Current source and delivered APK: **1.0.7**, versionCode **9**, preserving 1.0.6 Inbox/Dashboard functionality from `71156ef` and timer work through `f478f4f`.
 
-Release owner must confirm tests, backend deployment, final APK hash and delivery before declaring the release ready. Current checks/deployment status are being finalized in the release owner's chat; no new delivery is confirmed here yet.
+Release owner must confirm tests, backend deployment, final APK hash and delivery before declaring the release ready. Current 1.0.7 checks and delivery status are recorded below.
 
 Use `scripts/deliver_android_apk.py` and the existing signing key. Always name APKs with their actual Gradle version and deliver to:
 
@@ -33,3 +33,13 @@ Acknowledged by **Suggest Planner OS improvements**: this chat owns the combined
 - Outstanding: Books, Study domain tables and Germany Documents are absent from the live database; these trackers display an explicit not-set-up state. Dashboard is a native progress/browsing view; web widget/table editing, uploads and Calendar connection are not ported. Samsung automatic lock-screen/Now Bar behavior remains unverified.
 - APK SHA-256: `4148db1070eedb96e9a1e51383e54e41e499de2ee47693cb47e7e04a1a502a15`.
 - APK delivery: `Planner-OS-Android-1.0.6.apk` delivered with its SHA-256 file to the mandatory Drive folder and repository `android/artifacts/` and `artifacts/`. Owned source is committed in the coordinated 1.0.6 release, excluding PWA Day Recovery hunks. The release commit is local; this chat did not push or trigger a second automatic deployment. This file provides feedback without requiring another inter-chat message.
+
+## 1.0.7 Dashboard redesign delivered
+
+- Requested redesign: wine/marsala, navy and ice-blue theme; large headline figures; project rings and remaining-work queues; a selectable weekly agenda; typed Books/Study/Habits/Germany layouts; money coverage, monthly comparisons, cash-flow bars and a dated ledger. Home / Projects / Money / Browse navigation replaces the long top-level chip strip. Search is shown on demand. Narrow screens use Work in the bottom navigation, scroll selected tabs into view, and open Browse/details fully.
+- Isolation: Dashboard retains its own Activity, workers, cache and loading state. Emulator Day refresh completed 3.02 seconds into an eight-second Books request. No timer, overlay, reminder or task interaction behavior was changed; the shared color scheme replaces the old bright-pink accents.
+- Checks: 68 Android unit tests passed; lint and assembly passed; 294 backend tests passed, one skipped. Normal light and 320dp dark/150% text screens were inspected. Read-only live snapshots validate Home, Projects, Week and funding; explicit fixtures validate Books, Study and a populated monthly summary. Native unavailable tracker states remain truthful.
+- Backend: stable newest-first transaction pagination deployed successfully in build `109d40aa-782f-461f-9c1f-1401c12c4e57` (marker `71156ef-dashboard-ledger`). Live transactions are newest first and HTTP 200; Day is HTTP 200. Deployment excludes PWA Day Recovery and migration 0033.
+- Signing certificate is unchanged: SHA-256 `8ac77cf9c1f5a6c12035a272f13e68b1c35952a75101a7a96cce9b2cd89cfa36`.
+- APK SHA-256: `1dcb72189d931f83cceab68e719521a8af3ddedff855d29697d132ed94085a54`.
+- Delivered `Planner-OS-Android-1.0.7.apk` and its checksum to the mandatory Drive folder, `android/artifacts/` and `artifacts/`. Source is committed locally without pushing; unrelated PWA Day Recovery files remain outside this release. Missing tracker setup, web editing/upload features and Samsung automatic lock-screen/Now Bar limitations from 1.0.6 remain unchanged.

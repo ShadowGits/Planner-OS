@@ -90,6 +90,8 @@ def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -
             if section == "tasks":
                 query = "parent_task_id=is.null&order=due_date.asc.nullslast,id.asc"
                 columns = "id,title,status,priority,due_date,scheduled_date,start_time,estimated_minutes,project_id,milestone_id"
+            elif section == "finance_transactions":
+                query, columns = "order=date.desc,id.desc", "*"
             else:
                 query, columns = "order=id.asc", "*"
             rows = [dict(row) for row in repository.list_rows(TABLES[section], filters, columns=columns,

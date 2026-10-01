@@ -68,8 +68,7 @@ class MainActivity:ComponentActivity(){
                     isAppearanceLightStatusBars=!dark;isAppearanceLightNavigationBars=!dark
                 }
             }
-            val colors=if(dark)darkColorScheme(primary=Color(0xFFF286A8),onPrimary=Color(0xFF451027),background=Color(0xFF17181C),surface=Color(0xFF202127),onSurface=Color(0xFFF7F2F5),onSurfaceVariant=Color(0xFFCAC0C7))
-                else lightColorScheme(primary=Wine,onPrimary=Color.White,background=Color.White,surface=Color.White,onSurface=Color(0xFF292A35),onSurfaceVariant=Color(0xFF77707A),secondary=Color(0xFFB45172))
+            val colors=plannerColorScheme(dark)
             MaterialTheme(colorScheme=colors){PlannerScreen(finishId,{finishId=null},{if(Build.VERSION.SDK_INT>=33)permission.launch(Manifest.permission.POST_NOTIFICATIONS)},dark,appearance,{appearance=it;prefs.edit().putString("theme",it).apply()})}
         }
         Reminders.setup(this)

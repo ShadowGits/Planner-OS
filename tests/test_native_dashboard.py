@@ -45,6 +45,19 @@ def test_task_list_excludes_split_children_and_heavy_metadata(client, runtime):
     assert "metadata" not in query["columns"]
 
 
+def test_transaction_pagination_is_newest_first_with_stable_date_tie_break(client, runtime):
+    calls = []
+    select = runtime.service_client.select
+    def tracked(table, **kwargs):
+        calls.append((table, kwargs))
+        return select(table, **kwargs)
+    runtime.service_client.select = tracked
+    response = client.get("/v2/native/dashboard?section=finance_transactions&offset=100", headers=APP_KEY)
+    assert response.status_code == 200
+    query = next(kwargs for table, kwargs in calls if table == "finance_logs")
+    assert query["query_string"] == "order=date.desc,id.desc&limit=100&offset=100"
+
+
 def test_failed_section_does_not_show_fake_empty_success(client, runtime):
     select = runtime.service_client.select
     def failing(table, **kwargs):
