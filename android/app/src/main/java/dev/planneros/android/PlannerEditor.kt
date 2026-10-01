@@ -26,6 +26,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.time.LocalDate
 
 internal data class EditorValues(val title:String,val date:LocalDate,val time:String?,val minutes:Int,val notes:String?)
@@ -79,9 +82,16 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
 
 @Composable internal fun ConnectionSettings(repo:PlannerRepository,appearance:String,onAppearance:(String)->Unit,dismiss:()->Unit,notification:()->Unit,saved:()->Unit){
     val c=LocalContext.current
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    var settingsRevision by remember{mutableIntStateOf(0)}
+    DisposableEffect(lifecycle){
+        val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_RESUME)settingsRevision++}
+        lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}
+    }
     var testResult by remember{mutableStateOf<String?>(null)}
     val notificationManager=c.getSystemService(android.app.NotificationManager::class.java)
-    val enabled=notificationManager.areNotificationsEnabled()&&(Build.VERSION.SDK_INT<33||androidx.core.content.ContextCompat.checkSelfPermission(c,android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED)
+    val enabled=remember(settingsRevision){notificationManager.areNotificationsEnabled()&&(Build.VERSION.SDK_INT<33||androidx.core.content.ContextCompat.checkSelfPermission(c,android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED)}
+    val timerVisibility=remember(settingsRevision){TimerVisibility.status(c,enabled)}
     var url by remember{mutableStateOf(repo.config.baseUrl)};var key by remember{mutableStateOf("")};var reminders by remember{mutableStateOf(repo.config.reminders)};var error by remember{mutableStateOf<String?>(null)}
     var automatic by remember{mutableStateOf(AutoFocusScheduler.enabled(c))}
     AlertDialog(onDismissRequest=dismiss,title={Text("Your Planner OS")},text={Column(Modifier.verticalScroll(rememberScrollState())){
@@ -91,7 +101,10 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Text("Your key is encrypted using Android Keystore.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))
         Text("Appearance",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=10.dp))
         Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("system","light","dark").forEach{mode->FilterChip(selected=appearance==mode,onClick={onAppearance(mode)},label={Text(mode.replaceFirstChar(Char::titlecase))})}}
-        if(TimerStore.read(c)!=null)TextButton(onClick={TimerStore.action(c,"SHOW")}){Icon(Icons.Rounded.PictureInPictureAlt,null);Text(" Show floating timer")}
+        if(TimerStore.read(c)!=null){
+            TextButton(onClick={TimerStore.action(c,"SHOW")}){Icon(Icons.Rounded.PictureInPictureAlt,null);Text(" Show floating timer")}
+            TextButton(onClick={c.startActivity(Intent(c,TimerLockScreenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))}){Icon(Icons.Rounded.LockClock,null);Text(" Open wooden lock-screen timer")}
+        }
         TextButton(onClick={c.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${c.packageName}")))}){Icon(Icons.Rounded.PictureInPicture,null);Text(" Allow floating timer")}
         Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text("Start focus with scheduled blocks",modifier=Modifier.weight(1f));Switch(automatic,{automatic=it})}
         Text(if(AutoFocusScheduler.backgroundAvailable(c))"Automatic timers can start in the background. Pausing or canceling a block keeps that occurrence stopped." else "Automatic timers start while Planner OS is open. Allow precise alarms to start them in the background. Pausing or canceling keeps that occurrence stopped.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -100,8 +113,13 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Text(if(enabled)"System notifications enabled" else "System notifications blocked",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick={if(!enabled)notification();testResult=if(Reminders.test(c))"Test sent — check your notification shade." else "Notifications are blocked. Allow notifications and the Planner reminders channel in Android Settings, then test again."}){Icon(Icons.Rounded.NotificationsNone,null);Text(" Test notification")}
         testResult?.let{Text(it,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        Text("Lock-screen timer: allow lock-screen notifications and Show content for Planner OS in Samsung Settings. Tap the timer card to open the wooden dial while locked; Android decides whether Live Updates appear in the Now Bar.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick={c.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,c.packageName))}){Text(" Android notification settings")}
+        Text("Lock-screen timer",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=10.dp))
+        Text(timerVisibility,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Open the wooden lock-screen timer, then lock your phone to keep that screen visible. While another app is open, Android controls which timer cards appear on the lock screen; the floating window cannot cover a secure lock screen automatically.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Samsung: Settings → Lock screen and AOD → Now bar → View more → enable Planner OS, if listed. In Notifications → Lock screen notifications, choose Cards, allow Planner OS under Show content, and turn off Show alerting notifications only. The running timer stays silent between its start and finish tones.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))
+        TextButton(onClick={TimerVisibility.openChannelSettings(c)}){Text(" Timer visibility settings")}
+        if(Build.VERSION.SDK_INT>=36)TextButton(onClick={TimerVisibility.openLiveSettings(c)}){Text(" Allow Live timer updates")}
+        TextButton(onClick={TimerVisibility.openAppSettings(c)}){Text(" Android notification settings")}
         Text("Same 30/5-minute task reminders and daily briefs. Disable browser notifications on this phone to avoid receiving both. On Samsung, allow background battery usage for dependable delivery.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Offline: saved days remain readable. Reconnect to save edits. Focus timers run without network access.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
         error?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp)}

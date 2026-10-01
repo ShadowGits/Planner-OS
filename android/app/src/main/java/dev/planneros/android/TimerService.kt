@@ -57,6 +57,8 @@ class TimerService:Service(){
     private var toggleView:TextView?=null
     private var titleView:TextView?=null
     private var compactClock:TextView?=null
+    private var compactStatus:TextView?=null
+    private var compactProgress:android.widget.ProgressBar?=null
     private var bubbleDark:Boolean?=null
     private lateinit var windows:WindowManager
     private var hidden=false
@@ -67,7 +69,7 @@ class TimerService:Service(){
             s=finished;state=finished;TimerStore.save(this@TimerService,finished);TimerSounds.completed(this@TimerService,finished)
         }
         if(bubble!=null&&!Settings.canDrawOverlays(this@TimerService))removeBubble()
-        titleView?.text=s.title;compactClock?.text=timerText(TimerStore.remaining(this@TimerService,s));dialView?.display(s,TimerStore.remaining(this@TimerService,s));toggleView?.text=if(s.running)"Ⅱ Pause" else "▶ Resume"
+        titleView?.text=s.title;compactClock?.text=timerText(TimerStore.remaining(this@TimerService,s));compactStatus?.text=if(s.running)"FOCUSING"else "PAUSED";compactProgress?.progress=(TimerStore.remaining(this@TimerService,s).toDouble()/s.durationMs.coerceAtLeast(1)*1000).toInt().coerceIn(0,1000);dialView?.display(s,TimerStore.remaining(this@TimerService,s));toggleView?.text=if(s.running)"Ⅱ Pause" else "▶ Resume"
         getSystemService(NotificationManager::class.java).notify(FOCUS_ID,notification(s));handler.postDelayed(this,1000)
     }}
     override fun onCreate(){
@@ -159,7 +161,7 @@ class TimerService:Service(){
         if(bubble!=null){if(bubbleDark==dark)return else removeBubble()}
         val wine=if(dark)Color.rgb(210,165,112)else Color.rgb(128,80,47)
         val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;elevation=dp(10).toFloat();padding(dp(8));background=GradientDrawable().apply{setColor(if(dark)Color.rgb(40,32,26)else Color.rgb(255,251,245));setStroke(dp(1),wine);cornerRadius=dp(16).toFloat()}}
-        val title=label(s.title,13f).apply{typeface=Typeface.DEFAULT_BOLD;maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END;maxWidth=dp(176)}
+        val title=label(s.title,if(minimized)14f else 13f).apply{typeface=Typeface.DEFAULT_BOLD;maxLines=if(minimized)1 else 2;ellipsize=android.text.TextUtils.TruncateAt.END;maxWidth=dp(176)}
         titleView=title
         dialView=StopwatchDialView(this).apply{palette(dark);display(s,TimerStore.remaining(this@TimerService,s))}
         val buttons=LinearLayout(this)
@@ -169,17 +171,26 @@ class TimerService:Service(){
         val close=label("×",18f).apply{minimumHeight=dp(48);minimumWidth=dp(48);gravity=Gravity.CENTER;contentDescription="Hide floating timer, keep timer running";setOnClickListener{hidden=true;removeBubble()}}
         buttons.addView(toggleView);buttons.addView(cancel);buttons.addView(finish)
         val resize=label(if(minimized)"↗"else "−",18f).apply{minimumHeight=dp(48);minimumWidth=dp(48);gravity=Gravity.CENTER;contentDescription=if(minimized)"Expand floating timer"else "Minimize floating timer";setOnClickListener{minimized=!minimized;getSharedPreferences("focus",MODE_PRIVATE).edit().putBoolean("minimized",minimized).apply();removeBubble();state?.let{showBubble(it)}}}
-        val header=LinearLayout(this).apply{minimumWidth=dp(192);gravity=Gravity.CENTER_VERTICAL;addView(title,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));addView(resize);addView(close)}
-        box.addView(header);if(!minimized){box.addView(dialView);box.addView(buttons)}else{dialView=null;toggleView=null;compactClock=label(timerText(TimerStore.remaining(this,s)),14f).apply{setTextColor(wine);typeface=Typeface.MONOSPACE;contentDescription="Minimized timer countdown"};box.addView(compactClock)}
+        val header=LinearLayout(this).apply{minimumWidth=dp(192);gravity=Gravity.CENTER_VERTICAL;addView(title,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));if(!minimized)addView(resize);addView(close)}
+        box.addView(header);if(!minimized){box.addView(dialView);box.addView(buttons)}else{
+            dialView=null;toggleView=null
+            compactClock=label(timerText(TimerStore.remaining(this,s)),28f).apply{setTextColor(if(dark)Color.rgb(255,245,228)else Color.rgb(60,43,31));typeface=Typeface.create("sans-serif-condensed",Typeface.BOLD);contentDescription="Minimized timer countdown"}
+            val timeRow=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;addView(compactClock,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));addView(resize)}
+            box.addView(timeRow)
+            compactStatus=label(if(s.running)"FOCUSING"else "PAUSED",10f).apply{setTextColor(wine);typeface=Typeface.DEFAULT_BOLD}
+            box.addView(compactStatus)
+            compactProgress=android.widget.ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{max=1000;progress=(TimerStore.remaining(this@TimerService,s).toDouble()/s.durationMs.coerceAtLeast(1)*1000).toInt().coerceIn(0,1000);progressTintList=android.content.res.ColorStateList.valueOf(wine);progressBackgroundTintList=android.content.res.ColorStateList.valueOf(if(dark)Color.rgb(87,66,46)else Color.rgb(216,195,169))}
+            box.addView(compactProgress,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(5)).apply{topMargin=dp(6);bottomMargin=dp(4)})
+        }
         val position=getSharedPreferences("focus",MODE_PRIVATE)
         val p=WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START;x=position.getInt("bubble_x",dp(12)).coerceIn(0,(resources.displayMetrics.widthPixels-dp(200)).coerceAtLeast(0));y=position.getInt("bubble_y",dp(90)).coerceIn(0,(resources.displayMetrics.heightPixels-dp(180)).coerceAtLeast(0))}
         var startX=0;var startY=0;var touchX=0f;var touchY=0f
         val drag=View.OnTouchListener{view,event->when(event.action){MotionEvent.ACTION_DOWN->{startX=p.x;startY=p.y;touchX=event.rawX;touchY=event.rawY;true};MotionEvent.ACTION_MOVE->{p.x=(startX+event.rawX-touchX).toInt().coerceIn(0,(resources.displayMetrics.widthPixels-box.width).coerceAtLeast(0));p.y=(startY+event.rawY-touchY).toInt().coerceIn(0,(resources.displayMetrics.heightPixels-box.height).coerceAtLeast(0));runCatching{windows.updateViewLayout(box,p)};true};MotionEvent.ACTION_UP->{position.edit().putInt("bubble_x",p.x).putInt("bubble_y",p.y).apply();if(kotlin.math.abs(event.rawX-touchX)<dp(4)&&kotlin.math.abs(event.rawY-touchY)<dp(4))view.performClick();true};else->true}}
-        title.setOnClickListener{startActivity(Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))};dialView?.setOnClickListener{title.performClick()};title.setOnTouchListener(drag);dialView?.setOnTouchListener(drag)
+        title.setOnClickListener{if(minimized)resize.performClick()else startActivity(Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))};compactClock?.setOnClickListener{resize.performClick()};box.setOnClickListener{if(minimized)resize.performClick()};compactStatus?.setOnClickListener{resize.performClick()};dialView?.setOnClickListener{title.performClick()};title.setOnTouchListener(drag);dialView?.setOnTouchListener(drag);if(minimized){box.setOnTouchListener(drag);compactClock?.setOnTouchListener(drag);compactStatus?.setOnTouchListener(drag);compactProgress?.setOnTouchListener(drag)}
         try{windows.addView(box,p);bubble=box;bubbleDark=dark}catch(_:SecurityException){removeBubble()}catch(_:WindowManager.BadTokenException){removeBubble()}
     }
     private fun LinearLayout.padding(value:Int){setPadding(value,value,value,value)}
-    private fun removeBubble(){bubble?.let{runCatching{windows.removeView(it)}};bubble=null;dialView=null;toggleView=null;titleView=null;compactClock=null;bubbleDark=null}
+    private fun removeBubble(){bubble?.let{runCatching{windows.removeView(it)}};bubble=null;dialView=null;toggleView=null;titleView=null;compactClock=null;compactStatus=null;compactProgress=null;bubbleDark=null}
     override fun onDestroy(){handler.removeCallbacksAndMessages(null);state=null;removeBubble();super.onDestroy()}
     companion object{const val FOCUS_ID=51;const val FOCUS_CHANNEL="focus-timer"}
 }

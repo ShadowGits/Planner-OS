@@ -1,4 +1,4 @@
-# Android 1.0.3 — timer sounds, wooden lock-screen dial and overdue Inbox
+# Android 1.0.5 — timer sounds, wooden lock-screen dial and overdue Inbox
 
 The Android timer now has distinct original start and completion chimes. Its floating wooden face is smaller (180×190dp), with brown wood, a cream face and a thicker 4dp shrinking track. The in-app countdown bar is brown and 5dp thick. Digits show whole seconds; the perimeter animates locally without network calls.
 
@@ -19,3 +19,11 @@ The deliver script puts the installable APK in the established Google Drive `PLA
 ## 1.0.4 minimize follow-up
 
 Floating timer now has separate Minimize/Expand and Hide controls. The compact pill retains task name and whole-second countdown; the service, sounds and lock-screen timer continue running. Minimized preference survives service recovery. VersionCode6, version1.0.4, SHA256 `6687d47b6beb894e0039d1269ee06a9a15c6717a1df12677abaf88bc4679b298`. Final Android test/lint/assembly checks passed (65 tests, zero lint errors). The wooden activity was verified over a temporary emulator PIN lock with Pause/Resume, and completion sound event was verified at the end of a real one-minute timer. The live authenticated Inbox endpoint returned HTTP200 on revision9b01d38.
+
+## 1.0.5 compact timer and Samsung visibility follow-up
+
+Compact timer now has a bold task name, large espresso countdown, explicit Focus/Paused state and 5dp progress bar. Drag the name, countdown, status, progress or empty background to move it; tap to expand. Emulator window-frame verification proved countdown dragging moves the window horizontally/vertically and Expand restores its full height.
+
+Settings provides the current channel and Live Update status, direct timer channel/promotion links with fallback, and Open wooden lock-screen timer. Samsung guidance covers Cards, Show content, the alerting-only filter and Now Bar app visibility. This cannot enable phone privacy settings automatically or guarantee a permanently floating wooden window above a secure lock screen. User confirmed the notification appears in the shade but remains absent on the physical Samsung; that physical-device result is still unverified.
+
+Final APK 1.0.5 / versionCode7: SHA256 `e671bea8dc56fd0e084de92027d61c1abd8fc9f9d3d7ab834bb054570cfea1bf`. Final assembly/lint passed; 65 Android unit tests passed for the implementation. Backend deployed successfully at251b07d, live health and authenticated Inbox HTTP200 verified.
