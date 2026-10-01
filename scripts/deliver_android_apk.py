@@ -2,8 +2,10 @@
 """Deliver a verified APK to the user's established latest-app folder."""
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import zipfile
@@ -24,6 +26,16 @@ def main():
     with zipfile.ZipFile(source) as apk:
         if not {"AndroidManifest.xml", "classes.dex"}.issubset(apk.namelist()) or apk.testzip():
             parser.error("APK contents are invalid")
+    metadata_path = source.parent / "output-metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text())
+        artifact = next(item for item in metadata["elements"] if item["outputFile"] == source.name)
+        version = artifact["versionName"]
+    except (OSError, ValueError, KeyError, StopIteration, TypeError):
+        parser.error("Build metadata is missing or does not match this APK; use the APK from its Gradle output folder")
+    if not isinstance(version, str) or not re.fullmatch(r"\d+(?:\.\d+)*(?:[-+][A-Za-z0-9.-]+)?", version):
+        parser.error("Build metadata contains an invalid APK version")
+    filename = f"Planner-OS-Android-{version}.apk"
     for folder in (ROOT / "android/artifacts", ROOT / "artifacts", DESTINATION):
         folder.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=".planner-apk-", dir=folder)
@@ -32,11 +44,16 @@ def main():
                 shutil.copyfileobj(original, target)
                 target.flush()
                 os.fsync(target.fileno())
-            os.replace(temporary, folder / "Planner-OS-Android.apk")
+            os.replace(temporary, folder / filename)
         finally:
             Path(temporary).unlink(missing_ok=True)
-        (folder / "Planner-OS-Android.apk.sha256").write_text(digest + "  Planner-OS-Android.apk\n")
-        print(folder / "Planner-OS-Android.apk")
+        (folder / (filename + ".sha256")).write_text(digest + "  " + filename + "\n")
+        # Replace the identical old unnamed copy, preserving all other releases.
+        legacy = folder / "Planner-OS-Android.apk"
+        if legacy.exists() and hashlib.sha256(legacy.read_bytes()).hexdigest() == digest:
+            legacy.unlink()
+            (folder / "Planner-OS-Android.apk.sha256").unlink(missing_ok=True)
+        print(folder / filename)
     print("SHA-256:", digest)
 
 

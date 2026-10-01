@@ -4,7 +4,7 @@ Native Kotlin / Jetpack Compose companion for the same Planner OS backend as the
 
 ## Install
 
-The generated `artifacts/Planner-OS-Android.apk` is a debug-signed, installable APK for personal use. Transfer it to the phone, open it with My Files, and allow that source to install unknown apps. This build is not a Play Store release. Keep the same signing key for future upgrades; uninstalling loses local configuration and saved days.
+The generated `artifacts/Planner-OS-Android-<version>.apk` (for example, `Planner-OS-Android-1.0.5.apk`) is a debug-signed, installable APK for personal use. Transfer it to the phone, open it with My Files, and allow that source to install unknown apps. This build is not a Play Store release. Keep the same signing key for future upgrades; uninstalling loses local configuration and saved days.
 
 On first launch, enter your existing HTTPS backend origin (without `/app/`) and `PWA_ACCESS_KEY` in Settings. No server key is embedded. The key is AES-GCM encrypted with a non-exportable Android Keystore key; backups and cleartext network traffic are disabled. HTTP redirects are rejected to keep credentials from following a redirect to another host.
 
@@ -51,7 +51,7 @@ To deliver a verified APK from the repository root:
 python3 scripts/deliver_android_apk.py --sha256 <verified-apk-sha256>
 ```
 
-The delivery script verifies the APK ZIP and SHA256, then replaces the copies in `android/artifacts`, root `artifacts`, and your configured Google Drive **PLANNER OS LATEST APP** folder.
+The delivery script verifies the APK ZIP and SHA256 and reads its version from matching Gradle output metadata. It writes `Planner-OS-Android-<version>.apk` and its checksum in `android/artifacts`, root `artifacts`, and your configured Google Drive **PLANNER OS LATEST APP** folder. Earlier versioned releases remain available; an identical unnamed legacy copy is replaced by the versioned copy.
 
 ## Device validation
 
