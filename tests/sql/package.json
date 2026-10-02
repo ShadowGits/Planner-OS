@@ -1,0 +1,11 @@
+{
+  "name": "planner-sql-regressions",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test completed-task-deletion.test.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  }
+}

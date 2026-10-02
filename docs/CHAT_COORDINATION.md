@@ -5,7 +5,7 @@ Both chats use `/Users/sparsh/VibeCoding/Planner_OS`. Files are shared; conversa
 ## Ownership and release handoff
 
 - **Suggest Planner OS improvements** (`01a0f75e-40ca-71d1-921f-e40f02b28575`): current Android Inbox, compact date header, Dashboard, associated API/tests/docs, and next combined APK release. Release ownership acknowledged; status below.
-- **Clone and understand Planner OS** (`01a0f12f-a716-7933-b1fb-6c4fefdf754c`): timer, draggable overlay, wooden lock-screen Activity and Samsung Now Bar investigation. No outstanding source edits from this chat. This chat is holding app edits, builds, commits and deployments while the other chat completes its release.
+- **Clone and understand Planner OS** (`01a0f12f-a716-7933-b1fb-6c4fefdf754c`): timer, draggable overlay, wooden lock-screen Activity and Samsung Now Bar investigation; now owns the web Dashboard milestone-linking/completion investigation described below. Android release ownership remains with Suggest Planner OS improvements.
 - Existing PWA Day Recovery work is a separate workstream. Do not sweep it into a commit or deployment. `planner_api/day.py` has changes from multiple workstreams: stage only the release's own hunks with the corresponding modules.
 
 ## Next APK
@@ -43,3 +43,19 @@ Acknowledged by **Suggest Planner OS improvements**: this chat owns the combined
 - Signing certificate is unchanged: SHA-256 `8ac77cf9c1f5a6c12035a272f13e68b1c35952a75101a7a96cce9b2cd89cfa36`.
 - APK SHA-256: `1dcb72189d931f83cceab68e719521a8af3ddedff855d29697d132ed94085a54`.
 - Delivered `Planner-OS-Android-1.0.7.apk` and its checksum to the mandatory Drive folder, `android/artifacts/` and `artifacts/`. Source is committed locally without pushing; unrelated PWA Day Recovery files remain outside this release. Missing tracker setup, web editing/upload features and Samsung automatic lock-screen/Now Bar limitations from 1.0.6 remain unchanged.
+
+## 2026-10-02 web milestone handoff
+
+- User clarified in **Clone and understand Planner OS** that the broken **Link to milestone** button and requested milestone completion are in the **web Dashboard**. That chat owns the web UI, milestone/task-linking API fixes and any corresponding deployment. No Android version bump or APK is required for this request. Suggest Planner OS improvements is idle and will not edit those paths or build/deploy concurrently.
+- Source context: this repository's `planner_api/dashboard.py` exposes only the read-only `/v2/dashboard/metrics` surface. `docs/dashboard_wiring.md` describes the older read-only Streamlit design; it does not establish the location or capabilities of the user's current web UI. The literal Link to milestone control was not found in the inspected Android/PWA source. Locate the active web source before applying a fix.
+- Existing core functionality: `ProjectService.update_milestone()` in `planner_core/services.py` already accepts `status`, and `_milestone_health()` excludes milestones explicitly marked `done`. Task updates already accept `milestone_id`. `tests/test_planner_core.py::test_milestone_crud_and_task_linking` exercises creation/linking and relinking; the milestone-health tests cover task-derived completion. Verify UI persistence and refreshed metrics when adding explicit completion.
+- Preserve the native 1.0.7 design, independent Day/Dashboard loading and signing identity. The delivered source is local commit `4bfe2a5`; the manual backend deployment details remain above. Separate PWA Day Recovery work is still uncommitted and must not be swept into an unrelated deployment.
+- No DND implementation is included in this handoff. The other chat will inspect the reported batch-delete HTTP 400 without deleting unidentified tasks; no task IDs or retry authorization were supplied with that report.
+
+## Web milestone and completed-task deletion repair — 2026-10-02
+
+**Clone and understand Planner OS** owns web milestone linking/completion in the isolated `/private/tmp/planner-web-milestone-fix` checkout of `ShadowGits/Deutschland-Dash`. Android files, version and APK remain unchanged. **Suggest Planner OS improvements** acknowledged the web handoff.
+
+The web picker now uses a native modal outside clipping, supports metadata-table rows and changing/removing links, and preserves the prior link on failed saves. Project milestones have Mark complete/Reopen controls, including empty milestones; Home milestone health also supports completion. Linked task status is unchanged by milestone completion. Browser verification and production checks are in progress; deployment is not yet confirmed.
+
+Deletion diagnosis recovered the five obsolete DMAT462 tasks from Workspace Context Availability: all are done with a completion whose recurrence key is NULL. Migration 0034 repairs the original ON DELETE SET NULL / source-reference CHECK conflict, preserving completion history and original task IDs. Real embedded PostgreSQL reproduces the old failure and verifies the repair for single/batch deletion. Live migration awaits authorized Supabase SQL access; no live deletion retry has occurred in this chat. Unrelated Day Recovery/PWA changes and migration 0033 are excluded.
