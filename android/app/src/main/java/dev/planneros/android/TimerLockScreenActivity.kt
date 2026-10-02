@@ -88,8 +88,8 @@ class TimerLockScreenActivity : Activity() {
         startActivity(Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         finish()
     }
-    override fun onResume(){super.onResume();handler.removeCallbacks(refresh);handler.post(refresh)}
-    override fun onPause(){handler.removeCallbacks(refresh);super.onPause()}
+    override fun onResume(){super.onResume();FocusWorkLogs.foreground++;handler.removeCallbacks(refresh);handler.post(refresh)}
+    override fun onPause(){FocusWorkLogs.foreground=(FocusWorkLogs.foreground-1).coerceAtLeast(0);handler.removeCallbacks(refresh);super.onPause()}
     override fun onDestroy(){handler.removeCallbacksAndMessages(null);super.onDestroy()}
     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
 }

@@ -47,7 +47,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 
 class DashboardActivity:ComponentActivity(){
     private val dashboardSession=mutableStateOf("")
-    override fun onResume(){super.onResume();dashboardSession.value="${SecureConfig(this).generation}:${Reminders.revision(this)}"}
+    override fun onResume(){super.onResume();FocusWorkLogs.foreground++;dashboardSession.value="${SecureConfig(this).generation}:${Reminders.revision(this)}"}
+    override fun onPause(){FocusWorkLogs.foreground=(FocusWorkLogs.foreground-1).coerceAtLeast(0);super.onPause()}
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState);enableEdgeToEdge()
         setContent{
@@ -74,6 +75,7 @@ private fun tabs(group:String,project:String?):List<Pair<String,String>> = when 
 @Composable private fun DashboardScreen(exit:()->Unit){
     val compactNav=LocalConfiguration.current.screenWidthDp<360&&LocalDensity.current.fontScale>1.2f
     val context=LocalContext.current;val repo=remember{DashboardRepository(context)};val scope=rememberCoroutineScope()
+    LaunchedEffect(Unit){while(true){FocusWorkLogs.prompt(context);kotlinx.coroutines.delay(1000)}}
     var group by rememberSaveable{mutableStateOf("Overview")};var subtab by rememberSaveable{mutableIntStateOf(0)}
     var menuOpen by rememberSaveable{mutableStateOf(false)};var searchOpen by rememberSaveable{mutableStateOf(false)}
     var projectInfo by rememberSaveable{mutableStateOf("{}")}

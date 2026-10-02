@@ -12,13 +12,13 @@ data class AutoFocusBlock(val id:String,val title:String,val startMillis:Long,va
 }
 
 fun autoFocusBlock(id:String,title:String,clockMinutes:Int,duration:Int,done:Boolean,
-                   dayDate:String,timezone:String):AutoFocusBlock? {
+                   dayDate:String,timezone:String,remainingSeconds:Int?=null):AutoFocusBlock? {
     if(done||id.isBlank()||id.startsWith("draft:")||id.startsWith("local:")||id.startsWith("pending:")||
-        clockMinutes !in 0 until 30*60||duration !in 1..1440)return null
+        clockMinutes !in 0 until 30*60||duration !in 1..1440||remainingSeconds?.let{it<=0}==true)return null
     val local=LocalDate.parse(dayDate).plusDays((clockMinutes/1440).toLong())
         .atTime(LocalTime.of((clockMinutes/60)%24,clockMinutes%60))
     val start=local.atZone(ZoneId.of(timezone)).toInstant().toEpochMilli()
-    return AutoFocusBlock(id,title,start,start+duration*60_000L,dayDate)
+    return AutoFocusBlock(id,title,start,start+(remainingSeconds?.toLong()?.times(1000)?:duration*60_000L),dayDate)
 }
 
 /** Latest-starting active block wins overlaps; IDs break equal-time ties. */

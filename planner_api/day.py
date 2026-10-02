@@ -129,6 +129,8 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     from planner_api.native_dashboard import register_native_dashboard_routes
     register_native_dashboard_routes(api, cloud, _authorize)
+    from planner_api.work_log import attach_work_progress, register_work_log_routes
+    register_work_log_routes(api, cloud, _authorize)
 
     @api.get("/v2/day")
     def get_day(
@@ -138,6 +140,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         _authorize(x_app_key)
         core = _core()
         data = core.tasks.day_view(on_date)["data"]
+        attach_work_progress(data, core.repository)
         return _envelope(True, "Day view", {**data, "timezone": core.timezone})
 
     @api.get("/v2/day/inbox")
@@ -151,6 +154,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             data = core.tasks.inbox_view(on_date)["data"]
         except ValueError as error:
             raise HTTPException(status_code=400, detail={"code": "INBOX_DATE_INVALID", "message": str(error)}) from error
+        attach_work_progress(data, core.repository)
         return _envelope(True, "Inbox", {**data, "timezone": core.timezone})
 
     @api.get("/v2/week")

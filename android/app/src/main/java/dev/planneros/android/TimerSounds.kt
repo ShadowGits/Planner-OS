@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 object TimerSounds {
     const val START_CHANNEL="focus-start-sound"
     const val END_CHANNEL="focus-completion-sound"
+    const val WORK_CHANNEL="focus-actual-work"
     private const val START_ID=52
     private const val END_ID=53
     fun setup(c:Context){
@@ -29,7 +30,23 @@ object TimerSounds {
     }
     fun clear(c:Context){val m=c.getSystemService(NotificationManager::class.java);m.cancel(START_ID);m.cancel(END_ID)}
     fun started(c:Context,s:TimerState){c.getSystemService(NotificationManager::class.java).cancel(START_ID);post(c,s,false)}
-    fun completed(c:Context,s:TimerState)=post(c,s,true)
+    fun completed(c:Context,s:TimerState,quiet:Boolean=false){
+        setup(c)
+        c.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(WORK_CHANNEL,"Timer ended — log actual work",NotificationManager.IMPORTANCE_HIGH).apply{
+            setSound(Uri.parse("android.resource://${c.packageName}/raw/focus_complete"),AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT).build());enableVibration(true);lockscreenVisibility=Notification.VISIBILITY_PUBLIC
+        })
+        val open=Intent(c,WorkLogActivity::class.java).putExtra("task_ref",s.taskId).putExtra("work_id",s.sessionId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val id=workId(s.sessionId)
+        val pending=PendingIntent.getActivity(c,id,open,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification=NotificationCompat.Builder(c,WORK_CHANNEL).setSmallIcon(R.drawable.ic_notification).setContentTitle("Timer finished · ${s.title}")
+            .setContentText("Log how much you actually worked").setContentIntent(pending).setOngoing(true).setAutoCancel(false)
+            .setPriority(NotificationCompat.PRIORITY_HIGH).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setSilent(quiet)
+            .addAction(0,"Log actual work",pending).build()
+        try{c.getSystemService(NotificationManager::class.java).notify(id,notification)}catch(_:SecurityException){}
+    }
+    internal fun workId(id:String)=1000+(id.hashCode() and Int.MAX_VALUE)%1000000
+    fun clearWork(c:Context,id:String){c.getSystemService(NotificationManager::class.java).cancel(workId(id))}
     private fun post(c:Context,s:TimerState,finished:Boolean){
         if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         val manager=c.getSystemService(NotificationManager::class.java)

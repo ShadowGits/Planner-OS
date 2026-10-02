@@ -65,7 +65,7 @@ object AutoFocusScheduler {
     fun sync(c:Context,day:Day)=synchronized(lock){
         if(day.cached||day.connectionGeneration!=SecureConfig(c).generation||day.alarmRevision?.let{it!=Reminders.revision(c)}==true)return@synchronized
         val now=System.currentTimeMillis()
-        val fresh=day.tasks.mapNotNull{task->autoFocusBlock(task.id,task.title,task.clockMinutes,task.minutes,task.done,day.date,day.timezone)}
+        val fresh=day.tasks.mapNotNull{task->autoFocusBlock(task.id,task.title,task.clockMinutes,task.minutes,task.done,day.date,day.timezone,task.remainingSeconds)}
         val merged=(blocks(c).filter{it.originDate!=day.date&&it.endMillis>now}+fresh)
             .associateBy{it.occurrence}.values.toList()
         write(c,merged)
@@ -79,7 +79,7 @@ object AutoFocusScheduler {
         val ids=tasks.map{it.id}.toSet()
         val fresh=tasks.mapNotNull{task->
             val date=if(task.clockMinutes<1440)task.date?:origin else origin
-            autoFocusBlock(task.id,task.title,task.clockMinutes,task.minutes,task.done,date,zone)
+            autoFocusBlock(task.id,task.title,task.clockMinutes,task.minutes,task.done,date,zone,task.remainingSeconds)
         }
         write(c,(blocks(c).filterNot{it.id in ids}+fresh).distinctBy{it.occurrence});arm(c)
     }

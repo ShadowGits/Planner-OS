@@ -136,6 +136,7 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
                 Text("${taskEmoji(task.title)} ${task.title}",fontSize=if(compact||columns>1)13.sp else 17.sp,lineHeight=if(compact)16.sp else 20.sp,fontWeight=FontWeight.SemiBold,maxLines=if(compact)1 else if(columns>1)3 else 4,overflow=TextOverflow.Ellipsis,textDecoration=if(task.done)TextDecoration.LineThrough else null)
                 if(showMetadata)Text("${displayClock(task.clockMinutes,twelve)}${if(columns<3)" – ${displayClock(task.clockMinutes+task.minutes,twelve)}" else ""} · ${durationLabel(task.minutes)}${if(task.recurrenceKey!=null||task.habit)" ↻" else ""}",fontSize=if(compact||columns>1)9.sp else 11.sp,lineHeight=if(compact)11.sp else 14.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 if(task.parent!=null&&!compact)Text("${task.parentTitle?.let{"$it · "}.orEmpty()}Part ${task.partIndex?:"?"}/${task.partCount?:"?"}",fontSize=10.sp,maxLines=2,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                if(task.workedSeconds>0&&!compact)Text("${workDuration(task.workedSeconds)} worked · ${workDuration(task.remainingSeconds)} left",fontSize=11.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.primary)
                 if(ongoing&&!compact)Text("ONGOING",fontSize=9.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
             }
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified){
@@ -162,6 +163,7 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
                 val stamp=dated?.let{runCatching{LocalDate.parse(it).format(DateTimeFormatter.ofPattern("MMM d"))}.getOrDefault(it)}
                 Text(listOfNotNull(if(overdue&&dated!=null)"Overdue" else if(task.done)"Done" else if(task.time==null)"Unscheduled" else null,stamp,task.time?.take(5),durationLabel(task.minutes),if(task.parent!=null)"Part ${task.partIndex?:"?"}/${task.partCount?:"?"}" else if(task.habit)"Habit" else null).joinToString(" · "),
                     fontSize=11.sp,color=if(overdue&&dated!=null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)
+                if(task.workedSeconds>0)Text("${workDuration(task.workedSeconds)} worked${if(task.done)""else " · ${workDuration(task.remainingSeconds)} left"}",fontSize=13.sp,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(top=3.dp))
             }
             if(!task.done)IconButton(onClick=schedule,enabled=interactive,modifier=Modifier.size(44.dp)){Icon(Icons.Rounded.Schedule,"Schedule ${task.title}",modifier=Modifier.size(20.dp))}
         }

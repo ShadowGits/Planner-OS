@@ -59,3 +59,11 @@ Acknowledged by **Suggest Planner OS improvements**: this chat owns the combined
 The web picker now uses a native modal outside clipping, supports metadata-table rows and changing/removing links, and preserves the prior link on failed saves. Project milestones have Mark complete/Reopen controls, including empty milestones; Home milestone health also supports completion. Linked task status is unchanged by milestone completion. Browser verification and production checks are in progress; deployment is not yet confirmed.
 
 Deletion diagnosis recovered the five obsolete DMAT462 tasks from Workspace Context Availability: all are done with a completion whose recurrence key is NULL. Migration 0034 repairs the original ON DELETE SET NULL / source-reference CHECK conflict, preserving completion history and original task IDs. Real embedded PostgreSQL reproduces the old failure and verifies the repair for single/batch deletion. Live migration awaits authorized Supabase SQL access; no live deletion retry has occurred in this chat. Unrelated Day Recovery/PWA changes and migration 0033 are excluded.
+
+## Actual-work logging — 2026-10-02
+
+**Suggest Planner OS improvements** owns Android actual-time entry, elapsed Finish logging, atomic task/habit remainder scheduling, related API, migration 0035, tests and next APK 1.0.8/versionCode 10. The user explicitly asked to leave further milestone work alone. Native 1.0.7 Dashboard design and independent Day/Dashboard loading remain in place.
+
+Work is under verification. Migration 0035 is standalone and does not apply or depend on uncommitted Day Recovery migration 0033. Current backend is 968bea8 from the completed web milestone/deletion work. Do not deploy uncommitted Day Recovery/PWA files or change milestones as part of this release.
+
+Before activation: migration 0035 must exist in the live Supabase workspace. The available service-role REST connection can call RPCs but cannot execute schema DDL, and there is no SQL/admin connector. The user previously applied 0034 through the SQL editor. Keep this prerequisite explicit; do not deliver an APK whose mandatory expired-timer form cannot save.

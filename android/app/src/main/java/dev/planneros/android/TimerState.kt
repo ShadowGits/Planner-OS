@@ -3,7 +3,8 @@ package dev.planneros.android
 /** elapsedRealtime drives live timers; wall time is only a reboot recovery anchor. */
 data class TimerState(val taskId: String, val title: String, val durationMs: Long,
     val elapsedBeforeMs: Long=0, val anchorElapsedMs: Long=0, val anchorWallMs: Long=0,
-    val bootCount: Int=0, val running: Boolean=true, val completionAlerted:Boolean=false) {
+    val bootCount: Int=0, val running: Boolean=true, val completionAlerted:Boolean=false,
+    val sessionId:String=java.util.UUID.randomUUID().toString()) {
     fun elapsed(nowElapsed: Long,nowWall: Long,nowBoot: Int): Long = elapsedBeforeMs + if(!running) 0 else
         (if(nowBoot==bootCount) nowElapsed-anchorElapsedMs else nowWall-anchorWallMs).coerceAtLeast(0)
     fun remaining(nowElapsed: Long,nowWall: Long,nowBoot: Int): Long = durationMs-elapsed(nowElapsed,nowWall,nowBoot)

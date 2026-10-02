@@ -21,12 +21,14 @@ import javax.crypto.spec.GCMParameterSpec
 
 data class Task(val id: String, val title: String, val time: String?, val minutes: Int, val done: Boolean,
                 val starred: Boolean, val habit: Boolean, val parent: String?, val date: String?, val notes: String?, val projectId: String?,
-                val recurrenceKey: String? = null, val parentTitle: String? = null, val partIndex: Int? = null, val partCount: Int? = null, val dueDate: String? = null) {
+                val recurrenceKey: String? = null, val parentTitle: String? = null, val partIndex: Int? = null, val partCount: Int? = null, val dueDate: String? = null,
+                val workedSeconds:Int=0,val plannedSeconds:Int?=null) {
+    val remainingSeconds:Int get()=((plannedSeconds?:minutes*60)-workedSeconds).coerceAtLeast(0)
     val clockMinutes: Int get() = time?.split(":")?.let { it[0].toIntOrNull()?.times(60)?.plus(it.getOrNull(1)?.toIntOrNull() ?: 0) } ?: Int.MAX_VALUE
     companion object {
         fun from(j: JSONObject) = Task(j.getString("id"), j.optString("title"), j.nullString("start_time"), j.optInt("estimated_minutes",30).coerceAtLeast(1),
             j.optBoolean("done"),j.optBoolean("starred"),j.optBoolean("is_habit"),j.nullString("parent_task_id"),j.nullString("scheduled_date"),j.nullString("notes"),j.nullString("project_id"),
-            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"))
+            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"))
     }
 }
 fun JSONObject.nullString(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
@@ -67,6 +69,7 @@ class SecureConfig(private val context: Context) {
         val origin = u.toString().trimEnd('/')
         val changed = origin != baseUrl || key.trim() != key()
         if (changed) {
+            FocusWorkLogs.clearNotifications(context)
             TimerStore.reset(context)
             Reminders.reset(context)
             context.getSharedPreferences("day-cache",Context.MODE_PRIVATE).edit().clear().commit()
@@ -76,6 +79,7 @@ class SecureConfig(private val context: Context) {
         check(prefs.edit().putString("url",origin).putString("secret",Base64.encodeToString(cipher.iv,Base64.NO_WRAP)+":"+Base64.encodeToString(encrypted,Base64.NO_WRAP)).putLong("generation",generation + if(changed) 1 else 0).commit()) { "Connection settings could not be saved." }
     }
     fun clear() = synchronized(connectionLock) {
+        FocusWorkLogs.clearNotifications(context)
         TimerStore.reset(context); Reminders.reset(context)
         val nextGeneration = generation + 1
         prefs.edit().clear().putLong("generation",nextGeneration).commit()
@@ -99,6 +103,14 @@ class PlannerRepository(private val context: Context) {
     private fun invalidateDays() = synchronized(cacheLock) {
         mutationRevision++
         // Keep readable snapshots: quiet reconciliation replaces their contents.
+    }
+    private fun invalidateWorkSnapshots()=synchronized(cacheLock){
+        invalidateDays()
+        for(store in listOf(cache,inboxCache)){
+            val edit=store.edit()
+            store.all.forEach{(key,value)->if(key.startsWith("${config.generation}:")&&value is String)runCatching{edit.putString(key,JSONObject(value).put("_dirty",true).toString())}}
+            edit.commit()
+        }
     }
     /** Project changed rows into every cached logical-day copy, keeping unrelated rows. */
     fun isFresh(date:LocalDate,ttlMillis:Long=10*60*1000L):Boolean {
@@ -162,7 +174,7 @@ class PlannerRepository(private val context: Context) {
             .put("estimated_minutes",task.minutes).put("done",task.done).put("starred",task.starred).put("is_habit",task.habit)
             .put("parent_task_id",task.parent?:JSONObject.NULL).put("scheduled_date",task.date?:JSONObject.NULL).put("notes",task.notes?:JSONObject.NULL)
             .put("project_id",task.projectId?:JSONObject.NULL).put("recurrence_key",task.recurrenceKey?:JSONObject.NULL)
-            .put("parent_title",task.parentTitle?:JSONObject.NULL).put("part_index",task.partIndex?:JSONObject.NULL).put("part_total",task.partCount?:JSONObject.NULL).put("due_date",task.dueDate?:JSONObject.NULL)
+            .put("parent_title",task.parentTitle?:JSONObject.NULL).put("part_index",task.partIndex?:JSONObject.NULL).put("part_total",task.partCount?:JSONObject.NULL).put("due_date",task.dueDate?:JSONObject.NULL).put("worked_seconds",task.workedSeconds).put("planned_seconds",task.plannedSeconds?:JSONObject.NULL)
     }))
     suspend fun request(method: String,path: String,body: JSONObject?=null,dispatcher:CoroutineDispatcher=Dispatchers.IO): JSONObject = withContext(dispatcher) {
         val connection = config.connection()
@@ -198,6 +210,7 @@ class PlannerRepository(private val context: Context) {
                 Reminders.cancelTask(context,java.net.URLDecoder.decode(path.substringAfterLast('/'),"UTF-8"))
             }
             if(method == "POST" && path == "/v2/day/tasks") Reminders.invalidateSchedule(context)
+            if(method=="POST"&&path.endsWith("/work")){invalidateWorkSnapshots();Reminders.invalidateSchedule(context)}
             if((path.startsWith("/v2/day/tasks/") && method in listOf("PATCH","DELETE")) || (path == "/v2/day/tasks" && method == "POST")) invalidateDays()
             json ?: throw IllegalStateException("Server returned an invalid planner response.")
         } finally { c.disconnect() }

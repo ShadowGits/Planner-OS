@@ -49,6 +49,10 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal=22.dp).padding(bottom=24.dp)){
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(if(task==null)"New task" else "Edit task",fontSize=24.sp,fontWeight=FontWeight.Bold);IconButton(onClick=dismiss){Icon(Icons.Rounded.Close,"Close task editor")}}
             task?.parent?.let{Text("${task.parentTitle.orEmpty()} · Part ${task.partIndex?:"?"} of ${task.partCount?:"?"}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+            task?.let{t->
+                OutlinedButton(enabled=!busy,onClick={FocusWorkLogs.open(c,t.id)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.History,null);Text(" Log time")}
+                if(t.workedSeconds>0)Text("${workDuration(t.workedSeconds)} worked${if(t.done)""else " · ${workDuration(t.remainingSeconds)} remaining"}",fontSize=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=8.dp))
+            }
             OutlinedTextField(title,{title=it},label={Text("Task name")},readOnly=task?.habit==true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),maxLines=4)
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(date,{date=it},label={Text("Date · YYYY-MM-DD")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),trailingIcon={IconButton(onClick={val d=runCatching{LocalDate.parse(date)}.getOrDefault(selected);DatePickerDialog(pickerContext(c,dark),{_,y,m,day->date=LocalDate.of(y,m+1,day).toString()},d.year,d.monthValue-1,d.dayOfMonth).show()}){Icon(Icons.Rounded.CalendarMonth,"Choose task date")}})

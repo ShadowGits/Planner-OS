@@ -13,6 +13,7 @@
         </activity>
         <activity android:name=".TimerLockScreenActivity" android:exported="false" android:excludeFromRecents="true" android:launchMode="singleTop" android:taskAffinity="" />
         <activity android:name=".DashboardActivity" android:exported="false" />
+        <activity android:name=".WorkLogActivity" android:exported="false" android:launchMode="singleTop" />
         <service android:name=".TimerService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled scheduled or manual task focus countdown with a movable floating timer visible across apps" />
         </service>

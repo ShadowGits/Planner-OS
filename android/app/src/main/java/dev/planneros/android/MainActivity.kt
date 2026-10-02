@@ -58,7 +58,7 @@ class MainActivity:ComponentActivity(){
     private var finishId by mutableStateOf<String?>(null)
     private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()){Reminders.setup(this)}
     override fun onCreate(savedInstanceState:Bundle?){
-        super.onCreate(savedInstanceState);enableEdgeToEdge();finishId=intent.getStringExtra("finish_timer")
+        super.onCreate(savedInstanceState);enableEdgeToEdge();FocusWorkLogs.restoreNotifications(this);finishId=intent.getStringExtra("finish_timer")
         setContent{
             val prefs=remember{getSharedPreferences("appearance",MODE_PRIVATE)}
             var appearance by remember{mutableStateOf(prefs.getString("theme","system")?:"system")}
@@ -75,6 +75,8 @@ class MainActivity:ComponentActivity(){
         if(TimerStore.read(this)!=null)TimerStore.action(this,"SHOW")
     }
     override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);finishId=intent.getStringExtra("finish_timer")}
+    override fun onResume(){super.onResume();FocusWorkLogs.foreground++}
+    override fun onPause(){FocusWorkLogs.foreground=(FocusWorkLogs.foreground-1).coerceAtLeast(0);super.onPause()}
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -250,7 +252,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     }
     LaunchedEffect(inbox,connectionRevision){if(inbox)refreshInbox()}
     LaunchedEffect(selectedIso,connectionRevision){while(true){delay(60*60*1000L);refresh(true)}}
-    LaunchedEffect(Unit){while(true){timer=TimerStore.read(context);remaining=timer?.let{TimerStore.remaining(context,it)}?:0;clock=ZonedDateTime.now(ZoneId.of(day?.timezone?:"Asia/Kolkata"));delay(1000)}}
+    LaunchedEffect(Unit){while(true){timer=TimerStore.read(context);remaining=timer?.let{TimerStore.remaining(context,it)}?:0;clock=ZonedDateTime.now(ZoneId.of(day?.timezone?:"Asia/Kolkata"));FocusWorkLogs.prompt(context);delay(1000)}}
     LaunchedEffect(clock.toLocalDate(),clock.hour,clock.minute){if(lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))AutoFocusScheduler.catchUp(context)}
     LaunchedEffect(today){if(lastToday!=today.toString()){if(selectedIso==lastToday)selectedIso=today.toString();lastToday=today.toString()}}
     LaunchedEffect(drag!=null){while(drag!=null){val y=drag!!.pointerY;if(y>0&&viewportBottom>viewportTop){if(y<viewportTop+48*density)scroll.scrollBy(-10*density)else if(y>viewportBottom-48*density)scroll.scrollBy(10*density)};delay(24)}}
@@ -262,6 +264,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         Reminders.setup(context);AutoFocusScheduler.catchUp(context)
         if(TimerStore.read(context)!=null)TimerStore.action(context,"SHOW")
         scope.launch{refresh(true);if(inbox)refreshInbox()}
+        scope.launch{if(FocusWorkLogs.entries(context).any{it.has("body")}&&FocusWorkLogs.syncReady(context)){refresh(true);if(inbox)refreshInbox()}}
     })
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_RESUME)latestResume() else if(event==Lifecycle.Event.ON_PAUSE)drag=null};lifecycle.lifecycle.addObserver(observer);onDispose{lifecycle.lifecycle.removeObserver(observer)}}
     Scaffold(containerColor=MaterialTheme.colorScheme.background,snackbarHost={SnackbarHost(snackbar)},bottomBar={
@@ -387,20 +390,21 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     },{deleteTarget=it},{startTimer(it);closeEditor()})
     deleteTarget?.let{task->AlertDialog(onDismissRequest={deleteTarget=null},title={Text(if(task.habit)"Skip this occurrence?" else "Delete this task?")},text={Text(task.title)},confirmButton={TextButton(enabled=!taskBusy(task),onClick={deleteTarget=null;closeEditor();optimistic(mutationKeys(task),{it.copy(tasks=it.tasks.filterNot{row->row.id==task.id})},{repo.delete(task)})}){Text(if(task.habit)"Skip" else "Delete")}},dismissButton={TextButton(onClick={deleteTarget=null}){Text("Cancel")}})}
     replacement?.let{task->AlertDialog(onDismissRequest={replacement=null},title={Text("Switch focus?")},text={Text("This ends the timer for ${timer?.title}. Its task stays as it is.")},confirmButton={TextButton(onClick={TimerStore.start(context,task);replacement=null;requestNotification()}){Text("Start new timer")}},dismissButton={TextButton(onClick={replacement=null}){Text("Keep current")}})}
-    if(finishId!=null){val s=TimerStore.read(context)
-        if(s==null||s.taskId!=finishId)LaunchedEffect(finishId){finishHandled()}
-        else AlertDialog(onDismissRequest=finishHandled,title={Text("Finish ${s.title}?")},text={Text("${timerText(TimerStore.remaining(context,s))} remaining. Mark the task complete, or just end this timer.")},confirmButton={TextButton(enabled=!mutations.pending(s.taskId),onClick={
-            val task=currentTasks.find{it.id==s.taskId}?:backlog?.tasks?.find{it.id==s.taskId}
-            val keys=task?.let(::mutationKeys)?:setOf(s.taskId)
-            if(mutations.begin(keys))scope.launch{
-                var message:String?=null
-                try{if(task!=null)repo.patch(task,JSONObject().put("done",true))else repo.request("PATCH","/v2/day/tasks/${java.net.URLEncoder.encode(s.taskId,"UTF-8")}",JSONObject().put("done",true));if(TimerStore.read(context)?.taskId==s.taskId)TimerStore.action(context,"STOP");finishHandled()}
-                catch(e:Exception){message=e.message?:"Couldn't mark done. Your timer is still available."}
-                finally{mutations.end(keys);reconcile()}
-                message?.let{scope.launch{snackbar.showSnackbar(it)}}
-            }
-        }){Text("Mark done")}},dismissButton={Row{TextButton(onClick={TimerStore.action(context,"STOP");finishHandled()}){Text("End timer")};TextButton(onClick=finishHandled){Text("Continue")}}})
-    }
+    LaunchedEffect(finishId){if(finishId!=null){
+        val state=TimerStore.read(context)
+        if(state!=null&&state.taskId==finishId){
+            try{
+                val needsEntry=FocusWorkLogs.finishTimer(context,state)
+                if(!needsEntry){
+                    val entry=FocusWorkLogs.entries(context).firstOrNull{it.optString("id")==state.sessionId}
+                    if(entry==null){finishHandled();return@LaunchedEffect}
+                    try{FocusWorkLogs.submit(context,entry);refresh(true,true,true);snackbar.showSnackbar("${workDuration(entry.optInt("seconds"))} logged")}
+                    catch(e:Exception){snackbar.showSnackbar("${workDuration(entry.optInt("seconds"))} saved on this device. Open Log time to retry.")}
+                }
+            }catch(e:Exception){snackbar.showSnackbar(e.message?:"Couldn't save time. The timer is still available.")}
+        }
+        finishHandled()
+    }}
 }
 
 @Composable internal fun EmptyState(title:String,message:String){Column(Modifier.fillMaxWidth().padding(vertical=42.dp,horizontal=24.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.WbSunny,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(38.dp));Spacer(Modifier.height(14.dp));Text(title,fontSize=21.sp,fontWeight=FontWeight.SemiBold);Text(message,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=9.dp))}}

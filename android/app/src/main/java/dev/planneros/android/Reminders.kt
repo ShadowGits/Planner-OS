@@ -155,7 +155,7 @@ object Reminders {
 }
 class ReminderReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){Reminders.receive(c,i)}}
 class BootReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){
-    if(i.action==Intent.ACTION_BOOT_COMPLETED||i.action==AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED){Reminders.cancelAlarms(c);AutoFocusScheduler.rearm(c);Reminders.setup(c)}
+    if(i.action==Intent.ACTION_BOOT_COMPLETED||i.action==AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED){FocusWorkLogs.restoreNotifications(c);Reminders.cancelAlarms(c);AutoFocusScheduler.rearm(c);Reminders.setup(c)}
 }}
 class ReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p){override suspend fun doWork():Result{
     val c=applicationContext
