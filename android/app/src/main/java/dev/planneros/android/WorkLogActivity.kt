@@ -62,7 +62,9 @@ class WorkLogActivity:ComponentActivity(){
         var clock by rememberSaveable{mutableStateOf(prepared?.nullString("remainder_time").orEmpty())}
         var warning by remember{mutableStateOf<String?>(null)}
         var saved by remember{mutableStateOf<String?>(null)}
+        fun dismiss(){if(!mandatory&&saved==null)FocusWorkLogs.ignore(this@WorkLogActivity,id);close()}
         BackHandler(enabled=mandatory&&saved==null){error="Log the actual work for this expired timer to finish."}
+        BackHandler(enabled=!mandatory){dismiss()}
         LaunchedEffect(taskRef,reload){
             info=null;error=null
             try{info=repo.request("GET","/v2/day/tasks/${java.net.URLEncoder.encode(taskRef,"UTF-8")}/work").getJSONObject("data")}
@@ -107,7 +109,7 @@ class WorkLogActivity:ComponentActivity(){
                 finally{busy=false}
             }
         }
-        Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={TopAppBar(title={Text(if(mandatory)"Timer finished"else "Log time",fontSize=22.sp,fontWeight=FontWeight.SemiBold)},navigationIcon={if(!mandatory||saved!=null)IconButton(onClick=close){Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Back")}})}){padding->
+        Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={TopAppBar(title={Text(if(mandatory)"Timer finished"else "Log time",fontSize=22.sp,fontWeight=FontWeight.SemiBold)},navigationIcon={if(!mandatory||saved!=null)IconButton(enabled=!busy,onClick=::dismiss){Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Back")}},actions={if(!mandatory&&saved==null)TextButton(enabled=!busy,onClick=::dismiss){Text(if(frozen==null)"Ignore"else "Close")}})}){padding->
             Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
                 Text(task?.optString("title")?:entry?.optString("title")?:"Loading task…",fontSize=24.sp,fontWeight=FontWeight.SemiBold)
                 if(saved!=null){

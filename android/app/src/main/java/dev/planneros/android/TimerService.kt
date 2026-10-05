@@ -27,11 +27,11 @@ object TimerStore {
     fun read(c:Context):TimerState?= c.getSharedPreferences("focus",Context.MODE_PRIVATE).getString("state",null)?.let{runCatching{
         val j=JSONObject(it);val saved=TimerState(j.getString("id"),j.getString("title"),j.getLong("duration"),j.getLong("elapsed"),j.getLong("anchor"),j.getLong("wall"),j.getInt("boot"),j.getBoolean("running"))
         // Upgrading an already expired old timer must not play a retrospective tone.
-        saved.copy(completionAlerted=j.optBoolean("completion_alerted",saved.remaining(SystemClock.elapsedRealtime(),System.currentTimeMillis(),boot(c))<=0),sessionId=j.optString("session_id",java.util.UUID.nameUUIDFromBytes("${saved.taskId}:${saved.anchorWallMs}:${saved.bootCount}".toByteArray()).toString()))
+        saved.copy(completionAlerted=j.optBoolean("completion_alerted",saved.remaining(SystemClock.elapsedRealtime(),System.currentTimeMillis(),boot(c))<=0),sessionId=j.optString("session_id",java.util.UUID.nameUUIDFromBytes("${saved.taskId}:${saved.anchorWallMs}:${saved.bootCount}".toByteArray()).toString()),scheduled=if(j.has("scheduled"))j.getBoolean("scheduled")else FocusWorkLogs.legacyScheduled(c,saved.taskId))
     }.getOrNull()}
-    fun save(c:Context,s:TimerState?){val p=c.getSharedPreferences("focus",Context.MODE_PRIVATE).edit();if(s==null)p.remove("state").putString("epoch",java.util.UUID.randomUUID().toString()) else p.putString("state",JSONObject().put("id",s.taskId).put("title",s.title).put("duration",s.durationMs).put("elapsed",s.elapsedBeforeMs).put("anchor",s.anchorElapsedMs).put("wall",s.anchorWallMs).put("boot",s.bootCount).put("running",s.running).put("completion_alerted",s.completionAlerted).put("session_id",s.sessionId).toString());p.commit()}
+    fun save(c:Context,s:TimerState?){val p=c.getSharedPreferences("focus",Context.MODE_PRIVATE).edit();if(s==null)p.remove("state").putString("epoch",java.util.UUID.randomUUID().toString()) else p.putString("state",JSONObject().put("id",s.taskId).put("title",s.title).put("duration",s.durationMs).put("elapsed",s.elapsedBeforeMs).put("anchor",s.anchorElapsedMs).put("wall",s.anchorWallMs).put("boot",s.bootCount).put("running",s.running).put("completion_alerted",s.completionAlerted).put("session_id",s.sessionId).put("scheduled",s.scheduled).toString());p.commit()}
     fun remaining(c:Context,s:TimerState)=s.remaining(SystemClock.elapsedRealtime(),System.currentTimeMillis(),boot(c))
-    fun start(c:Context,t:Task){val i=intent(c,"START").putExtra("id",t.id).putExtra("title",t.title).putExtra("minutes",t.minutes).putExtra("seconds",t.remainingSeconds.coerceAtLeast(1));c.startForegroundService(i)}
+    fun start(c:Context,t:Task){val i=intent(c,"START").putExtra("id",t.id).putExtra("title",t.title).putExtra("minutes",t.minutes).putExtra("seconds",t.remainingSeconds.coerceAtLeast(1)).putExtra("scheduled",t.time!=null);c.startForegroundService(i)}
     fun action(c:Context,action:String,sessionId:String?=null){c.startForegroundService(intent(c,action).putExtra("expected_session",sessionId))}
     fun reset(c:Context){
         // No new foreground service is started merely to stop the old one.
@@ -45,7 +45,7 @@ object TimerStore {
         val duration=t.remainingSeconds.coerceIn(1,86400).toLong()*1000
         if(current.title==t.title&&current.durationMs==duration)return
         c.startForegroundService(intent(c,"UPDATE")
-            .putExtra("id",t.id).putExtra("title",t.title).putExtra("minutes",t.minutes).putExtra("seconds",t.remainingSeconds.coerceAtLeast(1)))
+            .putExtra("id",t.id).putExtra("title",t.title).putExtra("minutes",t.minutes).putExtra("seconds",t.remainingSeconds.coerceAtLeast(1)).putExtra("scheduled",t.time!=null))
     }
 }
 
@@ -66,7 +66,7 @@ class TimerService:Service(){
     private val ticker=object:Runnable{override fun run(){
         var s=state?:return
         s.claimCompletion(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(this@TimerService))?.let{finished->
-            FocusWorkLogs.capture(this@TimerService,finished,true)
+            if(WorkLogPolicy.requiresAutomaticPrompt(finished,finished.durationMs))FocusWorkLogs.capture(this@TimerService,finished,true)
             s=finished.copy(running=false,elapsedBeforeMs=finished.durationMs);state=s;TimerStore.save(this@TimerService,s);TimerSounds.completed(this@TimerService,s)
             FocusWorkLogs.prompt(this@TimerService)
         }
@@ -105,22 +105,23 @@ class TimerService:Service(){
         var adjacentCompletion=false
         if(nextId!=null&&state?.taskId!=nextId){
             state?.claimCompletion(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(this))?.let{
-                FocusWorkLogs.capture(this,it,true);state=it;TimerStore.save(this,it);TimerSounds.completed(this,it);adjacentCompletion=true
+                if(WorkLogPolicy.requiresAutomaticPrompt(it,it.durationMs))FocusWorkLogs.capture(this,it,true)
+                state=it;TimerStore.save(this,it);TimerSounds.completed(this,it);adjacentCompletion=true
             }
         }
         var newTimer=false
         when(intent?.action){
             "AUTO_START"->{val block=automatic!!
-                if(state?.taskId!=block.id){newTimer=true;val now=System.currentTimeMillis();state=TimerState(block.id,block.title,block.endMillis-block.startMillis,elapsedBeforeMs=block.elapsed(now),anchorElapsedMs=SystemClock.elapsedRealtime(),anchorWallMs=now,bootCount=TimerStore.boot(this));hidden=false;removeBubble()}
+                if(state?.taskId!=block.id){newTimer=true;val now=System.currentTimeMillis();state=TimerState(block.id,block.title,block.endMillis-block.startMillis,elapsedBeforeMs=block.elapsed(now),anchorElapsedMs=SystemClock.elapsedRealtime(),anchorWallMs=now,bootCount=TimerStore.boot(this),scheduled=true);hidden=false;removeBubble()}
             }
             "START"->{val id=intent.getStringExtra("id")?:return START_NOT_STICKY
                 // Starting an already active block keeps its elapsed time.
                 AutoFocusScheduler.suppressTask(this,id)
                 val title=intent.getStringExtra("title")?:"Focus"
                 val duration=intent.getIntExtra("seconds",intent.getIntExtra("minutes",30)*60).coerceIn(1,86400).toLong()*1000
-                if(state?.taskId!=id){newTimer=true;state=TimerState(id,title,duration,anchorElapsedMs=SystemClock.elapsedRealtime(),anchorWallMs=System.currentTimeMillis(),bootCount=TimerStore.boot(this));hidden=false;removeBubble()}
-                else state=state?.metadata(title,duration)}
-            "UPDATE"->{if(state?.taskId==intent.getStringExtra("id"))state=state?.metadata(intent.getStringExtra("title")?:state!!.title,intent.getIntExtra("seconds",intent.getIntExtra("minutes",30)*60).coerceIn(1,86400).toLong()*1000)}
+                if(state?.taskId!=id){newTimer=true;state=TimerState(id,title,duration,anchorElapsedMs=SystemClock.elapsedRealtime(),anchorWallMs=System.currentTimeMillis(),bootCount=TimerStore.boot(this),scheduled=intent.getBooleanExtra("scheduled",false));hidden=false;removeBubble()}
+                else state=state?.metadata(title,duration)?.copy(scheduled=intent.getBooleanExtra("scheduled",state!!.scheduled))}
+            "UPDATE"->{if(state?.taskId==intent.getStringExtra("id"))state=state?.metadata(intent.getStringExtra("title")?:state!!.title,intent.getIntExtra("seconds",intent.getIntExtra("minutes",30)*60).coerceIn(1,86400).toLong()*1000)?.copy(scheduled=intent.getBooleanExtra("scheduled",state!!.scheduled))}
             "TOGGLE"->{state?.let{AutoFocusScheduler.suppressTask(this,it.taskId)};if(state?.completionAlerted==true)FocusWorkLogs.open(this,state!!.taskId,state!!.sessionId)else state=state?.toggle(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(this))}
             "STOP"->{state?.let{AutoFocusScheduler.suppressTask(this,it.taskId)};TimerStore.save(this,null);TimerSounds.clear(this);state=null;removeBubble();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();return START_NOT_STICKY}
             "SHOW"->{hidden=false}

@@ -21,7 +21,26 @@ internal object FocusWorkLogs {
     private fun prefs(c:Context)=c.getSharedPreferences("work-outbox",Context.MODE_PRIVATE)
     fun entries(c:Context):List<JSONObject> = synchronized(lock){
         val data=runCatching{JSONArray(prefs(c).getString("entries","[]"))}.getOrDefault(JSONArray())
-        (0 until data.length()).mapNotNull{data.optJSONObject(it)}.filter{it.optLong("generation")==SecureConfig(c).generation}
+        var changed=false
+        val rows=(0 until data.length()).mapNotNull{data.optJSONObject(it)}.filter{it.optLong("generation")==SecureConfig(c).generation}.onEach{row->
+            if(!row.has("scheduled")){row.put("scheduled",legacyScheduled(c,row.optString("task_ref")));changed=true}
+            if(row.optBoolean("scheduled")&&row.optBoolean("mandatory")){row.put("mandatory",false);changed=true}
+        }
+        if(changed)write(c,rows)
+        rows
+    }
+    /** Upgrade old expiry drafts locally; never fetch tasks merely to decide whether to prompt. */
+    fun legacyScheduled(c:Context,taskId:String):Boolean {
+        val prefix="${SecureConfig(c).generation}:"
+        for(store in listOf("day-cache","inbox-cache"))for((key,value) in c.getSharedPreferences(store,Context.MODE_PRIVATE).all){
+            if(!key.startsWith(prefix)||value !is String)continue
+            val items=runCatching{JSONObject(value).optJSONArray("items")}.getOrNull()?:continue
+            for(index in 0 until items.length()){
+                val task=items.optJSONObject(index)?:continue
+                if(task.optString("id")==taskId)return task.nullString("start_time")!=null
+            }
+        }
+        return true // Unknown legacy tasks must not revive the old compulsory queue.
     }
     private fun write(c:Context,rows:List<JSONObject>){check(prefs(c).edit().putString("entries",JSONArray(rows).toString()).commit()){"Time couldn't be saved on this device. Keep this timer open."}}
     fun capture(c:Context,s:TimerState,mandatory:Boolean):JSONObject = synchronized(lock){
@@ -29,7 +48,7 @@ internal object FocusWorkLogs {
         val elapsed=s.elapsed(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(c))
         val row=JSONObject().put("id",s.sessionId).put("task_ref",s.taskId).put("title",s.title)
             .put("generation",SecureConfig(c).generation).put("seconds",WorkLogPolicy.elapsedSeconds(if(mandatory)s.durationMs else elapsed))
-            .put("mandatory",mandatory).put("needs_input",mandatory)
+            .put("mandatory",mandatory&&!s.scheduled).put("needs_input",mandatory).put("scheduled",s.scheduled)
         if(!mandatory)row.put("body",JSONObject().put("request_id",s.sessionId).put("seconds",row.getInt("seconds")).put("source","timer").put("finish",true))
         write(c,entries(c)+row);if(!mandatory)scheduleSync(c);row
     }
@@ -56,11 +75,18 @@ internal object FocusWorkLogs {
     fun restoreNotifications(c:Context){
         val manager=c.getSystemService(android.app.NotificationManager::class.java)
         val active=manager.activeNotifications.map{it.id}.toSet()
-        entries(c).filter{it.optBoolean("mandatory")}.forEach{row->
+        entries(c).forEach{row->
+            if(!row.optBoolean("mandatory")){TimerSounds.clearWork(c,row.getString("id"));return@forEach}
             if(TimerSounds.workId(row.getString("id")) !in active)TimerSounds.completed(c,TimerState(row.getString("task_ref"),row.getString("title"),1,sessionId=row.getString("id")),true)
         }
     }
     fun clearNotifications(c:Context){entries(c).forEach{TimerSounds.clearWork(c,it.getString("id"))}}
+    fun ignore(c:Context,id:String){synchronized(lock){
+        // A submitted/retrying body may already have reached the server; keep its retry identity.
+        val rows=entries(c);val entry=rows.find{it.optString("id")==id}
+        if(entry!=null&&!entry.has("body"))write(c,rows.filterNot{it.optString("id")==id})
+        TimerSounds.clearWork(c,id)
+    }}
     fun allowEditing(c:Context,id:String){synchronized(lock){val rows=entries(c);rows.find{it.optString("id")==id}?.apply{remove("body");put("needs_input",true)};write(c,rows)}}
     fun open(c:Context,task:String,id:String?=null){
         if(promptOpen)return
@@ -71,7 +97,7 @@ internal object FocusWorkLogs {
     fun prompt(c:Context){if(!promptOpen&&foreground>0)next(c)?.let{open(c,it.getString("task_ref"),it.getString("id"))}}
     fun finishTimer(c:Context,s:TimerState):Boolean {
         val elapsed=s.elapsed(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(c))
-        val mandatory=WorkLogPolicy.requiresActualEntry(s,elapsed)
+        val mandatory=s.scheduled||WorkLogPolicy.requiresActualEntry(s,elapsed)
         capture(c,s,mandatory)
         TimerStore.action(c,"STOP",s.sessionId)
         if(mandatory)open(c,s.taskId,s.sessionId)

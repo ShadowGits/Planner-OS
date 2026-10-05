@@ -2,6 +2,7 @@ package dev.planneros.android
 
 internal object WorkLogPolicy {
     fun requiresActualEntry(state:TimerState,elapsed:Long)=state.completionAlerted||elapsed>=state.durationMs
+    fun requiresAutomaticPrompt(state:TimerState,elapsed:Long)=!state.scheduled&&requiresActualEntry(state,elapsed)
     fun elapsedSeconds(elapsed:Long)=(elapsed.coerceAtLeast(0)/1000).coerceAtMost(86400).toInt()
     fun remaining(planned:Int,worked:Int,entry:Int)=(planned-worked-entry).coerceAtLeast(0)
     fun parse(hours:String,minutes:String,seconds:String="0"):Int? {

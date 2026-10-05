@@ -9,6 +9,13 @@ class WorkLogPolicyTest {
         assertTrue(WorkLogPolicy.requiresActualEntry(timer,10_800_000))
         assertTrue(WorkLogPolicy.requiresActualEntry(timer.copy(completionAlerted=true),0))
     }
+    @Test fun scheduledExpiryNeverRequiresAutomaticPromptButManualTimerStillDoes(){
+        assertFalse(WorkLogPolicy.requiresAutomaticPrompt(timer.copy(scheduled=true),timer.durationMs))
+        assertFalse(WorkLogPolicy.requiresAutomaticPrompt(timer.copy(scheduled=true,completionAlerted=true),0))
+        assertTrue(WorkLogPolicy.requiresAutomaticPrompt(timer,timer.durationMs))
+        assertFalse(WorkLogPolicy.requiresAutomaticPrompt(timer,timer.durationMs-1))
+        assertTrue(timer.copy(scheduled=true).toggle(2000,2000,1).recover(3000,3000,2).scheduled)
+    }
     @Test fun pausedFinishUsesElapsedFocusWithoutPromptOrPausedTime(){
         val paused=timer.toggle(5_401_000,5_401_000,1)
         val elapsed=paused.elapsed(10_801_000,10_801_000,1)

@@ -29,9 +29,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -102,15 +104,19 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var recovery by remember{mutableStateOf<EditorValues?>(null)}
     var adding by rememberSaveable{mutableStateOf(false)};var suggestedDate by rememberSaveable{mutableStateOf<String?>(null)};var suggestedTime by rememberSaveable{mutableStateOf<String?>(null)}
     var inbox by rememberSaveable{mutableStateOf(false)};var timer by remember{mutableStateOf(TimerStore.read(context))};var remaining by remember{mutableLongStateOf(0L)}
+    val viewPrefs=remember{context.getSharedPreferences("appearance",android.content.Context.MODE_PRIVATE)}
+    var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
     var inboxFilter by rememberSaveable{mutableStateOf("Open")}
     var replacement by remember{mutableStateOf<Task?>(null)};var deleteTarget by remember{mutableStateOf<Task?>(null)}
     val scroll=rememberScrollState();val inboxScroll=androidx.compose.foundation.lazy.rememberLazyListState()
+    val todoScroll=androidx.compose.foundation.lazy.rememberLazyListState()
     var drag by remember{mutableStateOf<DragState?>(null)};var viewportTop by remember{mutableFloatStateOf(0f)};var viewportBottom by remember{mutableFloatStateOf(0f)}
     var clock by remember{mutableStateOf(ZonedDateTime.now(ZoneId.of(day?.timezone?:"Asia/Kolkata")))}
     val today=logicalToday(clock);val nowMinute=logicalNowMinute(clock)
     var lastToday by rememberSaveable{mutableStateOf(today.toString())}
     val currentTasks=day?.takeIf{it.date==selectedIso}?.tasks.orEmpty()
     val timed=currentTasks.filter{it.time!=null}.sortedBy{it.clockMinutes}
+    val todoTasks=remember(currentTasks){currentTasks.sortedWith(compareBy<Task>{it.done}.thenBy{it.clockMinutes})}
     val unscheduled=inboxRows(day?.takeIf{it.date==selectedIso},backlog,clock)
     val unfinishedInbox=unscheduled.count{!it.done}
     val editor=editorId?.let{id->currentTasks.find{it.id==id}?:editorBackup?.takeIf{it.id==id}}
@@ -222,7 +228,8 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         openEditor(task);suggestedDate=slot.date.toString();suggestedTime=slot.clock
     }
     fun reveal(task:Task){
-        if(task.time==null){inbox=true;scope.launch{delay(80);val index=unscheduled.indexOfFirst{it.id==task.id};if(index>=0)inboxScroll.animateScrollToItem(index)}}
+        if(todoView&&todoTasks.any{it.id==task.id}){inbox=false;scope.launch{delay(80);val index=todoTasks.indexOfFirst{it.id==task.id};if(index>=0)todoScroll.animateScrollToItem(index)}}
+        else if(task.time==null){inbox=true;scope.launch{delay(80);val index=unscheduled.indexOfFirst{it.id==task.id};if(index>=0)inboxScroll.animateScrollToItem(index)}}
         else{inbox=false;scope.launch{delay(80);val bounds=timelineBounds(taskBlocks(timed));scroll.animateScrollTo(((task.clockMinutes-bounds.start)*TIMELINE_DP_PER_MINUTE*density-80*density).toInt().coerceAtLeast(0))}}
     }
     fun jumpNow(){
@@ -247,7 +254,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             {repo.patch(task,JSONObject().put("scheduled_date",target.date.toString()).put("start_time",target.clock))})
     }
     LaunchedEffect(selectedIso,connectionRevision){
-        drag=null;scroll.scrollTo(0);refresh(false)
+        drag=null;scroll.scrollTo(0);todoScroll.scrollToItem(0);refresh(false)
 
     }
     LaunchedEffect(inbox,connectionRevision){if(inbox)refreshInbox()}
@@ -278,8 +285,23 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 LinearProgressIndicator(progress={(remaining.toFloat()/s.durationMs.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp),color=if(dark)Color(0xFFD2A570)else Color(0xFF80502F),trackColor=if(dark)Color(0xFF4C3C2E)else Color(0xFFDCC7AE))
             }}}
             Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=20.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                TextButton(onClick={inbox=false},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.ViewDay,"Timeline",modifier=Modifier.size(22.dp));Text(if(compactNavigation)"Day" else "Timeline",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                TextButton(onClick={
+                    drag=null
+                    if(inbox)inbox=false else{todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()}
+                },modifier=Modifier.weight(1f).height(62.dp).semantics{
+                    contentDescription=if(inbox)"Return to day" else if(todoView)"Show timeline" else "Show to-do list"
+                    stateDescription=if(todoView)"To-do list view" else "Timeline view"
+                },contentPadding=PaddingValues(4.dp)){
+                    val slashColor=MaterialTheme.colorScheme.primary
+                    val slashOutline=MaterialTheme.colorScheme.surface
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.ViewDay,null,modifier=Modifier.size(22.dp).drawWithContent{
+                        drawContent()
+                        if(todoView){
+                            val start=Offset(size.width*.10f,size.height*.10f);val end=Offset(size.width*.90f,size.height*.90f)
+                            drawLine(slashOutline,start,end,5.dp.toPx(),androidx.compose.ui.graphics.StrokeCap.Round)
+                            drawLine(slashColor,start,end,2.dp.toPx(),androidx.compose.ui.graphics.StrokeCap.Round)
+                        }
+                    });Text(if(compactNavigation)"Day" else "Timeline",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
                 }
                 FilledIconButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},modifier=Modifier.size(50.dp),shape=CircleShape){Icon(Icons.Rounded.Add,"Add a task")}
                 TextButton(onClick={inbox=true},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
@@ -341,6 +363,11 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                         item(key="section:$label"){InboxSection(label,rows.size,rows.sumOf{it.minutes})}
                         items(rows,key={it.id}){task->InboxCard(task,dark,!taskBusy(task),{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{schedule(task)},overdue=isOverdue(task,clock))}
                     }}
+                }
+            }else if(todoView){
+                LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=todoScroll,contentPadding=PaddingValues(start=12.dp,end=12.dp,top=6.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                    if(todoTasks.isEmpty())item{EmptyState("A clear day","Add a task, with or without a time.")}
+                    items(todoTasks,key={it.id}){task->DayTodoCard(task,dark,!taskBusy(task),timer?.taskId==task.id,{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{startTimer(task)})}
                 }
             }else if(timed.isEmpty()){
                 Box(Modifier.weight(1f).fillMaxWidth().then(swipe),contentAlignment=Alignment.Center){EmptyState("A little space to breathe",if(unscheduled.isEmpty())"Add your first block for this day." else "${unfinishedInbox} inbox items are ready to schedule.")}

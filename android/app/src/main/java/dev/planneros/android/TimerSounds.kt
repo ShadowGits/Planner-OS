@@ -32,6 +32,7 @@ object TimerSounds {
     fun started(c:Context,s:TimerState){c.getSystemService(NotificationManager::class.java).cancel(START_ID);post(c,s,false)}
     fun completed(c:Context,s:TimerState,quiet:Boolean=false){
         setup(c)
+        if(s.scheduled){if(!quiet)post(c,s,true);return}
         c.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(WORK_CHANNEL,"Timer ended — log actual work",NotificationManager.IMPORTANCE_HIGH).apply{
             setSound(Uri.parse("android.resource://${c.packageName}/raw/focus_complete"),AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT).build());enableVibration(true);lockscreenVisibility=Notification.VISIBILITY_PUBLIC
         })
@@ -56,10 +57,10 @@ object TimerSounds {
         val pending=PendingIntent.getActivity(c,if(finished)53 else 52,open,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification=NotificationCompat.Builder(c,if(finished)END_CHANNEL else START_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification).setContentTitle(s.title)
-            .setContentText(if(finished)"Time block finished · tap to finish or continue in overtime" else "Focus timer started")
+            .setContentText(if(finished)"Time block finished · logging time is optional" else "Focus timer started")
             .setContentIntent(pending).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-        if(!finished)notification.setTimeoutAfter(5000)
+        notification.setTimeoutAfter(if(finished)15000 else 5000)
         try{manager.notify(if(finished)END_ID else START_ID,notification.build())}catch(_:SecurityException){/* Permission changed while posting. */}
     }
 }
