@@ -7,6 +7,15 @@ import java.time.ZonedDateTime
 
 class TimelinePolicyTest {
     private val date = LocalDate.parse("2026-10-01")
+    @Test fun shortAndLongBlocksEndExactlyAtTheirScheduledMinute() {
+        for(duration in listOf(1,5,15,25,30,90,180)){
+            val start=timelineOffsetDp(540,480)
+            assertEquals(timelineOffsetDp(540+duration,480),start+timelineDurationDp(duration),0.001f)
+            assertEquals(timelineDurationDp(duration)/2,timelineOffsetDp(540+duration/2,480)-start,if(duration%2==0)0.001f else 1.001f)
+        }
+        assertEquals(30f,timelineDurationDp(15),0.001f)
+        assertEquals(30f,dragSlot(date,540,30f).clockMinute.minus(540).toFloat()*TIMELINE_DP_PER_MINUTE,0.001f)
+    }
     @Test fun fiveMinuteDragSnapUsesTimeScaleInsteadOfCardTitleHeight() {
         assertEquals("09:15", dragSlot(date, 540, 29f).clock)
         assertEquals("08:55", dragSlot(date, 540, -11f).clock)

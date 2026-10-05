@@ -62,6 +62,12 @@ class WorkEntry(BaseModel):
     remainder_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+class TaskSplit(BaseModel):
+    request_id: UUID
+    first_seconds: int = Field(gt=0, le=86400)
+    expected_remaining: int = Field(gt=1, le=86400)
+
+
 def register_work_log_routes(api: FastAPI, cloud: Any, authorize: Any):
     def core():
         return build_core(cloud.service_client, _configured_user_id())
@@ -71,6 +77,27 @@ def register_work_log_routes(api: FastAPI, cloud: Any, authorize: Any):
         if any(term in message for term in ("pgrst202", "pgrst205", "does not exist", "schema cache")):
             raise HTTPException(409, detail={"message": "Time logging needs database migration 0035. Your saved timer entry is still on this device."}) from error
         raise HTTPException(503, detail={"message": "Time could not be saved. Your entry is kept; retry when connected."}) from error
+
+    @api.post("/v2/day/tasks/{task_id}/split")
+    def split_task(task_id: UUID, body: TaskSplit, x_app_key: str | None = Header(default=None)):
+        authorize(x_app_key)
+        if body.first_seconds >= body.expected_remaining:
+            raise HTTPException(400, detail={"message": "Both sessions need some remaining work."})
+        try:
+            result = core().repository.call_function("planner_split_task", {
+                "p_request_id": str(body.request_id), "p_task_id": str(task_id),
+                "p_first_seconds": body.first_seconds, "p_expected_remaining": body.expected_remaining,
+            })
+        except Exception as error:
+            message = str(error)
+            if "SPLIT_INVALID:" in message:
+                raise HTTPException(400, detail={"message": message.split("SPLIT_INVALID:", 1)[1].split('"', 1)[0].strip()}) from error
+            if "SPLIT_NOT_FOUND" in message:
+                raise HTTPException(404, detail={"message": "This task is no longer available."}) from error
+            if any(term in message.lower() for term in ("pgrst202", "does not exist", "schema cache")):
+                raise HTTPException(409, detail={"message": "Splitting needs database migration 0036. The original task is unchanged."}) from error
+            raise HTTPException(503, detail={"message": "Split could not be confirmed. Retry this split to check the same request; no extra sessions will be created."}) from error
+        return {"success": True, "message": "Task split", "data": result}
 
     @api.get("/v2/day/tasks/{task_ref}/work")
     def work_info(task_ref: str, x_app_key: str | None = Header(default=None)):

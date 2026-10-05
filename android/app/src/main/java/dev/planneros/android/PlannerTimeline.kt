@@ -68,9 +68,10 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
         Box(modifier.onGloballyPositioned{val y=it.positionInWindow().y;viewport(y,y+it.size.height)}.verticalScroll(scroll)){
             BoxWithConstraints(Modifier.fillMaxWidth().height(((bounds.end-bounds.start)*TIMELINE_DP_PER_MINUTE+84).dp)){
                 val gutter=58.dp;val right=12.dp
+                fun timeY(minute:Int)=timelineOffsetDp(minute,bounds.start).dp+12.dp
                 val usable=maxWidth-gutter-right
                 for(minute in bounds.start..bounds.end step 60){
-                    Row(Modifier.offset(y=((minute-bounds.start)*TIMELINE_DP_PER_MINUTE).dp).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                    Row(Modifier.offset(y=timeY(minute)-10.dp).fillMaxWidth().height(20.dp),verticalAlignment=Alignment.CenterVertically){
                         Text(displayClock(minute,twelve),fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.width(gutter).padding(start=7.dp))
                         HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f),modifier=Modifier.weight(1f))
                     }
@@ -83,7 +84,7 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
                     val next=tasks.sortedBy{it.clockMinutes}.getOrNull(index+1)?.clockMinutes
                     if(next!=null&&next-occupiedEnd>=30){
                         val start=occupiedEnd
-                        TextButton(onClick={gap(((start+4)/5)*5)},modifier=Modifier.offset(x=gutter,y=((start-bounds.start)*TIMELINE_DP_PER_MINUTE+8).dp).heightIn(min=36.dp)){
+                        TextButton(onClick={gap(((start+4)/5)*5)},modifier=Modifier.offset(x=gutter,y=timeY(start)+8.dp).heightIn(min=36.dp)){
                             Icon(Icons.Rounded.Add,null,modifier=Modifier.size(15.dp));Text(" ${durationLabel(next-start)} free · Add",fontSize=12.sp)
                         }
                     }
@@ -94,19 +95,19 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
                     val extraY=if(dragging)preview!!.deltaDp else 0f
                     val active=isToday&&!task.done&&nowMinute>=task.clockMinutes&&nowMinute<task.clockMinutes+task.minutes
                     TimelineCard(task,dark,lane.columns,active,timerId==task.id,enabled,dragging,
-                        Modifier.offset(x=gutter+width*lane.column+3.dp,y=((task.clockMinutes-bounds.start)*TIMELINE_DP_PER_MINUTE+extraY).dp)
-                            .width(width-6.dp).height(maxOf(52f,task.minutes*TIMELINE_DP_PER_MINUTE).dp).zIndex(if(dragging)100f else lane.column.toFloat()),
+                        Modifier.offset(x=gutter+width*lane.column+3.dp,y=timeY(task.clockMinutes)+extraY.dp)
+                            .width(width-6.dp).height(timelineDurationDp(task.minutes).dp).zIndex(if(dragging)100f else lane.column.toFloat()),
                         {edit(task)},{done(task)},{star(task)},{focus(task)},
                         {dragStart(task)},{delta,y->dragMove(task,delta,y)},{dragEnd(task)},dragCancel)
                 }
                 if(isToday&&nowMinute in bounds.start..bounds.end){
-                    Row(Modifier.offset(y=((nowMinute-bounds.start)*TIMELINE_DP_PER_MINUTE).dp).fillMaxWidth().zIndex(150f),verticalAlignment=Alignment.CenterVertically){
+                    Row(Modifier.offset(y=timeY(nowMinute)-10.dp).fillMaxWidth().height(20.dp).zIndex(150f).semantics{contentDescription="Current time ${displayClock(nowMinute,twelve)}"},verticalAlignment=Alignment.CenterVertically){
                         Text("NOW",color=MaterialTheme.colorScheme.primary,fontSize=9.sp,fontWeight=FontWeight.Bold,modifier=Modifier.width(gutter).padding(start=9.dp))
                         Box(Modifier.size(6.dp).background(MaterialTheme.colorScheme.primary,CircleShape));HorizontalDivider(color=MaterialTheme.colorScheme.primary,modifier=Modifier.weight(1f))
                     }
                 }
                 if(preview!=null){
-                    Surface(color=MaterialTheme.colorScheme.primary,shape=RoundedCornerShape(12.dp),shadowElevation=6.dp,modifier=Modifier.offset(x=gutter,y=((preview.target.date.toEpochDay()-date.toEpochDay())*1440+preview.target.clockMinute-bounds.start).coerceIn(0,(bounds.end-bounds.start).toLong()).toFloat().times(TIMELINE_DP_PER_MINUTE).dp).zIndex(200f)){
+                    Surface(color=MaterialTheme.colorScheme.primary,shape=RoundedCornerShape(12.dp),shadowElevation=6.dp,modifier=Modifier.offset(x=gutter,y=((preview.target.date.toEpochDay()-date.toEpochDay())*1440+preview.target.clockMinute-bounds.start).coerceIn(0,(bounds.end-bounds.start).toLong()).toFloat().times(TIMELINE_DP_PER_MINUTE).dp+12.dp).zIndex(200f)){
                         Text("${preview.target.date.format(DateTimeFormatter.ofPattern("EEE, MMM d"))} · ${displayClock(preview.target.clockMinute,twelve)}",color=MaterialTheme.colorScheme.onPrimary,fontSize=12.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(8.dp))
                     }
                 }
@@ -122,13 +123,33 @@ internal data class DragState(val task:Task,val originDate:LocalDate,val originS
     val twelve=!DateFormat.is24HourFormat(LocalContext.current)
     val interactive=enabled&&!task.id.startsWith("pending:")
     val compact=task.minutes<45
-    val showMetadata=!compact||(maxOf(52f,task.minutes*TIMELINE_DP_PER_MINUTE)-24f>=27f*LocalDensity.current.fontScale)
+    val showMetadata=!compact||(timelineDurationDp(task.minutes)-24f>=27f*LocalDensity.current.fontScale)
     val latestStart by rememberUpdatedState(dragStart);val latestMove by rememberUpdatedState(dragMove)
     val latestEnd by rememberUpdatedState(dragEnd);val latestCancel by rememberUpdatedState(dragCancel)
     Surface(onClick=edit,enabled=interactive,color=taskTint(task,dark),shape=RoundedCornerShape(12.dp),shadowElevation=if(lifted)10.dp else 0.dp,
         border=if(ongoing||focusing||lifted)BorderStroke(2.dp,MaterialTheme.colorScheme.primary)else null,
         modifier=modifier.alpha(if(task.done).58f else 1f).semantics{contentDescription="${task.title}, ${displayClock(task.clockMinutes,twelve)} to ${displayClock(task.clockMinutes+task.minutes,twelve)}, ${durationLabel(task.minutes)}${if(task.starred)", Top Win" else ""}. Hold and drag to reschedule"}){
-        Column(Modifier.padding(horizontal=if(columns>2)3.dp else 7.dp,vertical=if(compact)2.dp else 5.dp)){
+        if(task.minutes<26){
+            // Short blocks keep their actual end time; their editor retains all details/actions.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified){
+                Row(Modifier.fillMaxSize().padding(horizontal=3.dp),verticalAlignment=Alignment.CenterVertically){
+                    Text("${taskEmoji(task.title)} ${task.title}",fontSize=11.sp,maxLines=1,overflow=TextOverflow.Ellipsis,
+                        textDecoration=if(task.done)TextDecoration.LineThrough else null,
+                        modifier=Modifier.weight(1f).fillMaxHeight().wrapContentHeight(Alignment.CenterVertically)
+                            .onGloballyPositioned{windowY=it.positionInWindow().y}
+                            .pointerInput(task.id,interactive){if(interactive)detectDragGesturesAfterLongPress(
+                                onDragStart={haptic.performHapticFeedback(HapticFeedbackType.LongPress);latestStart()},
+                                onDrag={change,amount->change.consume();latestMove(amount,windowY+change.position.y)},
+                                onDragEnd={latestEnd()},onDragCancel={latestCancel()})})
+                    IconButton(onClick=done,enabled=interactive,modifier=Modifier.width(20.dp).fillMaxHeight()){
+                        Icon(if(task.done)Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,"${if(task.done)"Reopen" else "Complete"} ${task.title}",modifier=Modifier.size(14.dp))}
+                    IconButton(onClick=star,enabled=interactive,modifier=Modifier.width(20.dp).fillMaxHeight()){
+                        Icon(if(task.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,"${if(task.starred)"Remove" else "Choose"} ${task.title} as Top Win",tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(14.dp))}
+                    IconButton(onClick=focus,enabled=interactive,modifier=Modifier.width(20.dp).fillMaxHeight()){
+                        Icon(if(focusing)Icons.Rounded.HourglassBottom else Icons.Rounded.PlayArrow,"Start focus timer for ${task.title}",tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(14.dp))}
+                }
+            }
+        }else Column(Modifier.padding(horizontal=if(columns>2)3.dp else 7.dp,vertical=if(compact)2.dp else 5.dp)){
             Column(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned{windowY=it.positionInWindow().y}
                 .pointerInput(task.id,interactive){if(interactive)detectDragGesturesAfterLongPress(
                     onDragStart={haptic.performHapticFeedback(HapticFeedbackType.LongPress);latestStart()},

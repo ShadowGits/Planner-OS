@@ -211,6 +211,7 @@ class PlannerRepository(private val context: Context) {
             }
             if(method == "POST" && path == "/v2/day/tasks") Reminders.invalidateSchedule(context)
             if(method=="POST"&&path.endsWith("/work")){invalidateWorkSnapshots();Reminders.invalidateSchedule(context)}
+            if(method=="POST"&&path.endsWith("/split")){invalidateWorkSnapshots();Reminders.invalidateSchedule(context)}
             if((path.startsWith("/v2/day/tasks/") && method in listOf("PATCH","DELETE")) || (path == "/v2/day/tasks" && method == "POST")) invalidateDays()
             json ?: throw IllegalStateException("Server returned an invalid planner response.")
         } finally { c.disconnect() }
@@ -262,26 +263,21 @@ class PlannerRepository(private val context: Context) {
         catch(error: PlannerHttpException) { if(error.statusCode != 404) throw error; Reminders.cancelTask(context,task.id); invalidateDays() }
         if(TimerStore.read(context)?.taskId == task.id) TimerStore.reset(context)
     }
-    suspend fun split(task: Task,date: LocalDate) {
-        markPropagation(task)
-        require(!task.habit && task.minutes>=2){"Habits or one-minute blocks cannot be split."}
-        // Both child slots preserve the original time budget. Never shorten the original before both exist.
-        val first=(task.minutes+1)/2; val leader=task.parent ?: task.id
-        val slot = task.time?.let { normalizeSlot(if(task.clockMinutes<1440)task.date?.let(LocalDate::parse)?:date else date, task.clockMinutes) }
-        val actualDate = slot?.date ?: task.date?.let(LocalDate::parse) ?: date
-        if(task.parent!=null){
-            val added=create(task.title,actualDate,null,task.minutes-first,task.notes,leader,task.projectId)
-            try{patch(task,JSONObject().put("estimated_minutes",first))}catch(e:Exception){compensateSplit(added,e)}
-        }else{
-            val added=create(task.title,actualDate,slot?.clock,first,task.notes,leader,task.projectId)
-            try{create(task.title,actualDate,null,task.minutes-first,task.notes,leader,task.projectId)}catch(e:Exception){compensateSplit(added,e)}
+    suspend fun split(task: Task) {
+        require(!task.habit&&!task.done&&task.remainingSeconds>=2){"Choose an unfinished task with remaining work."}
+        val store=context.getSharedPreferences("split-outbox",Context.MODE_PRIVATE)
+        val key="${config.generation}:${task.id}"
+        // Keep the same server transaction ID after a lost response or process restart.
+        val body=store.getString(key,null)?.let(::JSONObject)?:JSONObject()
+            .put("request_id",java.util.UUID.randomUUID().toString())
+            .put("first_seconds",(task.remainingSeconds+1)/2).put("expected_remaining",task.remainingSeconds)
+        check(store.edit().putString(key,body.toString()).commit()){"Split couldn't be saved on this device."}
+        try{
+            request("POST","/v2/day/tasks/${java.net.URLEncoder.encode(task.id,"UTF-8")}/split",body)
+            store.edit().remove(key).commit();markPropagation(task)
+        }catch(e:PlannerHttpException){
+            if(e.statusCode in listOf(400,404))store.edit().remove(key).commit()
+            throw e
         }
-    }
-    private suspend fun compensateSplit(added: String, original: Exception): Nothing {
-        try { request("DELETE","/v2/day/tasks/${java.net.URLEncoder.encode(added,"UTF-8")}") }
-        catch(cleanup: Exception) {
-            throw java.io.IOException("Split could not be confirmed or rolled back. Refresh the day before retrying.",original).apply { addSuppressed(cleanup) }
-        }
-        throw java.io.IOException("Split could not be confirmed. Refresh the day before retrying.",original)
     }
 }

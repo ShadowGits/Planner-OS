@@ -7,6 +7,9 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 
 const val TIMELINE_DP_PER_MINUTE = 2f
+/** Every visible time edge uses the same scale, including short task blocks. */
+fun timelineOffsetDp(minute:Int,startMinute:Int):Float=(minute-startMinute)*TIMELINE_DP_PER_MINUTE
+fun timelineDurationDp(minutes:Int):Float=minutes.coerceAtLeast(1)*TIMELINE_DP_PER_MINUTE
 const val DRAG_SNAP_MINUTES = 5
 const val LOGICAL_DAY_CUTOFF = 4 * 60
 

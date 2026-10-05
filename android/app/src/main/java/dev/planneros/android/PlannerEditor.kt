@@ -36,7 +36,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun PlannerEditor(task:Task?,selected:LocalDate,suggestedDate:String?,suggestedTime:String?,busy:Boolean,draft:EditorValues?,dismiss:()->Unit,
-    save:(String,LocalDate,String?,Int,String?)->Unit,star:(Task)->Unit,split:(Task)->Unit,delete:(Task)->Unit,focus:(Task)->Unit){
+    save:(String,LocalDate,String?,Int,String?)->Unit,star:(Task)->Unit,split:(Task)->Unit,delete:(Task)->Unit,focus:(Task)->Unit,logTime:(Task)->Unit){
     val c=LocalContext.current;val dark=MaterialTheme.colorScheme.surface.luminance()<.5f
     val existing=task?.time?.let{normalizeSlot(if(task.clockMinutes<1440)task.date?.let(LocalDate::parse)?:selected else selected,task.clockMinutes)}
     var title by rememberSaveable(task?.id){mutableStateOf(draft?.title?:task?.title.orEmpty())}
@@ -50,7 +50,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(if(task==null)"New task" else "Edit task",fontSize=24.sp,fontWeight=FontWeight.Bold);IconButton(onClick=dismiss){Icon(Icons.Rounded.Close,"Close task editor")}}
             task?.parent?.let{Text("${task.parentTitle.orEmpty()} · Part ${task.partIndex?:"?"} of ${task.partCount?:"?"}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
             task?.let{t->
-                OutlinedButton(enabled=!busy,onClick={FocusWorkLogs.open(c,t.id)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.History,null);Text(" Log time")}
+                OutlinedButton(enabled=!busy,onClick={logTime(t)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.History,null);Text(" Log time")}
                 if(t.workedSeconds>0)Text("${workDuration(t.workedSeconds)} worked${if(t.done)""else " · ${workDuration(t.remainingSeconds)} remaining"}",fontSize=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=8.dp))
             }
             OutlinedTextField(title,{title=it},label={Text("Task name")},readOnly=task?.habit==true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),maxLines=4)
@@ -75,7 +75,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
             task?.let{t->
                 TextButton(enabled=!busy,onClick={star(t)},modifier=Modifier.fillMaxWidth()){Icon(if(t.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,null);Text(if(t.starred)" One of today's wins" else " Mark as one of today's wins")}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
-                    if(!t.habit)TextButton(enabled=!busy&&t.minutes>=2,onClick={split(t)}){Icon(Icons.AutoMirrored.Rounded.CallSplit,null);Text(" Split")}
+                    if(!t.habit)TextButton(enabled=!busy&&!t.done&&t.remainingSeconds>=2,onClick={split(t)}){Icon(Icons.AutoMirrored.Rounded.CallSplit,null);Text(" Split")}
                     TextButton(enabled=!busy,onClick={delete(t)}){Icon(Icons.Rounded.DeleteOutline,null);Text(if(t.habit)" Skip occurrence" else " Delete")}
                 }
                 if(t.time!=null)OutlinedButton(onClick={focus(t)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.PlayArrow,null);Text(" Start focus timer")}

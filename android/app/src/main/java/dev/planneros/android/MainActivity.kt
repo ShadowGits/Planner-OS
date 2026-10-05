@@ -108,6 +108,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
     var inboxFilter by rememberSaveable{mutableStateOf("Open")}
     var replacement by remember{mutableStateOf<Task?>(null)};var deleteTarget by remember{mutableStateOf<Task?>(null)}
+    var splitTarget by remember{mutableStateOf<Task?>(null)}
     val scroll=rememberScrollState();val inboxScroll=androidx.compose.foundation.lazy.rememberLazyListState()
     val todoScroll=androidx.compose.foundation.lazy.rememberLazyListState()
     var drag by remember{mutableStateOf<DragState?>(null)};var viewportTop by remember{mutableFloatStateOf(0f)};var viewportBottom by remember{mutableFloatStateOf(0f)}
@@ -403,18 +404,24 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         },onFailure={val saved=EditorValues(title,date,time,minutes,notes);drafts[original?.id?:"new"]=saved
             if(editorId==null&&!adding){recovery=saved;if(original==null)adding=true else{editorId=oldId;editorBackup=original}}
         })
-    },{toggleStar(it)},{task->
+    },{toggleStar(it)},{task->splitTarget=task},{deleteTarget=it},{startTimer(it);closeEditor()},{task->closeEditor();FocusWorkLogs.open(context,task.id)})
+    splitTarget?.let{task->AlertDialog(onDismissRequest={splitTarget=null},title={Text("Split remaining work?")},text={Column{
+        Text(task.title,fontWeight=FontWeight.SemiBold)
+        Text("Two sessions: ${workDuration((task.remainingSeconds+1)/2)} and ${workDuration(task.remainingSeconds/2)}. ${if(task.workedSeconds>0)"The first starts after the worked portion" else "The first keeps its slot"}; the second is unscheduled in Inbox.")
+        if(task.workedSeconds>0)Text("Your ${workDuration(task.workedSeconds)} already worked stays recorded in a completed session.")
+    }},confirmButton={TextButton(enabled=!taskBusy(task),onClick={
+        splitTarget=null
         val keys=mutationKeys(task)
         if(mutations.begin(keys)){
-            val viewDate=selected;val snapshot=day;val ticket=snapshot?.let{it to it}
+            val snapshot=day;val ticket=snapshot?.let{it to it}
             ticket?.let{pendingWrites.add(it)};closeEditor()
             scope.launch{var message:String?=null
-                try{repo.split(task,viewDate)}catch(e:Exception){message=e.message?:"Split couldn't be saved."}
+                try{repo.split(task)}catch(e:Exception){message=e.message?:"Split couldn't be saved."}
                 finally{mutations.end(keys);ticket?.let{pendingWrites.remove(it)};reconcile()}
                 message?.let{scope.launch{snackbar.showSnackbar(it)}}
             }
         }
-    },{deleteTarget=it},{startTimer(it);closeEditor()})
+    }){Text("Split")}},dismissButton={TextButton(onClick={splitTarget=null}){Text("Cancel")}})}
     deleteTarget?.let{task->AlertDialog(onDismissRequest={deleteTarget=null},title={Text(if(task.habit)"Skip this occurrence?" else "Delete this task?")},text={Text(task.title)},confirmButton={TextButton(enabled=!taskBusy(task),onClick={deleteTarget=null;closeEditor();optimistic(mutationKeys(task),{it.copy(tasks=it.tasks.filterNot{row->row.id==task.id})},{repo.delete(task)})}){Text(if(task.habit)"Skip" else "Delete")}},dismissButton={TextButton(onClick={deleteTarget=null}){Text("Cancel")}})}
     replacement?.let{task->AlertDialog(onDismissRequest={replacement=null},title={Text("Switch focus?")},text={Text("This ends the timer for ${timer?.title}. Its task stays as it is.")},confirmButton={TextButton(onClick={TimerStore.start(context,task);replacement=null;requestNotification()}){Text("Start new timer")}},dismissButton={TextButton(onClick={replacement=null}){Text("Keep current")}})}
     LaunchedEffect(finishId){if(finishId!=null){

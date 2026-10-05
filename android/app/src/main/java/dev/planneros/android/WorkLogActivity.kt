@@ -58,6 +58,8 @@ class WorkLogActivity:ComponentActivity(){
         var seconds by rememberSaveable{mutableStateOf(((prepared?.optInt("seconds")?:entry?.optInt("seconds")?:0)%60).toString())}
         var showSeconds by rememberSaveable{mutableStateOf(seconds!="0")}
         var split by rememberSaveable{mutableStateOf(prepared?.optBoolean("split")?:false)}
+        var splitInitialized by rememberSaveable{mutableStateOf(prepared!=null)}
+        var placing by remember{mutableStateOf(false)}
         var date by rememberSaveable{mutableStateOf(prepared?.nullString("remainder_date")?:LocalDate.now().toString())}
         var clock by rememberSaveable{mutableStateOf(prepared?.nullString("remainder_time").orEmpty())}
         var warning by remember{mutableStateOf<String?>(null)}
@@ -77,11 +79,31 @@ class WorkLogActivity:ComponentActivity(){
         val rest=WorkLogPolicy.remaining(planned,worked,input?:0)
         val blocks=info?.optJSONArray("blocks")
         val selectBlock=blocks!=null&&blocks.length()>0
+        LaunchedEffect(info){
+            if(!splitInitialized&&task!=null&&!selectBlock){
+                splitInitialized=true
+                split=task.nullString("start_time")!=null&&!task.optBoolean("is_habit")&&!task.optBoolean("done")&&rest>0
+            }
+        }
+        LaunchedEffect(split,taskRef){
+            if(split&&clock.isBlank()&&frozen==null){
+                placing=true
+                try{
+                    val now=java.time.ZonedDateTime.now(java.time.ZoneId.of(info?.optString("timezone")?:"Asia/Kolkata"))
+                    val today=logicalToday(now);val selected=maxOf(LocalDate.parse(date),today)
+                    val day=repo.confirmedCached(selected)?:repo.day(selected)
+                    val slot=nextFreeSlot(selected,today,logicalNowMinute(now)+1,(rest.coerceAtLeast(1)+59)/60,taskBlocks(day.tasks.filter{!it.done&&it.id!=taskRef}))
+                    date=slot.date.toString();clock=slot.clock
+                }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(e:Exception){error="Choose a time for the remainder, or use Find next clear slot. ${e.message.orEmpty()}"}
+                finally{placing=false}
+            }
+        }
         LaunchedEffect(split,date,clock,rest,taskRef){
             warning=null
             if(split&&Regex("([01][0-9]|2[0-3]):[0-5][0-9]").matches(clock)){
                 try{
-                    val day=repo.day(LocalDate.parse(date))
+                    val selected=LocalDate.parse(date)
+                    val day=repo.confirmedCached(selected)?:repo.day(selected)
                     val parts=clock.split(":");val start=parts[0].toInt()*60+parts[1].toInt()
                     val conflicts=day.tasks.filter{it.id!=taskRef&&!it.done&&it.time!=null&&start<it.clockMinutes+it.minutes&&start+(rest+59)/60>it.clockMinutes}
                     if(conflicts.isNotEmpty())warning="Overlaps ${conflicts.joinToString{it.title}}. Choose another time for a clear slot."
@@ -91,11 +113,12 @@ class WorkLogActivity:ComponentActivity(){
         fun save(){
             if(input==null){error="Enter 0–24 hours, with minutes and seconds between 0 and 59.";return}
             val parsedDate=runCatching{LocalDate.parse(date)}.getOrNull()
-            if(split&&(rest==0||parsedDate==null||!Regex("([01][0-9]|2[0-3]):[0-5][0-9]").matches(clock))){error="Choose a valid date and start time for the remaining work.";return}
+            val doSplit=split&&rest>0
+            if(doSplit&&(parsedDate==null||!Regex("([01][0-9]|2[0-3]):[0-5][0-9]").matches(clock))){error="Choose a valid date and start time for the remaining work.";return}
             busy=true;error=null
             scope.launch{
                 try{
-                    val body=frozen?:JSONObject().put("request_id",id).put("seconds",input).put("source",if(entry==null)"manual"else "timer").put("finish",true).put("split",split).apply{if(split){put("remainder_date",date);put("remainder_time",clock)}}
+                    val body=frozen?:JSONObject().put("request_id",id).put("seconds",input).put("source",if(entry==null)"manual"else "timer").put("finish",true).put("split",doSplit).apply{if(doSplit){put("remainder_date",date);put("remainder_time",clock)}}
                     FocusWorkLogs.prepare(this@WorkLogActivity,id,taskRef,task?.optString("title")?:entry?.optString("title")?:"Task",body,mandatory)
                     frozen=body
                     val row=FocusWorkLogs.entries(this@WorkLogActivity).first{it.optString("id")==id}
@@ -122,7 +145,7 @@ class WorkLogActivity:ComponentActivity(){
                     if(info==null&&error==null)CircularProgressIndicator()
                     if(selectBlock){
                         Text("Choose the block you worked on",fontSize=18.sp,fontWeight=FontWeight.SemiBold)
-                        for(i in 0 until blocks!!.length()){val block=blocks.getJSONObject(i);OutlinedButton(onClick={taskRef=block.getString("id");hours="0";minutes="0";seconds="0"},modifier=Modifier.fillMaxWidth()){Text("Part ${i+1} · ${block.nullString("scheduled_date").orEmpty()} · ${block.nullString("start_time")?.take(5).orEmpty()} · ${durationLabel(block.optInt("estimated_minutes"))}")}}
+                        for(i in 0 until blocks!!.length()){val block=blocks.getJSONObject(i);OutlinedButton(enabled=!busy&&frozen==null,onClick={taskRef=block.getString("id");hours="0";minutes="0";seconds="0";clock="";split=false;splitInitialized=false},modifier=Modifier.fillMaxWidth()){Text("Part ${i+1} · ${block.nullString("scheduled_date").orEmpty()} · ${block.nullString("start_time")?.take(5).orEmpty()} · ${durationLabel(block.optInt("estimated_minutes"))}")}}
                     }else if(info!=null){
                         Surface(color=PlannerPalette.Navy,contentColor=Color.White,shape=MaterialTheme.shapes.large){Column(Modifier.fillMaxWidth().padding(18.dp)){
                             Text("${workDuration(worked)} worked",fontSize=28.sp,fontWeight=FontWeight.Bold)
@@ -142,7 +165,7 @@ class WorkLogActivity:ComponentActivity(){
                             TextButton(enabled=frozen==null&&!busy,onClick={scope.launch{
                                 busy=true;error=null
                                 try{
-                                    val selected=LocalDate.parse(date);val day=repo.day(selected)
+                                    val selected=LocalDate.parse(date);val day=repo.confirmedCached(selected)?:repo.day(selected)
                                     val now=java.time.ZonedDateTime.now(java.time.ZoneId.of(info?.optString("timezone")?:"Asia/Kolkata"))
                                     val slot=nextFreeSlot(selected,now.toLocalDate(),now.hour*60+now.minute+1,(rest+59)/60,taskBlocks(day.tasks.filter{!it.done&&it.id!=taskRef}))
                                     date=slot.date.toString();clock=slot.clock
@@ -153,7 +176,7 @@ class WorkLogActivity:ComponentActivity(){
                             warning?.let{Text(it,fontSize=15.sp,color=MaterialTheme.colorScheme.error)}
                         }
                         if(frozen!=null)Text("This entry is saved on this device. Retry sends the same entry, without logging it twice.",fontSize=15.sp)
-                        Button(enabled=!busy,onClick=::save,modifier=Modifier.fillMaxWidth().heightIn(min=52.dp)){Text(if(busy)"Saving…"else if(frozen!=null)"Retry saved entry"else if(split)"Log & schedule remainder"else "Save time")}
+                        Button(enabled=!busy&&!placing,onClick=::save,modifier=Modifier.fillMaxWidth().heightIn(min=52.dp)){Text(if(busy)"Saving…"else if(placing)"Finding a slot…"else if(frozen!=null)"Retry saved entry"else if(split&&rest>0)"Log & schedule remainder"else "Save time")}
                         val sessions=info?.optJSONArray("sessions")
                         if(sessions!=null&&sessions.length()>0){Text("Work history",fontSize=19.sp,fontWeight=FontWeight.SemiBold);for(i in sessions.length()-1 downTo 0){val session=sessions.getJSONObject(i);Text("${workDuration(session.optInt("seconds"))} · ${session.optString("source")} · ${runCatching{java.time.OffsetDateTime.parse(session.optString("created_at")).atZoneSameInstant(java.time.ZoneId.of(info?.optString("timezone")?:"Asia/Kolkata")).format(java.time.format.DateTimeFormatter.ofPattern("d MMM · HH:mm"))}.getOrDefault("")}",fontSize=15.sp)}}
                     }

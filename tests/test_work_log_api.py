@@ -61,3 +61,40 @@ def test_missing_migration_is_explicit_and_does_not_break_day(client, runtime):
 def test_exact_split_budget_ignores_stale_marker_after_estimate_edit():
     assert planned_seconds({'estimated_minutes':1,'metadata':{'_work_budget':{'minutes':1,'seconds':43}}})==43
     assert planned_seconds({'estimated_minutes':2,'metadata':{'_work_budget':{'minutes':1,'seconds':43}}})==120
+
+
+def test_general_split_uses_scoped_atomic_rpc_and_stable_request(client, runtime):
+    task = add_task(runtime)
+    calls = []
+    runtime.service_client.rpc = lambda name, payload: calls.append((name, payload)) or {'first_id': str(uuid4()), 'second_id': str(uuid4())}
+    body = {'request_id': str(uuid4()), 'first_seconds': 5400, 'expected_remaining': 10800}
+    assert client.post(f"/v2/day/tasks/{task['id']}/split", json=body).status_code == 401
+    response = client.post(f"/v2/day/tasks/{task['id']}/split", headers=APP_KEY, json=body)
+    assert response.status_code == 200, response.text
+    name, payload = calls[0]
+    assert name == 'planner_split_task'
+    assert payload == {'p_user_id': str(USER_ID), 'p_workspace_id': str(WORKSPACE_ID), 'p_request_id': body['request_id'], 'p_task_id': task['id'], 'p_first_seconds': 5400, 'p_expected_remaining': 10800}
+
+
+def test_general_split_rejects_bad_input_and_reports_missing_migration(client, runtime):
+    task = add_task(runtime)
+    body = {'request_id': str(uuid4()), 'first_seconds': 10800, 'expected_remaining': 10800}
+    assert client.post(f"/v2/day/tasks/{task['id']}/split", headers=APP_KEY, json=body).status_code == 400
+    body['first_seconds'] = 5400
+    def rpc(name, payload):
+        raise RuntimeError('PGRST202: function missing from schema cache')
+    runtime.service_client.rpc = rpc
+    response = client.post(f"/v2/day/tasks/{task['id']}/split", headers=APP_KEY, json=body)
+    assert response.status_code == 409 and '0036' in response.text
+    assert client.post('/v2/day/tasks/not-a-uuid/split', headers=APP_KEY, json=body).status_code == 422
+
+
+def test_general_split_reports_stale_state_without_creating_tasks(client, runtime):
+    task = add_task(runtime)
+    before = list(runtime.service_client.tables['planner_tasks'])
+    def rpc(name, payload):
+        raise RuntimeError('SPLIT_INVALID: The remaining work changed. Refresh before splitting.')
+    runtime.service_client.rpc = rpc
+    response = client.post(f"/v2/day/tasks/{task['id']}/split", headers=APP_KEY, json={'request_id': str(uuid4()), 'first_seconds': 5400, 'expected_remaining': 10800})
+    assert response.status_code == 400 and 'remaining work changed' in response.text
+    assert runtime.service_client.tables['planner_tasks'] == before
