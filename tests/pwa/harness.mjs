@@ -88,6 +88,7 @@ export async function boot({ items = [], onRequest = null } = {}) {
   // jsdom has no layout, so anything reading geometry gets zeroes; the app
   // only uses these for scroll position, which no assertion depends on.
   window.scrollTo = () => {};
+  window.focus = () => {};
   // jsdom ships no matchMedia; the palette helpers ask it whether the phone is
   // in dark mode. Answer "light" so colours are deterministic in tests.
   window.matchMedia = (query) => ({
@@ -120,9 +121,11 @@ export async function boot({ items = [], onRequest = null } = {}) {
 
   const errors = [];
   window.addEventListener("error", (e) => errors.push(e.error || e.message));
-  const script = window.document.createElement("script");
-  script.textContent = APP_JS;
-  window.document.body.appendChild(script);
+  for (const name of ["focus-timer.js","work-log.js","app.js"]) {
+    const script=window.document.createElement("script");
+    script.textContent=name==="app.js"?APP_JS:readFileSync(join(PWA,name),"utf8");
+    window.document.body.appendChild(script);
+  }
   await settle(window);
   // The app keeps hourly timers running; without closing the window they hold
   // the test process open for ever.

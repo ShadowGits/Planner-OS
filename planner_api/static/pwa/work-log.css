@@ -1,0 +1,19 @@
+.work-log-overlay { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(25,19,22,.5); overscroll-behavior: contain; }
+.work-log-dialog { width: min(100%, 440px); max-height: 90dvh; overflow-y: auto; background: var(--surface); color: var(--ink); border-radius: var(--r-lg); padding: 24px; box-shadow: var(--shadow-lift); }
+.work-log-dialog h2 { font-size: var(--t-xl); margin-bottom: 8px; }
+.work-log-task { font-size: var(--t-lg); font-weight: var(--w-med); overflow-wrap: anywhere; }
+.work-log-summary { color: var(--ink-2); font-size: var(--t-sm); margin: 12px 0; line-height: 1.5; }
+.work-log-row { display: flex; gap: 12px; margin: 16px 0; }
+.work-log-row[hidden] { display: none; }
+.work-log-field { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; font-size: var(--t-sm); color: var(--ink-2); }
+.work-log-field[hidden] { display: none; }
+.work-log-dialog input:not([type=checkbox]), .work-log-dialog select { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; }
+.work-log-check { display: flex; gap: 10px; align-items: center; min-height: 44px; font-size: var(--t-md); margin-top: 12px; }
+.work-log-check input { width: 22px; height: 22px; flex-shrink: 0; accent-color: var(--wine); }
+.work-log-help { color: var(--ink-2); font-size: var(--t-sm); line-height: 1.5; }
+.work-log-error { color: var(--now); font-size: var(--t-sm); margin-top: 12px; line-height: 1.5; }
+.work-log-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+.work-log-actions button { min-height: 44px; padding: 10px 16px; border: 0; border-radius: var(--r-sm); background: var(--chip); color: var(--ink); font: inherit; font-weight: var(--w-med); }
+.work-log-actions .work-log-save { background: var(--wine); color: var(--surface); }
+.work-log-dialog :disabled { opacity: .6; }
+@media (max-width: 420px) { .work-log-dialog { padding: 20px; } .work-log-overlay { padding: 12px; } }

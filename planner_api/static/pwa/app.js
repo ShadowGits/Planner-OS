@@ -9,16 +9,18 @@
   const SNAP_MIN = 5;
   const GAP_MIN = 30;
   const PX_PER_MIN = 1.8; // proportional: an hour is a real, scrollable hour
-  const MIN_ROW_PX = 52;
+
   const KEY_STORE = "day-planner-key";
 
   const $ = (id) => document.getElementById(id);
+  let workspaceTimezone = null;
 
   const state = {
     selected: getLogicalToday(),
     items: [],
     tz: null,
     editing: null, // task id when the sheet is in edit mode
+    todoView: localStorage.getItem("day-planner-todo-view") === "true",
   };
 
   let dragging = false; // a row is currently lifted for reschedule
@@ -34,8 +36,9 @@
   }
 
   function getLogicalToday() {
-    const d = new Date();
-    if (d.getHours() < 4) d.setDate(d.getDate() - 1);
+    const now=workspaceClock();
+    const d=new Date(now.year,now.month-1,now.day);
+    if(now.hour<4)d.setDate(d.getDate()-1);
     return startOfDay(d);
   }
 
@@ -266,6 +269,7 @@
   function applyDay(entry) {
     state.items = entry.items;
     state.tz = entry.tz;
+    workspaceTimezone = entry.tz;
     render();
   }
 
@@ -320,6 +324,28 @@
     if (e.key === "Enter") $("key-save").click();
   });
 
+  /* View changes and timer ticks reuse the loaded day, without any API read. */
+  $("view-toggle").addEventListener("click", () => {
+    state.todoView = !state.todoView;
+    localStorage.setItem("day-planner-todo-view", String(state.todoView));
+    releaseDrag();
+    render();
+  });
+  window.PlannerWorkLog?.configure({api,toast,getKey:key,
+    getContext:()=>({items:state.items,date:iso(state.selected),tz:state.tz}),
+    onSaved:()=>loadDay({keepScroll:true})});
+  window.PlannerFocus?.configure({getKey:key,toast,
+    onFinish:(task,entry)=>window.PlannerWorkLog?.open(task,{seconds:entry.seconds,source:"timer"})});
+
+  function focusButton(task){
+    const button=document.createElement("button");
+    button.type="button";button.className="task-focus";button.textContent="▶";
+    button.setAttribute("aria-label",`Start timer for ${task.title}`);
+    button.title="Start focus timer";button.disabled=!!task.pending;
+    button.addEventListener("click",event=>{event.stopPropagation();window.PlannerFocus?.start(task)});
+    return button;
+  }
+
   /* ---------- header + week strip ---------- */
 
   function renderHeader() {
@@ -371,7 +397,7 @@
   $("week-next").addEventListener("click", () => shiftDays(7));
   $("jump-today").addEventListener("click", () => goToDate(getLogicalToday()));
   $("jump-now").addEventListener("click", () => {
-    const target = document.querySelector(".now-line") || document.querySelector(".row.active") ||
+    const target = (state.todoView ? [...document.querySelectorAll(".todo-row")].find(r=>!r._task.done&&r._startMin<=logicalNowMinutes()&&r._endMin>logicalNowMinutes()) : null) || document.querySelector(".now-line") || document.querySelector(".row.active") ||
       [...document.querySelectorAll("#list .row")].find((r) => r._startMin >= logicalNowMinutes()) ||
       [...document.querySelectorAll("#list .row")].at(-1);
     if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -416,6 +442,11 @@
   function render() {
     renderHeader();
     renderWeek();
+    const viewButton=$("view-toggle");
+    viewButton.classList.toggle("on",state.todoView);
+    viewButton.setAttribute("aria-pressed",String(state.todoView));
+    viewButton.setAttribute("aria-label",state.todoView?"Show timeline":"Show to-do list");
+    window.PlannerFocus?.update({items:state.items,date:iso(state.selected),tz:state.tz});
 
     const timed = state.items
       .filter((t) => t.start_time)
@@ -429,7 +460,16 @@
 
     const list = $("list");
     list.innerHTML = "";
+    list.classList.toggle("todo-list",state.todoView);
     $("empty").classList.toggle("hidden", state.items.length > 0);
+    if(state.todoView){
+      $("inbox").classList.add("hidden");$("unsched-pill").classList.add("hidden");
+      list.style.height="auto";delete list.dataset.top0;delete list.dataset.endMin;
+      [...state.items].sort((a,b)=>Number(a.done)-Number(b.done)||
+        (timeToMin(a.start_time)??Infinity)-(timeToMin(b.start_time)??Infinity))
+        .forEach(task=>list.appendChild(todoRow(task)));
+      return;
+    }
     if (!timed.length) {
       list.style.height = "0px";
       return;
@@ -459,9 +499,7 @@
     }
 
     if (sameDay(state.selected, getLogicalToday())) {
-      const now = new Date();
-      let m = now.getHours() * 60 + now.getMinutes();
-      if (now.getHours() < 4) m += 24 * 60;
+      const m=logicalNowMinutes();
       if (m >= top0 && m <= endH * 60) {
         const nl = document.createElement("div");
         nl.className = "now-line";
@@ -496,7 +534,8 @@
       (isOverlap ? " overlap" : "") +
       (task.starred ? " starred" : "");
     row.style.top = `${(start - top0) * PX_PER_MIN}px`;
-    row.style.height = `${Math.max(MIN_ROW_PX, dur * PX_PER_MIN)}px`;
+    row.style.height = `${Math.max(1, dur) * PX_PER_MIN}px`;
+    row.classList.toggle("short",dur*PX_PER_MIN<52);
     row.style.setProperty("--ring", ringFor(task.title));
     row.style.setProperty("--task-bg", pastelFor(task.title));
     row.tabIndex = task.pending ? -1 : 0;
@@ -565,7 +604,10 @@
     // timed task cost two taps to star while a todo cost one.
     if (!task.pending) {
       const meta = row.querySelector(".meta, .ov-time");
-      if (meta) meta.insertBefore(starButton(task), meta.firstChild);
+      if (meta) {
+        meta.insertBefore(starButton(task), meta.firstChild);
+        if(!task.done)meta.appendChild(focusButton(task));
+      }
     }
 
     row.querySelector(".ring").addEventListener("click", (e) => {
@@ -592,6 +634,29 @@
     });
     attachDrag(row, task, top0);
     return row;
+  }
+
+  function todoRow(task){
+    const row=document.createElement("div");
+    row.className=`row todo-row${task.done?" done":""}${task.starred?" starred":""}${task.pending?" pending":""}`;
+    row._task=task;row._taskId=task.id;
+    row._startMin=timeToMin(task.start_time)??Infinity;
+    row._endMin=row._startMin+(task.estimated_minutes||30);
+    const check=document.createElement("button");check.type="button";
+    check.className=`ring${task.done?" checked":""}`;check.disabled=!!task.pending;
+    check.setAttribute("aria-label",`Mark ${task.title} ${task.done?"incomplete":"done"}`);
+    check.setAttribute("aria-pressed",String(!!task.done));
+    check.addEventListener("click",()=>toggleDone(task,row));row.appendChild(check);
+    const details=document.createElement("button");details.type="button";details.className="todo-details";details.disabled=!!task.pending;
+    const title=document.createElement("span");title.className="title";title.textContent=task.title;
+    const meta=document.createElement("span");meta.className="todo-meta";
+    meta.textContent=[task.start_time?fmtClock(timeToMin(task.start_time)):"Unscheduled",fmtDur(task.estimated_minutes||30),
+      task.parent_task_id?`Part ${task.part_index??"?"}/${task.part_total??"?"}`:null,
+      task.worked_seconds?`${fmtDur(Math.floor(task.worked_seconds/60))} worked`:null].filter(Boolean).join(" · ");
+    details.append(title,meta);details.addEventListener("click",()=>openEdit(task));row.appendChild(details);
+    const actions=document.createElement("div");actions.className="todo-actions";
+    if(!task.pending){actions.appendChild(starButton(task));if(!task.done)actions.appendChild(focusButton(task))}
+    row.appendChild(actions);return row;
   }
 
   function gapRow(fromMin, toMin, top0) {
@@ -749,6 +814,7 @@
       ring.setAttribute("aria-label", `Mark ${task.title} ${next ? "incomplete" : "done"}`);
     }
     if (next) row.classList.remove("active");
+    const timerButton=row.querySelector(".task-focus");if(timerButton)timerButton.hidden=next;
     // Two layouts, two class names: a normal row has .icon, a row sharing
     // its time with another has .ov-icon. A missing element must not throw —
     // the catch below reads any failure as the save failing and puts the tick
@@ -760,6 +826,7 @@
     renderWins();
     try {
       await api("PATCH", `/v2/day/tasks/${task.id}`, { done: next });
+      if(next)window.PlannerFocus?.stopTask(task.id);
     } catch (e) {
       task.done = !next;
       showError(e);
@@ -805,7 +872,7 @@
       chip.className = `win-chip${task.done ? " done" : ""}`;
       chip.textContent = `${task.done ? "✓" : "○"} ${task.title}`;
       chip.addEventListener("click", () => {
-        const row = [...document.querySelectorAll("#list .row")].find(
+        const row = [...document.querySelectorAll("#list .row, #inbox-list .inbox-card")].find(
           (el) => el._taskId === task.id
         );
         if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -880,6 +947,7 @@
     );
     for (const task of ordered) {
       const card = document.createElement("div");
+      card._taskId=task.id;
       card.className =
         `inbox-card${task.starred ? " starred" : ""}${task.done ? " done" : ""}`;
       card.innerHTML = `
@@ -901,7 +969,7 @@
         done.setAttribute("aria-label", `Mark ${task.title} done`);
         done.addEventListener("click", () =>
           api("PATCH", `/v2/day/tasks/${task.id}`, { done: true })
-            .then(() => loadDay({ keepScroll: true }))
+            .then(() => {window.PlannerFocus?.stopTask(task.id);return loadDay({ keepScroll: true })})
             .catch(showError)
         );
 
@@ -916,6 +984,7 @@
         acts.appendChild(done);
         acts.appendChild(clock);
         card.appendChild(acts);
+        acts.appendChild(focusButton(task));
         card.querySelector(".t").addEventListener("click", () => openEdit(task));
       }
       list.appendChild(card);
@@ -930,9 +999,7 @@
         end: timeToMin(t.start_time) + (t.estimated_minutes || 30),
       }))
       .sort((a, b) => a.start - b.start);
-    const now = new Date();
-    let m = now.getHours() * 60 + now.getMinutes();
-    if (now.getHours() < 4) m += 24 * 60;
+    const m=logicalNowMinutes();
     let candidate = sameDay(state.selected, getLogicalToday())
       ? Math.ceil(m / 30) * 30
       : 9 * 60;
@@ -962,6 +1029,7 @@
     $("sheet-save").textContent = "Add to day";
     $("sheet-delete").classList.add("hidden");
     $("sheet-split").classList.add("hidden");
+    $("sheet-focus-actions").classList.add("hidden");
     // Nothing to star until the task exists.
     $("sheet-star").classList.add("hidden");
     $("new-title").value = "";
@@ -978,7 +1046,9 @@
     $("sheet-title").textContent = "Edit task";
     $("sheet-save").textContent = "Save";
     $("sheet-delete").classList.remove("hidden");
-    $("sheet-split").classList.remove("hidden");
+    $("sheet-split").classList.toggle("hidden",!!task.done||!!task.is_habit);
+    $("sheet-focus-actions").classList.remove("hidden");
+    $("sheet-timer").classList.toggle("hidden",!!task.done);
     $("new-title").value = task.title;
     $("new-title").disabled = false;
     $("new-date").value = task.scheduled_date || iso(state.selected);
@@ -1031,59 +1101,37 @@
   $("sheet-close").addEventListener("click", closeSheet);
 
 
+  $("sheet-timer").addEventListener("click",()=>{
+    const task=state.items.find(t=>t.id===state.editing);if(!task)return;
+    closeSheet();window.PlannerFocus?.start(task);
+  });
+  $("sheet-work").addEventListener("click",()=>{
+    const task=state.items.find(t=>t.id===state.editing);if(!task)return;
+    closeSheet();window.PlannerWorkLog?.open(task);
+  });
+
   // Split the block in half: half stays where it is, half goes to the Inbox
   // for you to place. The total time is unchanged — an hour split twice is
   // still an hour, not two.
   $("sheet-split").addEventListener("click", async () => {
-    if (!state.editing) return;
-    const task = state.items.find(t => t.id === state.editing);
-    if (!task) return;
-
-    // A habit is a rule, not a row, so there is nothing to split into slots.
-    if (task.is_habit) { toast("Habits can't be split"); return; }
-
-    const date = task.scheduled_date || iso(state.selected);
-    const total = task.estimated_minutes || 30;
-    const keep = Math.round(total / 2);
-    const moved = total - keep;
-    if (moved < 1) { toast("Too short to split"); return; }
-
-    try {
-      if (task.parent_task_id) {
-        // Already a slot: shrink it and put a sibling alongside.
-        await api("PATCH", "/v2/day/tasks/" + task.id, { estimated_minutes: keep });
-        await api("POST", "/v2/day/tasks", {
-          title: task.title,
-          project_id: task.project_id || null,
-          date: date,
-          estimated_minutes: moved,
-          parent_task_id: task.parent_task_id
-        });
-      } else {
-        // First split. The task itself stops appearing on the timeline once it
-        // has slots, so one slot has to inherit its time or the block would
-        // simply vanish from the day.
-        await api("POST", "/v2/day/tasks", {
-          title: task.title,
-          project_id: task.project_id || null,
-          date: date,
-          start_time: task.start_time || null,
-          estimated_minutes: keep,
-          parent_task_id: task.id
-        });
-        await api("POST", "/v2/day/tasks", {
-          title: task.title,
-          project_id: task.project_id || null,
-          date: date,
-          estimated_minutes: moved,
-          parent_task_id: task.id
-        });
-      }
-      closeSheet();
-      await loadDay({ keepScroll: true });
-    } catch(e) {
-      showError(e);
-    }
+    if(!state.editing)return;
+    const task=state.items.find(t=>t.id===state.editing);
+    if(!task||task.is_habit||task.done)return;
+    const remaining=Math.max(0,(task.planned_seconds??(task.estimated_minutes||30)*60)-(task.worked_seconds||0));
+    if(remaining<2){toast("No remaining work to split");return}
+    const button=$("sheet-split");if(button.disabled)return;
+    button.disabled=true;
+    const store="day-split-request:"+hash(key())+":"+task.id;
+    // Persist the same request before sending: a lost response must not duplicate a split.
+    try{
+      const body=JSON.parse(localStorage.getItem(store)||"null")||{
+        request_id:crypto.randomUUID(),first_seconds:Math.ceil(remaining/2),expected_remaining:remaining};
+      localStorage.setItem(store,JSON.stringify(body));
+      await api("POST",`/v2/day/tasks/${task.id}/split`,body);
+      localStorage.removeItem(store);window.PlannerFocus?.stopTask(task.id);closeSheet();
+      await loadDay({keepScroll:true});
+    }catch(error){if(error.status===400||error.status===404)localStorage.removeItem(store);showError(error)}
+    finally{button.disabled=false}
   });
 
   function closeSheet() {
@@ -1234,10 +1282,11 @@
     toast("Deleted");
     try {
       await api("DELETE", `/v2/day/tasks/${id}`);
+      window.PlannerFocus?.stopTask(id);
     } catch (e) {
       // 404 means it is already gone — the delete has nothing left to do, so
       // putting the card back would invite deleting it forever.
-      if (e && e.status === 404) return;
+      if (e && e.status === 404) {window.PlannerFocus?.stopTask(id);return;}
       if (removed) {
         state.items.splice(at, 0, removed);
         render();
@@ -1493,12 +1542,20 @@
     }
   }, 3600000);
 
+  function workspaceClock(){
+    const d=new Date();
+    if(workspaceTimezone){try{
+      const parts=Object.fromEntries(new Intl.DateTimeFormat("en-CA",{timeZone:workspaceTimezone,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(d).map(p=>[p.type,p.value]));
+      return Object.fromEntries(["year","month","day","hour","minute"].map(k=>[k,Number(parts[k])]));
+    }catch{}}
+    return {year:d.getFullYear(),month:d.getMonth()+1,day:d.getDate(),hour:d.getHours(),minute:d.getMinutes()};
+  }
   function logicalNowMinutes() {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes() + (now.getHours() < 4 ? 1440 : 0);
+    const now=workspaceClock();
+    return now.hour*60+now.minute+(now.hour<4?1440:0);
   }
   setInterval(() => {
-    if (dragging || document.hidden) return;
+    if (dragging || document.hidden || state.todoView) return;
     if (sameDay(state.selected, getLogicalToday())) {
       const list = $("list");
       const top0 = Number(list.dataset.top0);

@@ -41,3 +41,12 @@ test('notification links stay within the app origin and scope',async()=>{
   assert.deepEqual(opened,[expected]);
  }
 });
+
+
+test('timer and optional work form assets are cached for offline shell use',async()=>{
+ for(const name of ['focus-timer.js','focus-timer.css','work-log.js','work-log.css']){
+  const {handlers,matches}=worker({offline:true});let response;
+  handlers.fetch({request:{method:'GET',url:`https://planner.test/app/${name}?v=1`},respondWith:p=>response=p});
+  assert.deepEqual(await response,{cached:true});assert.deepEqual(matches,[`https://planner.test/app/${name}`]);
+ }
+});

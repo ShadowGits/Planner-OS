@@ -678,3 +678,31 @@ body {
   .day-pill { width: 32px; }
   .row .meta { flex-wrap: wrap; font-size: var(--t-xs); }
 }
+
+/* The existing header icon toggles compact day rows without an extra navigation bar. */
+.view-toggle { border:0; background:var(--wine-soft); color:var(--wine); width:36px; height:36px; border-radius:12px; display:grid; place-items:center; flex:none; cursor:pointer; }
+.view-toggle svg { width:23px; height:23px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; }
+.view-toggle .view-slash { display:none; }
+.view-toggle.on .view-slash { display:block; }
+#list.todo-list { display:flex; flex-direction:column; margin:0 12px 100px; }
+.row.todo-row { position:relative; left:auto; right:auto; display:flex; align-items:center; gap:8px; min-height:52px; padding:6px 0; border-bottom:1px solid var(--line); user-select:auto; }
+.todo-row>.ring { position:relative; width:22px; height:22px; flex:none; margin:0 7px; }
+.todo-details { flex:1; min-width:0; border:0; background:none; text-align:left; color:var(--ink); cursor:pointer; padding:0; }
+.todo-details .title { display:block; font-size:14px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.todo-meta { display:block; font-size:11px; line-height:15px; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.todo-actions { display:flex; align-items:center; gap:2px; }
+.todo-actions .star { margin:0; width:30px; height:32px; font-size:20px; }
+.task-focus { flex:none; border:0; background:var(--wine-soft); color:var(--wine); border-radius:8px; min-width:28px; height:28px; padding:0 5px; cursor:pointer; font:inherit; font-size:12px; }
+.row .meta,.row .ov-time { gap:4px; }
+.row.short .time-shape,.row.short .ov-time-shape { min-height:0; border-radius:8px; }
+.row.short .body { min-height:0; max-height:100%; overflow:hidden; }
+.row.short .meta { font-size:9px; line-height:12px; margin-bottom:0; }
+.row.short .title { font-size:12px; line-height:14px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.row.short .icon-glyph,.row.short .ov-icon { font-size:17px; }
+.row.short .ov-body { padding-top:0; padding-bottom:0; }
+.row.short .ov-title { font-size:11px; }
+.row.short .task-focus { height:16px; min-width:20px; font-size:9px; }
+.now-line { z-index:4; pointer-events:none; transform:translateY(-1px); }
+.sheet-focus-actions { display:flex; gap:8px; margin:10px 0; }
+.sheet-focus-actions button { flex:1; min-height:42px; border:1px solid var(--line); background:var(--wine-soft); color:var(--wine); border-radius:12px; font:inherit; cursor:pointer; }
+@media(max-width:380px){ .top {padding-left:12px;padding-right:12px;} .top-right{gap:5px;} .day-count{font-size:11px;} .view-toggle{width:30px;height:32px;} }

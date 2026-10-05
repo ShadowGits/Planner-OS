@@ -108,7 +108,7 @@ test("overlapping tasks keep their duration-height pill and outside text", async
   const ice = rowFor(doc, "Ice ankle");
 
   assert.equal(college.style.height, "216px", "the two-hour task must keep its full timeline height");
-  assert.equal(ice.style.height, "52px", "short tasks keep the normal minimum touch height");
+  assert.equal(ice.style.height, "36px", "short blocks end at their real scheduled minute");
 
   for (const row of [college, ice]) {
     const pill = row.querySelector(".ov-time-shape");
@@ -254,13 +254,12 @@ test("splitting a task halves it rather than duplicating its length", async (t) 
   doc.getElementById("sheet-split").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
 
-  const posts = calls.filter((c) => c.method === "POST" && c.path === "/v2/day/tasks");
-  assert.equal(posts.length, 2, "a split makes two slots");
-  assert.deepEqual(posts.map((p) => p.body.estimated_minutes).sort(), [45, 45]);
-  for (const post of posts) {
-    assert.equal(post.body.date, today(), "a slot with no date is invisible everywhere");
-    assert.equal(post.body.parent_task_id, "a");
-  }
+  const posts = calls.filter((c) => c.method === "POST");
+  assert.equal(posts.length, 1, "one transaction creates both sessions or neither");
+  assert.equal(posts[0].path,"/v2/day/tasks/a/split");
+  assert.equal(posts[0].body.first_seconds,2700);
+  assert.equal(posts[0].body.expected_remaining,5400);
+  assert.match(posts[0].body.request_id,/^[0-9a-f-]{36}$/);
 });
 
 test("a habit cannot be split", async (t) => {
