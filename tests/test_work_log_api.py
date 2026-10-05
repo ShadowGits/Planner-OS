@@ -1,7 +1,35 @@
 """Actual-work API authorization, durable retry contract, and day progress."""
 from uuid import uuid4
+from io import BytesIO
+import json
+import pytest
+from urllib.error import HTTPError
+from adapters.supabase.client import SupabaseError
 from test_day_api import client, runtime, APP_KEY, USER_ID, WORKSPACE_ID
 from planner_api.work_log import planned_seconds
+
+
+@pytest.mark.parametrize("route,message,code,status", [
+    ("split", "SPLIT_NOT_FOUND", "P0001", 404),
+    ("split", "SPLIT_INVALID: secret SQL value", "P0001", 400),
+    ("split", "secret SQL value", "PGRST202", 409),
+    ("work", "WORK_NOT_FOUND", "P0001", 404),
+    ("work", "WORK_INVALID: secret SQL value", "P0001", 400),
+    ("work", "secret SQL value", "PGRST202", 409),
+    ("work", "secret SQL value", "XX000", 503),
+])
+def test_real_transport_rpc_errors_are_actionable_without_leaking_sql(client, runtime, route, message, code, status):
+    task = add_task(runtime)
+    def rpc(name, payload):
+        body = BytesIO(json.dumps({"message": message, "code": code}).encode())
+        cause = HTTPError("https://database.test/rpc", 400, "Bad Request", {}, body)
+        raise SupabaseError("Supabase request failed with HTTP 400", status_code=400) from cause
+    runtime.service_client.rpc = rpc
+    payload = ({'request_id': str(uuid4()), 'first_seconds': 5400, 'expected_remaining': 10800}
+               if route == 'split' else {'request_id': str(uuid4()), 'seconds': 60, 'source': 'manual'})
+    response = client.post(f"/v2/day/tasks/{task['id']}/{route}", headers=APP_KEY, json=payload)
+    assert response.status_code == status
+    assert 'secret SQL value' not in response.text
 
 
 def add_task(runtime, **fields):

@@ -1,6 +1,8 @@
 """Actual work is recorded separately from a task's planned duration."""
 from datetime import date
+import json
 from typing import Any
+from urllib.error import HTTPError
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
@@ -8,6 +10,31 @@ from pydantic import BaseModel, Field
 
 from planner_api.v2 import build_core, _configured_user_id
 from planner_core.services import parse_habit_item_id
+
+
+def database_error_message(error):
+    """Classify transport-wrapped RPC errors without exposing SQL response text."""
+    if hasattr(error, "_planner_rpc_classification"):
+        return error._planner_rpc_classification
+    cause = error.__cause__
+    if isinstance(cause, HTTPError):
+        try:
+            data = json.loads(cause.read(8192))
+            message = data.get("message", "")
+            if message in ("SPLIT_NOT_FOUND", "WORK_NOT_FOUND"):
+                error._planner_rpc_classification = message
+                return message
+            for prefix in ("SPLIT_INVALID:", "WORK_INVALID:"):
+                if isinstance(message, str) and message.startswith(prefix):
+                    result = prefix + " The entry is no longer valid. Refresh or correct it and try again."
+                    error._planner_rpc_classification = result
+                    return result
+            if data.get("code") in ("PGRST202", "PGRST205", "42883", "42P01"):
+                error._planner_rpc_classification = "schema cache"
+                return "schema cache"
+        except (ValueError, AttributeError, OSError):
+            pass
+    return str(error)
 
 
 def planned_seconds(task):
@@ -73,7 +100,7 @@ def register_work_log_routes(api: FastAPI, cloud: Any, authorize: Any):
         return build_core(cloud.service_client, _configured_user_id())
 
     def unavailable(error):
-        message = str(error).lower()
+        message = database_error_message(error).lower()
         if any(term in message for term in ("pgrst202", "pgrst205", "does not exist", "schema cache")):
             raise HTTPException(409, detail={"message": "Time logging needs database migration 0035. Your saved timer entry is still on this device."}) from error
         raise HTTPException(503, detail={"message": "Time could not be saved. Your entry is kept; retry when connected."}) from error
@@ -89,7 +116,7 @@ def register_work_log_routes(api: FastAPI, cloud: Any, authorize: Any):
                 "p_first_seconds": body.first_seconds, "p_expected_remaining": body.expected_remaining,
             })
         except Exception as error:
-            message = str(error)
+            message = database_error_message(error)
             if "SPLIT_INVALID:" in message:
                 raise HTTPException(400, detail={"message": message.split("SPLIT_INVALID:", 1)[1].split('"', 1)[0].strip()}) from error
             if "SPLIT_NOT_FOUND" in message:
@@ -151,9 +178,10 @@ def register_work_log_routes(api: FastAPI, cloud: Any, authorize: Any):
                 "p_remainder_time": body.remainder_time,
             })
         except Exception as error:
-            if "WORK_INVALID:" in str(error):
-                raise HTTPException(400, detail={"message": str(error).split("WORK_INVALID:", 1)[1].split('"', 1)[0].strip()}) from error
-            if "WORK_NOT_FOUND" in str(error):
+            message = database_error_message(error)
+            if "WORK_INVALID:" in message:
+                raise HTTPException(400, detail={"message": message.split("WORK_INVALID:", 1)[1].split('"', 1)[0].strip()}) from error
+            if "WORK_NOT_FOUND" in message:
                 raise HTTPException(404, detail={"message": "This task is no longer available."}) from error
             unavailable(error)
         return {"success": True, "message": "Time saved", "data": result}
