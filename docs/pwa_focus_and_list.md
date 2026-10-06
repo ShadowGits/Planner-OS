@@ -16,4 +16,4 @@ The countdown uses a stored deadline, so delayed browser ticks do not accumulate
 - Automated tests: timer deadlines, timezone and 04:00 logical-day handling, overlap suppression, account-scoped restore, floating-window controls and failure handling, optional work logging, exact retry payloads, compact list actions, atomic splitting and offline shell assets.
 - Actual native Chrome/Edge Picture-in-Picture on Mac remains unverified: the available verification browser is the in-app browser. Floating-window tests use a mocked browser API.
 
-The backend split route and PWA assets must be deployed together. Migration 0036 is already applied; publishing requires fresh user approval under the repository's agent rules.
+The backend split route and PWA assets were deployed together in `c212a4f`; migration 0036 was verified live. Later safe error classification (`f672266`) and compact headers (`fcf4074`) were saved locally, with production publication not verified at this handoff. See [the current technical reference](technical_reference.md) for release boundaries. Each push/deploy still requires fresh user approval under the repository rules.

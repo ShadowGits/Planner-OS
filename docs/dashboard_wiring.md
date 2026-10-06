@@ -1,3 +1,5 @@
+> **Historical guide:** Some architecture, endpoints or release assumptions below are obsolete in this checkout. Use [the current technical handoff](technical_reference.md) and [committed interface inventory](interface_inventory.md) before following these instructions. The current planner is Postgres-backed; legacy workbook/CLI/EventKit paths may be absent.
+
 # Dashboard wiring: Streamlit on the same Supabase project (no Excel)
 
 How to point the Streamlit dashboard at the **same** Supabase project the bot,

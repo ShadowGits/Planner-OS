@@ -1,29 +1,21 @@
 # Planner OS
 
-Planner OS MVP3 adds an authenticated local/cloud interface while preserving the workbook-first planner, local CLI, and STDIO MCP. See [MVP3 deployment](docs/mvp3_deployment.md) for Supabase migrations, Vercel configuration, Google OAuth, and the two-user release check.
+Planner OS combines projects, milestones, tasks, habits, daily time blocks, actual-work logging, reminders, progress and financial planning. The current source of truth is **Supabase Postgres**, shared by the FastAPI backend, cloud MCP tools, day-planner PWA and native Kotlin/Compose Android app.
 
-Planner OS is a workbook-first planner with local and authenticated cloud modes.
-Excel is the source of truth; the CLI, STDIO MCP, web app, and API are interfaces
-over Planner Engine.
+## Documentation for developers and AI agents
 
-## Active execution target
+Start with **[the complete product and technical handoff](docs/technical_reference.md)**. It covers features, source ownership, architecture, auth/tenancy, database/time conventions, calendars, reminders, timer/client differences, setup, tests, deployment, APK delivery, known gaps and unfinished work.
 
-Exactly one downstream target is active: `google_calendar`, `apple_calendar`, or
-`none`. Selection persists in `.planner-os/execution-settings.json`.
+The **[generated interface inventory](docs/interface_inventory.md)** lists every statically declared HTTP route, MCP tool, request-model field, public core-service method, tracked migration and environment-variable usage from the documented commit. Regenerate it with `python3 scripts/generate_reference_inventory.py --ref HEAD`.
 
-```sh
-shadow execution-target list
-shadow execution-target switch-preview apple_calendar
-shadow execution-target switch-apply PREVIEW_ID
-shadow publish today
-```
+Focused guides: [Android](android/README.md), [PWA](docs/day_planner_pwa.md), [focus timer/list](docs/pwa_focus_and_list.md), [actual work](docs/actual_work_logging.md), [split repair](docs/android_split_repair.md), [completed-task deletion](docs/completed_task_deletion.md).
 
-A target switch never moves or deletes existing external items. Use
-`move-preview` and `move-apply` for an explicit migration.
+## Source layout
 
-Apple Calendar uses a native EventKit helper. See
-`planner_integrations/apple_calendar/README.md` for build and permission setup.
+- Backend: `planner_api`, `planner_core`, `planner_platform`, `adapters`, `planner_integrations`.
+- Database: `supabase/migrations`.
+- Day PWA: `planner_api/static/pwa`, served by backend `/app/`.
+- Android: `android`, with its own build and versioned APK delivery instructions.
+- Root Next.js: `app`, `components`, `lib`; contains retained legacy console flows. The active Deutschland web dashboard is a separate repository.
 
-See `docs/technical_reference.md` for the complete public function reference.
-Focused guides remain in `docs/cli.md`, `docs/mcp.md`, and
-`docs/migrations.md`.
+Earlier Excel/STDIO/`shadow` CLI descriptions are historical and do not describe this checkout's complete implementation. Read the handoff's release boundary and known gaps before extending it. Local commits, delivered APKs and production deployments are distinct states.

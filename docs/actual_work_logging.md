@@ -1,4 +1,12 @@
-# Actual work logging (Android 1.0.8)
+# Actual work logging
+
+## Current behavior — Android 1.0.11 and PWA
+
+Scheduled timer expiry creates no mandatory logging prompt or queue. Explicit scheduled Finish opens optional input; Ignore closes it. Task completion remains independent of logging. Android unscheduled timers retain a different entry/automatic elapsed-save policy. PWA expiry writes nothing and explicit Finish opens optional logging with elapsed focus seconds. Android scheduled Finish currently pre-fills planned duration rather than universal paused elapsed time; do not assume identical client behavior.
+
+General task Split uses migration 0036 and a stable request/body. Actual-work-and-remainder scheduling uses migration 0035. See [split repair](android_split_repair.md) and [the complete technical handoff](technical_reference.md).
+
+## Historical Android 1.0.8 behavior (superseded for scheduled timers)
 
 An expired countdown stops at its planned end, posts an ongoing high-importance notification and opens an actual-time entry screen while Planner OS is visible. Android notification settings and DND still control heads-up display outside the app. Pending entries survive process death and reboot and appear on the next app visit.
 

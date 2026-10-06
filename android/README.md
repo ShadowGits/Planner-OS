@@ -4,7 +4,7 @@ Native Kotlin / Jetpack Compose companion for the same Planner OS backend as the
 
 ## Install
 
-The generated `artifacts/Planner-OS-Android-<version>.apk` (for example, `Planner-OS-Android-1.0.5.apk`) is a debug-signed, installable APK for personal use. Transfer it to the phone, open it with My Files, and allow that source to install unknown apps. This build is not a Play Store release. Keep the same signing key for future upgrades; uninstalling loses local configuration and saved days.
+The generated `artifacts/Planner-OS-Android-<version>.apk` (currently `Planner-OS-Android-1.0.11.apk`) is a debug-signed, installable APK for personal use. Transfer it to the phone, open it with My Files, and allow that source to install unknown apps. This build is not a Play Store release. Keep the same signing key for future upgrades; uninstalling loses local configuration and saved days.
 
 On first launch, enter your existing HTTPS backend origin (without `/app/`) and `PWA_ACCESS_KEY` in Settings. No server key is embedded. The key is AES-GCM encrypted with a non-exportable Android Keystore key; backups and cleartext network traffic are disabled. HTTP redirects are rejected to keep credentials from following a redirect to another host.
 
@@ -14,15 +14,15 @@ For Samsung background delivery, Settings → Apps → Planner OS → Battery �
 
 ## Features
 
-Version 1.0.2 (version code 4) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
+Version 1.0.11 (version code 13) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
 * Proportional, overlapping day timeline with a dotted spine, duration/end-time labels, current-time marker and active block. Hold a block to drag on a five-minute grid; move sideways while dragging to choose the previous/next date. Failed saves restore the original schedule.
 * Named Top Wins chips, direct stars in timeline/inbox, completion progress, week arrows, day swipes and native date/time pickers. Today rolls at 04:00 in the workspace timezone.
-* Starred-first inbox with a Schedule action that finds a gap fitting the full task duration. Presets/custom durations, category icons, recurrence and split-session metadata are retained.
+* Timeline icon toggles the compact scheduled/unscheduled day todo list; the date header is compact. Starred-first inbox with a Schedule action that finds a gap fitting the full task duration. Presets/custom durations, category icons, recurrence and split-session metadata are retained.
 * Add/edit/reschedule/delete blocks and habits; split regular blocks into sessions using the existing parent-task model.
 * Scheduled blocks start their timer automatically (enabled by default). Grant **Allow precise alarms** for starts while the app is closed; foreground catch-up otherwise starts the currently active block with its original end time. Pausing or canceling suppresses that occurrence, while the next scheduled block can still start. With overlapping blocks, the most recently starting active block wins.
 * Square wooden watch dial with a reverse-moving seconds hand, countdown digits, local smooth animation, and task name. Public lockscreen notification carries task name, a system countdown chronometer, and pause/cancel/finish actions; lockscreen content still follows your phone settings.
-* One active countdown per task, pause/resume, overtime, task name, draggable floating overlay, notification controls and explicit confirmation before marking done.
+* One active countdown, pause/resume, task name, draggable floating overlay and notification controls. Expiry stops at its planned duration; scheduled tasks are not automatically completed or forced into logging.
 * Stored timer survives app process loss. Monotonic time handles manual clock changes while running; a wall-time anchor recovers after reboot. Relaunch to restore the foreground timer after reboot. Force-stop cannot be bypassed.
 * Task saves update locally without a global loading lock or a whole-day download. Conflicting edits serialize by task/parent; unrelated tasks remain usable. Failed writes restore only their own task. Cross-day cache copies update together, and pending snapshots are never treated as confirmed schedules.
 * Fresh selected-day views are reused for 10 minutes on resume/navigation. Automatic neighboring-day prefetch is removed. Ordinary edits, stars, completion, deletion, and dragging send only their write; split/parent completion reconciles affected backend group changes. Background schedules reuse today for 30 minutes and tomorrow for six hours; successful reminder-feed polls have a 15-minute minimum interval. Animation makes no API calls. These are freshness tradeoffs for remote edits; manual refresh remains available.
@@ -59,10 +59,10 @@ The delivery script verifies the APK ZIP and SHA256 and reads its version from m
 2. Use named Top Wins chips to reveal timeline/inbox tasks. Complete/reopen and star directly; reject a sixth star without keeping it selected. Schedule an existing inbox item into a gap fitting its full duration, then cancel a second proposal. Add/edit with native pickers and duration presets; split/delete/skip the correct item.
 3. Turn off network: reopen a cached day and start a timer; edits should report a connection error.
 4. Start a short focus block, switch to another app, drag the floating timer, pause/resume, lock/unlock and let it run overtime.
-5. Tap Finish: Continue preserves timer; End timer stops without completing; Mark done only stops after the server confirms success.
+5. Finish a scheduled timer and verify optional work input/Ignore without a forced expiry queue. Complete a task directly without mandatory logging. Verify unscheduled timer behavior separately; it retains a different entry policy.
 6. Deny overlay permission and verify notification timer still works; restore overlay permission and reopen the app.
 7. Enable native reminders, schedule a block40minutes away, and validate30/5-minute reminders. Edit/delete/complete it and confirm stale alarms disappear after refresh.
 8. Reboot then launch the app and verify timer recovery and reminder work restoration. Test notification permission denied, battery restrictions, force-stop, and Do Not Disturb explicitly.
 9. Test S24 Ultra portrait/landscape, system font scaling, gesture navigation, lockscreen and One UI background controls. Build/unit tests cannot establish these physical-device behaviors.
 
-Split creates child sessions with compensating deletion on partial failure. A dropped network response can still make a multi-request split ambiguous; an atomic backend split endpoint is a future improvement.
+General Split uses the atomic `/v2/day/tasks/{id}/split` endpoint and migration 0036 with a persisted request UUID and exact payload. Partial actual-work splitting uses migration 0035. Identical retries must return the original result. See [split repair](../docs/android_split_repair.md) and [the current technical handoff](../docs/technical_reference.md).

@@ -1,3 +1,5 @@
+> **Historical guide:** Some architecture, endpoints or release assumptions below are obsolete in this checkout. Use [the current technical handoff](technical_reference.md) and [committed interface inventory](interface_inventory.md) before following these instructions. The current planner is Postgres-backed; legacy workbook/CLI/EventKit paths may be absent.
+
 # Planner OS MVP3 Deployment
 
 Planner OS MVP3 uses a Next.js interface, a FastAPI function, and the linked Supabase project. The workbook remains the planning source of truth in the private `planner-workbooks` bucket.
