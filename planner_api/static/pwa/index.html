@@ -31,13 +31,12 @@
 
   <header class="top">
     <div class="top-row">
-      <div class="day-heading"><h1 id="day-title">Today</h1><p id="day-date" class="day-date"></p></div>
+      <div class="day-heading"><h1 id="day-title">Today</h1><div class="day-subline"><p id="day-date" class="day-date"></p><span id="day-count" class="day-count"></span></div></div>
       <div class="top-right">
         <button id="jump-now" class="jump-now hidden" aria-label="Jump to the current time">Now</button>
         <button id="jump-today" class="jump-now hidden">Today</button>
         <button id="notif-btn" class="notif-btn hidden" aria-label="Turn on notifications" title="Notifications">🔔</button>
         <button id="view-toggle" class="view-toggle" aria-label="Show to-do list" aria-pressed="false" title="Toggle timeline / to-do list"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M9 6h10M9 12h10M9 18h10"/><path class="view-slash" d="M3 3l18 18"/></svg></button>
-        <span id="day-count" class="day-count"></span>
       </div>
     </div>
     <div id="day-progress" class="day-progress hidden" role="progressbar" aria-label="Tasks completed" aria-valuemin="0"><div id="day-progress-fill"></div></div>

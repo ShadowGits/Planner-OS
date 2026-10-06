@@ -95,7 +95,7 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body { min-height: 100%; }
-html { scroll-padding-top: 160px; }
+html { scroll-padding-top: calc(env(safe-area-inset-top) + 104px); }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
@@ -130,49 +130,50 @@ body {
   background: color-mix(in srgb, var(--bg) 90%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  padding: calc(env(safe-area-inset-top) + var(--s-3)) var(--s-5) var(--s-2);
+  padding: calc(env(safe-area-inset-top) + 4px) var(--s-4) 2px;
 }
 
-.top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); min-height: 44px; }
 .day-heading { min-width: 0; }
-.day-date { font-size: var(--t-xs); color: var(--ink-2); margin-top: var(--s-1); white-space: nowrap; }
+.day-subline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.day-date { font-size: 10px; line-height: 14px; color: var(--ink-2); margin-top: 0; white-space: nowrap; }
 .jump-now {
   border: 1px solid var(--line); background: var(--surface); color: var(--wine);
   border-radius: var(--r-pill); min-height: 36px; padding: 0 var(--s-3);
   font-size: var(--t-sm); font-weight: var(--w-med); cursor: pointer;
 }
-.day-progress { height: 3px; background: var(--line); border-radius: var(--r-pill); overflow: hidden; margin-top: var(--s-3); }
+.day-progress { height: 3px; background: var(--line); border-radius: var(--r-pill); overflow: hidden; margin-top: 2px; }
 .day-progress > div { height: 100%; background: var(--wine); border-radius: inherit; transition: width 180ms ease; }
 
-#day-title { font-size: var(--t-2xl); font-weight: var(--w-bold); letter-spacing: -0.5px; }
+#day-title { font-size: 19px; line-height: 23px; font-weight: var(--w-bold); letter-spacing: -0.3px; }
 #day-title .chev { color: var(--ink-3); font-weight: var(--w-med); }
-.day-count { color: var(--ink-2); font-size: var(--t-sm); font-weight: var(--w-med); }
+.day-count { color: var(--ink-2); font-size: 10px; line-height: 14px; font-weight: var(--w-med); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-.week-row { display: flex; align-items: center; gap: var(--s-1); margin-top: var(--s-3); }
+.week-row { display: flex; align-items: center; gap: 0; margin-top: 0; }
 
 .week-nav {
   border: none; background: none; color: var(--ink-3);
   font-size: var(--t-xl); cursor: pointer;
-  width: var(--tap); height: var(--tap);
+  width: 28px; height: var(--tap); flex-shrink: 0;
   display: grid; place-items: center;
-  margin: calc(var(--s-3) * -1) calc(var(--s-2) * -1);
+  margin: 0;
 }
 
 .week-strip { display: flex; flex: 1; justify-content: space-between; }
 
 .day-pill {
   border: none; background: none; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: var(--s-1);
-  padding: var(--s-1) 0; width: 38px; color: var(--ink-2); font-weight: var(--w-med);
+  position: relative; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 2px;
+  padding: 0; min-height: var(--tap); flex: 1; color: var(--ink-2); font-weight: var(--w-med);
 }
-.day-pill .dow { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.3px; }
+.day-pill .dow { font-size: 10px; text-transform: uppercase; letter-spacing: 0; }
 .day-pill .num {
-  width: 30px; height: 30px; display: grid; place-items: center;
-  border-radius: 50%; font-size: var(--t-md); font-weight: var(--w-bold); color: var(--ink);
+  width: 24px; height: 26px; display: grid; place-items: center;
+  border-radius: 8px; font-size: 13px; font-weight: var(--w-bold); color: var(--ink);
 }
 .day-pill.today .num { color: var(--wine); }
 .day-pill.selected .num { background: var(--wine); color: #fff; }
-.day-pill .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--wine); opacity: 0; }
+.day-pill .dot { position: absolute; bottom: 2px; width: 3px; height: 3px; border-radius: 50%; background: var(--wine); opacity: 0; }
 .day-pill.has-tasks .dot { opacity: 0.55; }
 
 /* ---------- today's wins ---------- */
@@ -653,8 +654,7 @@ body {
 .row.pending .ring { pointer-events: none; }
 
 /* Notification bell in the header. Muted until on, then it fills in. */
-.top-right { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--s-2); max-width: 148px; }
-.top-right .day-count { flex-basis: 100%; text-align: right; font-variant-numeric: tabular-nums; }
+.top-right { display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 4px; flex-shrink: 0; }
 .notif-btn {
   border: none; background: none; cursor: pointer;
   font-size: var(--t-lg); line-height: 1; opacity: 0.4;

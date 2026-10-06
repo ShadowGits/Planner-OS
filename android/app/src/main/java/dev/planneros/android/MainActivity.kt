@@ -315,16 +315,19 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         }
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
-            Row(Modifier.fillMaxWidth().padding(start=20.dp,end=8.dp,top=9.dp),verticalAlignment=Alignment.CenterVertically){
-                Text(if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=21.sp,fontWeight=FontWeight.SemiBold,
-                    modifier=Modifier.weight(1f).then(if(inbox)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()}))
+            Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp,top=2.dp),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f).then(if(inbox)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
+                    Text(if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(!inbox)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if(!inbox)TextButton(onClick={selectedIso=today.toString();if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
                 IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{refresh(true,false,true);if(inbox)refreshInbox(true)}}){Icon(Icons.Rounded.Refresh,"Refresh day")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
             }
             if(!inbox)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 IconButton(onClick={selectedIso=selected.minusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronLeft,"Previous week")}
                 val start=selected.minusDays((selected.dayOfWeek.value-1).toLong())
                 for(index in 0..6){val d=start.plusDays(index.toLong());val isSelected=d==selected
-                    Column(Modifier.weight(1f).semantics{contentDescription=d.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy"))+(if(isSelected)", selected" else "")}.background(if(isSelected)MaterialTheme.colorScheme.primary else Color.Transparent,RoundedCornerShape(16.dp)).clickable{selectedIso=d.toString()}.padding(vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally){
+                    Column(Modifier.weight(1f).semantics{contentDescription=d.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy"))+(if(isSelected)", selected" else "")}.background(if(isSelected)MaterialTheme.colorScheme.primary else Color.Transparent,RoundedCornerShape(10.dp)).clickable{selectedIso=d.toString()}.padding(vertical=2.dp),horizontalAlignment=Alignment.CenterHorizontally){
                         Text(d.format(DateTimeFormatter.ofPattern("EEEEE")),fontSize=10.sp,color=if(isSelected)MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(d.dayOfMonth.toString(),fontSize=15.sp,fontWeight=FontWeight.Bold,color=if(isSelected)MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
                         val hasTasks=if(d==selected)currentTasks.isNotEmpty()else repo.cached(d)?.tasks?.isNotEmpty()==true
@@ -332,10 +335,6 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     }
                 }
                 IconButton(onClick={selectedIso=selected.plusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronRight,"Next week")}
-            }
-            if(!inbox)Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),verticalAlignment=Alignment.CenterVertically){
-                Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
-                TextButton(onClick={selectedIso=today.toString();if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
             }
             if(!inbox&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
             if(!inbox)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
