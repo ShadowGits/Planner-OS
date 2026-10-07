@@ -132,3 +132,25 @@ def test_untrusted_push_endpoint_never_reaches_http(fake_pywebpush, endpoint):
 def test_push_redirects_are_disabled(fake_pywebpush):
     assert send_push(_subscription(), "Title", "Body") is True
     assert fake_pywebpush[0]["requests_session"].max_redirects == 0
+
+
+@pytest.mark.parametrize(("headline", "expected_body"), [
+    ("🟡 IN 30 MINUTES : Study German", "Starts in 30 min · 09:00 · 45 min"),
+    ("🟢 IN 5 MINUTES : Study German", "Starts in 5 min · 09:00 · 45 min"),
+    ("🟢 STARTING NOW : Study German", "Starting now · 09:00 · 45 min"),
+])
+def test_web_event_notification_emphasizes_task_name(fake_pywebpush, headline, expected_body):
+    import json
+    assert send_push(_subscription(), headline, "Starts at 09:00 · 45 min", "/app/", tag="event-task")
+    payload = json.loads(fake_pywebpush[-1]["data"])
+    assert payload["title"] == "Study German"
+    assert payload["body"] == expected_body
+    assert payload["tag"] == "event-task"
+    assert payload["url"] == "/app/"
+
+
+def test_other_notification_text_is_preserved():
+    from planner_core.push import _notification_text
+    for tag in (None, "morning-brief"):
+        assert _notification_text("Morning Brief", "Your full summary", tag) == ("Morning Brief", "Your full summary")
+    assert _notification_text("Custom reminder", "Keep this text", "event-task") == ("Custom reminder", "Keep this text")

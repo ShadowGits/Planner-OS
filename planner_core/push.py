@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from urllib.parse import urlsplit
 from typing import Any
 
@@ -97,6 +98,24 @@ def _vapid_claims() -> dict[str, str]:
     return {"sub": os.environ.get("VAPID_MAILTO", "mailto:planner@example.com")}
 
 
+def _notification_text(title: str, body: str, tag: str | None) -> tuple[str, str]:
+    """Keep the task in the prominent system title; timing belongs beneath it.
+
+    Native Android and Telegram retain their own reminder presentation. Only
+    known web event reminders use this compact layout, with no HTML or fake
+    Unicode fonts that would harm accessibility or task-name readability.
+    """
+    if not tag or not tag.startswith("event-"):
+        return title, body
+    match = re.fullmatch(r"[🟡🟢] (?:IN (\d+) MINUTES|STARTING NOW) : (.+)", title, re.DOTALL)
+    if not match:
+        return title, body
+    lead, task = match.groups()
+    timing = f"Starts in {lead} min" if lead else "Starting now"
+    details = body.removeprefix("Starts at ")
+    return task, f"{timing} · {details}" if details else timing
+
+
 def send_push(
     subscription_info: dict[str, Any],
     title: str,
@@ -124,6 +143,7 @@ def send_push(
         logger.warning("VAPID_PRIVATE_KEY not set — cannot send push notification")
         return False
 
+    title, body = _notification_text(title, body, tag)
     payload = json.dumps({
         "title": title,
         "body": body,
