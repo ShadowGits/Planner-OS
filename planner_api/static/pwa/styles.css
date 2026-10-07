@@ -638,34 +638,14 @@ body {
 }
 .key-error { color: #d9534f !important; margin-top: var(--s-3); }
 
-/* In-app messages use readable text and a full-size dismiss target. */
 .toast {
   position: fixed; bottom: calc(env(safe-area-inset-bottom) + 100px);
   left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 12px;
-  width: min(480px, calc(100vw - 32px)); min-height: 72px;
-  padding: 16px 12px 16px 20px;
-  background: var(--surface); color: var(--ink);
-  border: 1px solid var(--line); border-radius: 16px;
-  font-size: 17px; line-height: 1.5; font-weight: var(--w-med);
-  z-index: 110; box-shadow: var(--shadow-lift);
-  text-align: left; overflow-wrap: anywhere;
-}
-.toast-message { flex: 1; min-width: 0; }
-.toast-dismiss {
-  flex: 0 0 44px; width: 44px; height: 44px;
-  display: grid; place-items: center;
-  border: none; border-radius: 10px; background: var(--chip); color: var(--ink);
-  font: inherit; font-size: 24px; cursor: pointer;
-}
-.toast-dismiss:hover { background: var(--line); }
-.toast-dismiss:focus-visible { outline: 2px solid var(--wine); outline-offset: 3px; }
-@media (min-width: 720px) {
-  .toast {
-    left: auto; right: 24px; transform: none;
-    bottom: calc(env(safe-area-inset-bottom) + 24px);
-    font-size: 18px; padding: 18px 14px 18px 22px;
-  }
+  background: var(--ink); color: var(--bg);
+  font-size: var(--t-md); font-weight: var(--w-med); border-radius: var(--r-md);
+  padding: var(--s-3) var(--s-4);
+  z-index: 90; box-shadow: var(--shadow-lift); max-width: calc(100vw - var(--s-6)); width: max-content;
+  text-align: center; overflow-wrap: anywhere;
 }
 
 /* A task that has been added on screen but not yet confirmed by the server.
