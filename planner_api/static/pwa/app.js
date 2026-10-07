@@ -1303,10 +1303,24 @@
 
   function toast(msg) {
     const el = $("toast");
-    el.textContent = msg;
+    const message = document.createElement("span");
+    message.className = "toast-message";
+    message.textContent = String(msg);
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "toast-dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss notification");
+    dismiss.textContent = "×";
+    dismiss.addEventListener("click", () => {
+      clearTimeout(toastTimer);
+      el.classList.add("hidden");
+    });
+    el.replaceChildren(message, dismiss);
     el.classList.remove("hidden");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.add("hidden"), 2000);
+    // Longer messages need enough time to read, especially at larger text sizes.
+    const duration = Math.min(15000, Math.max(6000, String(msg).length * 80));
+    toastTimer = setTimeout(() => el.classList.add("hidden"), duration);
   }
 
   function showError(e) {
