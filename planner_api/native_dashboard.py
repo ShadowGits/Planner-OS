@@ -99,9 +99,14 @@ def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -
             data = {"rows": rows, "next_offset": offset + 100 if len(rows) == 100 else None}
             if section == "milestones":
                 progress = core.metrics._milestone_progress()
+                projects = {str(p["id"]): p.get("name") for p in repository.list_rows("projects")}
                 for row in rows:
                     counts = progress.get(str(row["id"]), {})
-                    row.update(done_tasks=counts.get("done", 0), total_tasks=counts.get("total", 0))
+                    row.update(
+                        done_tasks=counts.get("done", 0),
+                        total_tasks=counts.get("total", 0),
+                        project_name=projects.get(str(row.get("project_id")), "General"),
+                    )
             if section == "habits":
                 summary = core.metrics._completion_summary(datetime.now(ZoneInfo(core.timezone)).date())
                 for row in rows:

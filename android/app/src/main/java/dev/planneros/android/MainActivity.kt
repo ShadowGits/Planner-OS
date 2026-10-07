@@ -106,6 +106,11 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var inbox by rememberSaveable{mutableStateOf(false)};var timer by remember{mutableStateOf(TimerStore.read(context))};var remaining by remember{mutableLongStateOf(0L)}
     val viewPrefs=remember{context.getSharedPreferences("appearance",android.content.Context.MODE_PRIVATE)}
     var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
+    var showMilestones by rememberSaveable{mutableStateOf(false)}
+    val dashRepo=remember{DashboardRepository(context)}
+    var milestonesList by remember{mutableStateOf<List<JSONObject>>(emptyList())}
+    var milestonesLoading by remember{mutableStateOf(false)}
+    var milestonesError by remember{mutableStateOf<String?>(null)}
     var inboxFilter by rememberSaveable{mutableStateOf("Open")}
     var replacement by remember{mutableStateOf<Task?>(null)};var deleteTarget by remember{mutableStateOf<Task?>(null)}
     var splitTarget by remember{mutableStateOf<Task?>(null)}
@@ -117,7 +122,9 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var lastToday by rememberSaveable{mutableStateOf(today.toString())}
     val currentTasks=day?.takeIf{it.date==selectedIso}?.tasks.orEmpty()
     val timed=currentTasks.filter{it.time!=null}.sortedBy{it.clockMinutes}
-    val todoTasks=remember(currentTasks){currentTasks.sortedWith(compareBy<Task>{it.done}.thenBy{it.clockMinutes})}
+    val openTasks=remember(currentTasks){currentTasks.filterNot{it.done}.sortedBy{it.clockMinutes}}
+    val completedTasks=remember(currentTasks){currentTasks.filter{it.done}.sortedBy{it.clockMinutes}}
+    val todoTasks=remember(openTasks,completedTasks){openTasks+completedTasks}
     val unscheduled=inboxRows(day?.takeIf{it.date==selectedIso},backlog,clock)
     val unfinishedInbox=unscheduled.count{!it.done}
     val editor=editorId?.let{id->currentTasks.find{it.id==id}?:editorBackup?.takeIf{it.id==id}}
@@ -166,6 +173,21 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
         }finally{inboxLoading=false}
     }
+    suspend fun refreshMilestones(force:Boolean=false){
+        if(!repo.config.configured)return
+        milestonesLoading=milestonesList.isEmpty()
+        try{
+            val path=dashRepo.path("milestones")
+            val data=dashRepo.load(path,force)
+            val rows=data.optJSONArray("rows")?.let{arr->
+                (0 until arr.length()).mapNotNull{arr.optJSONObject(it)}
+            }?:emptyList()
+            milestonesList=rows
+            milestonesError=null
+        }catch(cancel:CancellationException){throw cancel}catch(e:Exception){
+            milestonesError=e.message?:"Couldn't load milestones."
+        }finally{milestonesLoading=false}
+    }
     fun reconcile(){
         reconcileJob?.cancel()
         reconcileJob=scope.launch{
@@ -212,7 +234,12 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             failure?.let{message->scope.launch{snackbar.showSnackbar(message)}}
         }
     }
-    fun toggleDone(task:Task){optimistic(mutationKeys(task),{replaceTask(it,task.copy(done=!task.done))},{repo.patch(task,JSONObject().put("done",!task.done))},needsReconcile=task.parent!=null)}
+    fun toggleDone(task:Task){
+        val prevIndex=todoScroll.firstVisibleItemIndex
+        val prevOffset=todoScroll.firstVisibleItemScrollOffset
+        optimistic(mutationKeys(task),{replaceTask(it,task.copy(done=!task.done))},{repo.patch(task,JSONObject().put("done",!task.done))},needsReconcile=task.parent!=null)
+        if(todoView){scope.launch{todoScroll.scrollToItem(prevIndex,prevOffset)}}
+    }
     fun toggleStar(task:Task){
         // The backend counts actual scheduled dates, including overnight copies.
         // It owns the limit; a refused sixth rolls back this optimistic state.
@@ -259,6 +286,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
 
     }
     LaunchedEffect(inbox,connectionRevision){if(inbox)refreshInbox()}
+    LaunchedEffect(showMilestones,connectionRevision){if(showMilestones)refreshMilestones()}
     LaunchedEffect(selectedIso,connectionRevision){while(true){delay(60*60*1000L);refresh(true)}}
     LaunchedEffect(Unit){while(true){timer=TimerStore.read(context);remaining=timer?.let{TimerStore.remaining(context,it)}?:0;clock=ZonedDateTime.now(ZoneId.of(day?.timezone?:"Asia/Kolkata"));FocusWorkLogs.prompt(context);delay(1000)}}
     LaunchedEffect(clock.toLocalDate(),clock.hour,clock.minute){if(lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))AutoFocusScheduler.catchUp(context)}
@@ -271,7 +299,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         if(actual!=lastToday){if(selectedIso==lastToday)selectedIso=actual;lastToday=actual}
         Reminders.setup(context);AutoFocusScheduler.catchUp(context)
         if(TimerStore.read(context)!=null)TimerStore.action(context,"SHOW")
-        scope.launch{refresh(true);if(inbox)refreshInbox()}
+        scope.launch{refresh(true);if(inbox)refreshInbox();if(showMilestones)refreshMilestones()}
         scope.launch{if(FocusWorkLogs.entries(context).any{it.has("body")}&&FocusWorkLogs.syncReady(context)){refresh(true);if(inbox)refreshInbox()}}
     })
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_RESUME)latestResume() else if(event==Lifecycle.Event.ON_PAUSE)drag=null};lifecycle.lifecycle.addObserver(observer);onDispose{lifecycle.lifecycle.removeObserver(observer)}}
@@ -285,45 +313,57 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
                 LinearProgressIndicator(progress={(remaining.toFloat()/s.durationMs.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp),color=if(dark)Color(0xFFD2A570)else Color(0xFF80502F),trackColor=if(dark)Color(0xFF4C3C2E)else Color(0xFFDCC7AE))
             }}}
-            Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=20.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+            Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=10.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
                 TextButton(onClick={
                     drag=null
-                    if(inbox)inbox=false else{todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()}
+                    if(inbox||showMilestones){inbox=false;showMilestones=false} else{todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()}
                 },modifier=Modifier.weight(1f).height(62.dp).semantics{
-                    contentDescription=if(inbox)"Return to day" else if(todoView)"Show timeline" else "Show to-do list"
-                    stateDescription=if(todoView)"To-do list view" else "Timeline view"
-                },contentPadding=PaddingValues(4.dp)){
+                    contentDescription=if(inbox||showMilestones)"Return to day" else if(todoView)"Show timeline" else "Show to-do list"
+                    stateDescription=if(!inbox&&!showMilestones&&todoView)"To-do list view" else "Timeline view"
+                },contentPadding=PaddingValues(2.dp)){
                     val slashColor=MaterialTheme.colorScheme.primary
                     val slashOutline=MaterialTheme.colorScheme.surface
+                    val activeDay=!inbox&&!showMilestones
                     Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.ViewDay,null,modifier=Modifier.size(22.dp).drawWithContent{
                         drawContent()
-                        if(todoView){
+                        if(activeDay&&todoView){
                             val start=Offset(size.width*.10f,size.height*.10f);val end=Offset(size.width*.90f,size.height*.90f)
                             drawLine(slashOutline,start,end,5.dp.toPx(),androidx.compose.ui.graphics.StrokeCap.Round)
                             drawLine(slashColor,start,end,2.dp.toPx(),androidx.compose.ui.graphics.StrokeCap.Round)
                         }
-                    });Text(if(compactNavigation)"Day" else "Timeline",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                    },tint=if(activeDay)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Day" else "Timeline",fontSize=11.sp,color=if(activeDay)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
                 }
-                FilledIconButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},modifier=Modifier.size(50.dp),shape=CircleShape){Icon(Icons.Rounded.Add,"Add a task")}
-                TextButton(onClick={inbox=true},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Inbox,"Inbox",modifier=Modifier.size(22.dp));Text(if(compactNavigation)"Inbox" else "Inbox $unfinishedInbox",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                TextButton(onClick={
+                    drag=null
+                    inbox=false
+                    showMilestones=true
+                },modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Flag,"Milestones",modifier=Modifier.size(22.dp),tint=if(showMilestones)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Miles" else "Milestones",fontSize=11.sp,color=if(showMilestones)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
                 }
-                TextButton(onClick={context.startActivity(Intent(context,DashboardActivity::class.java))},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(4.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Dashboard,"Dashboard",modifier=Modifier.size(22.dp));Text(if(compactNavigation)"Dash" else "Dashboard",fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                FilledIconButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},modifier=Modifier.size(48.dp),shape=CircleShape){Icon(Icons.Rounded.Add,"Add a task")}
+                TextButton(onClick={drag=null;showMilestones=false;inbox=true},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Inbox,"Inbox",modifier=Modifier.size(22.dp),tint=if(inbox)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Inbox" else "Inbox $unfinishedInbox",fontSize=11.sp,color=if(inbox)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                }
+                TextButton(onClick={context.startActivity(Intent(context,DashboardActivity::class.java))},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Dashboard,"Dashboard",modifier=Modifier.size(22.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Dash" else "Dashboard",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
                 }
             }}
         }
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
             Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp,top=2.dp),verticalAlignment=Alignment.CenterVertically){
-                Column(Modifier.weight(1f).then(if(inbox)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
-                    Text(if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    if(!inbox)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f).then(if(inbox||showMilestones)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
+                    Text(if(showMilestones)"Milestones" else if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(!inbox&&!showMilestones)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if(showMilestones)Text("${milestonesList.count{recordDone(it)}} of ${milestonesList.size} milestones finished",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if(!inbox)TextButton(onClick={selectedIso=today.toString();if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
-                IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{refresh(true,false,true);if(inbox)refreshInbox(true)}}){Icon(Icons.Rounded.Refresh,"Refresh day")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
+                if(!inbox&&!showMilestones)TextButton(onClick={selectedIso=today.toString();if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
+                IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{
+                    if(showMilestones)refreshMilestones(true) else refresh(true,false,true)
+                    if(inbox)refreshInbox(true)
+                }}){Icon(Icons.Rounded.Refresh,"Refresh")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
             }
-            if(!inbox)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+            if(!inbox&&!showMilestones)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 IconButton(onClick={selectedIso=selected.minusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronLeft,"Previous week")}
                 val start=selected.minusDays((selected.dayOfWeek.value-1).toLong())
                 for(index in 0..6){val d=start.plusDays(index.toLong());val isSelected=d==selected
@@ -336,10 +376,10 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 }
                 IconButton(onClick={selectedIso=selected.plusDays(7).toString()},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronRight,"Next week")}
             }
-            if(!inbox&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
-            if(!inbox)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
+            if(!inbox&&!showMilestones&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
+            if(!inbox&&!showMilestones)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
             if(inbox)InboxOverview(unscheduled,currentTasks,if(selected==today)"Today" else selected.format(DateTimeFormatter.ofPattern("MMM d")),unscheduled.count{isOverdue(it,clock)},inboxFilter){inboxFilter=it}
-            if(loading||inbox&&inboxLoading)LinearProgressIndicator(Modifier.fillMaxWidth().height(1.dp))
+            if(loading||inbox&&inboxLoading||showMilestones&&milestonesLoading)LinearProgressIndicator(Modifier.fillMaxWidth().height(1.dp))
             error?.let{Surface(color=MaterialTheme.colorScheme.primary.copy(alpha=.055f),shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=5.dp)){Text((if(day?.cached==true)"Offline · " else "")+it,fontSize=11.sp,modifier=Modifier.padding(8.dp))}}
             val swipe=Modifier.pointerInput(selectedIso,drag!=null){
                 if(drag==null)awaitEachGesture{
@@ -354,7 +394,18 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                         selectedIso=selected.plusDays(if(delta.x<0)1 else -1).toString()
                 }
             }
-            if(inbox){
+            if(showMilestones){
+                DayMilestonesView(
+                    milestones=milestonesList,
+                    loading=milestonesLoading,
+                    error=milestonesError,
+                    modifier=Modifier.weight(1f),
+                    onRefresh={scope.launch{refreshMilestones(true)}},
+                    onMilestoneClick={
+                        context.startActivity(Intent(context,DashboardActivity::class.java))
+                    }
+                )
+            }else if(inbox){
                 val visible=when(inboxFilter){"Overdue"->unscheduled.filter{isOverdue(it,clock)};"Done"->currentTasks.filter{it.done};else->unscheduled.filterNot{it.done}}
                 val sections=if(inboxFilter=="Open")listOf("Overdue" to visible.filter{isOverdue(it,clock)},"Unscheduled" to visible.filterNot{isOverdue(it,clock)})else listOf(inboxFilter to visible)
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=inboxScroll,contentPadding=PaddingValues(bottom=24.dp)){
@@ -366,8 +417,17 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 }
             }else if(todoView){
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=todoScroll,contentPadding=PaddingValues(start=12.dp,end=12.dp,top=6.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){
-                    if(todoTasks.isEmpty())item{EmptyState("A clear day","Add a task, with or without a time.")}
-                    items(todoTasks,key={it.id}){task->DayTodoCard(task,dark,!taskBusy(task),timer?.taskId==task.id,{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{startTimer(task)})}
+                    if(openTasks.isEmpty()&&completedTasks.isEmpty())item(key="empty"){EmptyState("A clear day","Add a task, with or without a time.")}
+                    items(openTasks,key={"open:${it.id}"}){task->DayTodoCard(task,dark,!taskBusy(task),timer?.taskId==task.id,{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{startTimer(task)})}
+                    if(completedTasks.isNotEmpty()){
+                        item(key="header:completed"){
+                            Row(Modifier.fillMaxWidth().padding(top=10.dp,bottom=2.dp),verticalAlignment=Alignment.CenterVertically){
+                                Text("Completed · ${completedTasks.size}",fontSize=12.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                HorizontalDivider(Modifier.padding(start=10.dp).weight(1f),color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
+                            }
+                        }
+                        items(completedTasks,key={"done:${it.id}"}){task->DayTodoCard(task,dark,!taskBusy(task),timer?.taskId==task.id,{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{startTimer(task)})}
+                    }
                 }
             }else if(timed.isEmpty()){
                 Box(Modifier.weight(1f).fillMaxWidth().then(swipe),contentAlignment=Alignment.Center){EmptyState("A little space to breathe",if(unscheduled.isEmpty())"Add your first block for this day." else "${unfinishedInbox} inbox items are ready to schedule.")}
