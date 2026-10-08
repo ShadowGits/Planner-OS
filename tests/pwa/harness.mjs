@@ -49,7 +49,7 @@ export function today() {
  * Returns the window plus `calls`, every request the app made, so a test can
  * assert on what reached the server as well as what reached the screen.
  */
-export async function boot({ items = [], onRequest = null } = {}) {
+export async function boot({ items = [], onRequest = null, beforeScripts = null } = {}) {
   // runScripts lets the file execute with the real globals it expects. The
   // page's own <script src> is never fetched (external resources are off), so
   // the app starts only when this harness injects it, after fetch is faked.
@@ -118,6 +118,8 @@ export async function boot({ items = [], onRequest = null } = {}) {
   proto.setPointerCapture ||= function () {};
   proto.releasePointerCapture ||= function () {};
   proto.hasPointerCapture ||= function () { return false; };
+
+  if (beforeScripts) beforeScripts(window);
 
   const errors = [];
   window.addEventListener("error", (e) => errors.push(e.error || e.message));

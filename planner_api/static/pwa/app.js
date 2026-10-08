@@ -316,6 +316,7 @@
     $("key-gate").classList.add("hidden");
     try {
       await loadDay();
+      resyncSubscription();
     } catch {
       /* 401 reopens the gate */
     }
@@ -1333,6 +1334,27 @@
     return out;
   }
 
+  let pushRegistered = false;
+  let pushDeviceLabel = null;
+  function notificationDeviceLabel() {
+    if (pushDeviceLabel) return pushDeviceLabel;
+    // User-agent strings are identical across many Macs/browser profiles.
+    // A stable installation ID prevents one profile deleting another's push.
+    let id = localStorage.getItem("day-planner-push-device");
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("day-planner-push-device", id);
+    }
+    pushDeviceLabel = `${navigator.userAgent.slice(0, 80)} [${id}]`;
+    return pushDeviceLabel;
+  }
+
+  function notificationHelp() {
+    return /iPhone|iPad|iPod/.test(navigator.userAgent)
+      ? "On iPhone: Share → Add to Home Screen, open that app, then tap the bell"
+      : "Notifications are not supported here. Open Planner OS in a current Chrome, Edge, or Safari browser.";
+  }
+
   async function refreshNotifButton() {
     const btn = $("notif-btn");
     if (!btn) return;
@@ -1341,32 +1363,39 @@
     btn.classList.remove("hidden");
     if (!pushSupported()) {
       btn.classList.remove("on");
-      btn.title = "Notifications — add to Home Screen first";
+      btn.title = notificationHelp();
+      btn.setAttribute("aria-label", btn.title);
       return;
     }
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
-      const on = !!sub && Notification.permission === "granted";
+      const on = !!sub && Notification.permission === "granted" && pushRegistered;
       btn.classList.toggle("on", on);
-      btn.title = on ? "Notifications on — tap to turn off" : "Turn on notifications";
+      btn.title = on ? "Notifications on — tap to turn off"
+        : Notification.permission === "denied" ? "Notifications blocked — allow them in browser and macOS settings"
+        : sub ? "Reconnect notifications — tap to repair" : "Turn on notifications";
+      btn.setAttribute("aria-label", btn.title);
     } catch {}
   }
 
   async function enableNotifications() {
     if (!pushSupported()) {
-      toast("On iPhone: Share → Add to Home Screen, open that app, then tap the bell");
+      toast(notificationHelp());
       return;
     }
     // On iOS this must be the installed app, not a Safari tab.
     const perm = await Notification.requestPermission();
-    if (perm !== "granted") { toast("Notifications were blocked"); return; }
+    if (perm !== "granted") {
+      toast("Notifications blocked. Allow Planner OS notifications in your browser and macOS notification settings.");
+      refreshNotifButton(); return;
+    }
     try {
       const res = await api("GET", "/v2/push/vapid-key");
       const publicKey = res && res.data && res.data.public_key;
       if (!publicKey) { toast("Server has no notification key set"); return; }
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
+      const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
@@ -1374,13 +1403,18 @@
       await api("POST", "/v2/day/push/subscribe", {
         endpoint: json.endpoint,
         keys: json.keys,
-        device_label: navigator.userAgent.slice(0, 80),
+        device_label: notificationDeviceLabel(),
       });
-      toast("Notifications on");
+      pushRegistered = true;
       refreshNotifButton();
-      // Immediate proof it works end to end, rather than waiting for a reminder.
-      api("POST", "/v2/day/push/test").catch(() => {});
+      // A provider accepting the push does not prove macOS displayed it.
+      // Report send failures instead of silently claiming notifications work.
+      const test = await api("POST", "/v2/day/push/test", { endpoint: json.endpoint });
+      if (!test?.data?.sent) throw new Error("Notification test could not be sent. Tap the bell to reconnect.");
+      toast("Test notification sent. If missing, check macOS Notifications and Focus settings.");
     } catch (e) {
+      pushRegistered = false;
+      refreshNotifButton();
       showError(e);
     }
   }
@@ -1392,7 +1426,8 @@
   // time the app opens, keeps the server pointed at the live one without the
   // bell ever being touched.
   async function resyncSubscription() {
-    if (!pushSupported() || Notification.permission !== "granted") return;
+    pushRegistered = false;
+    if (!key() || !pushSupported() || Notification.permission !== "granted") return;
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
@@ -1402,10 +1437,13 @@
       await api("POST", "/v2/day/push/subscribe", {
         endpoint: json.endpoint,
         keys: json.keys,
-        device_label: navigator.userAgent.slice(0, 80),
+        device_label: notificationDeviceLabel(),
       });
+      pushRegistered = true;
     } catch {
-      // Best effort: a failed resync must never block the app from loading.
+      // A failed registration must not block the planner or claim to be on.
+    } finally {
+      refreshNotifButton();
     }
   }
 
@@ -1421,8 +1459,9 @@
       api("POST", "/v2/day/push/subscribe", {
         endpoint: json.endpoint,
         keys: json.keys,
-        device_label: navigator.userAgent.slice(0, 80),
-      }).catch(() => {});
+        device_label: notificationDeviceLabel(),
+      }).then(() => { pushRegistered = true; refreshNotifButton(); })
+        .catch(() => { pushRegistered = false; refreshNotifButton(); });
     });
   }
 
@@ -1434,6 +1473,7 @@
         await api("POST", "/v2/day/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
         await sub.unsubscribe().catch(() => {});
       }
+      pushRegistered = false;
       toast("Notifications off");
       refreshNotifButton();
     } catch (e) {
@@ -1448,7 +1488,7 @@
         if (!pushSupported()) { enableNotifications(); return; }
         const reg = await navigator.serviceWorker.ready.catch(() => null);
         const sub = reg && (await reg.pushManager.getSubscription().catch(() => null));
-        if (sub && Notification.permission === "granted") disableNotifications();
+        if (sub && Notification.permission === "granted" && pushRegistered) disableNotifications();
         else enableNotifications();
       });
     }
@@ -1462,7 +1502,8 @@
         })
         .catch(() => {});
     } else if (btn) {
-      btn.title = "Notifications — add to Home Screen first";
+      btn.title = notificationHelp();
+      btn.setAttribute("aria-label", btn.title);
     }
   }
 

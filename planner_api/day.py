@@ -527,10 +527,17 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         return _envelope(True, "Notifications off")
 
     @api.post("/v2/day/push/test")
-    def day_push_test(x_app_key: str | None = Header(default=None)):
+    def day_push_test(body: dict | None = None, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
         from planner_core.push import send_push_to_all
 
+        endpoint = (body or {}).get("endpoint")
+        if endpoint is not None:
+            from planner_core.push import validate_push_endpoint
+            try:
+                validate_push_endpoint(endpoint)
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail="Invalid notification device") from error
         user_id = _configured_user_id()
         core = _core()
         result = send_push_to_all(
@@ -540,6 +547,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             "Planner OS",
             "Notifications are working ✓",
             url="/app/",
+            endpoint=endpoint,
         )
         return _envelope(True, f"Sent to {result.get('sent', 0)} device(s)", result)
 

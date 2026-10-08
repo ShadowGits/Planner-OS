@@ -1,7 +1,7 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v33";
+const CACHE = "day-planner-v35";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "focus-timer.js", "focus-timer.css", "work-log.js", "work-log.css", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {

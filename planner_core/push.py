@@ -190,14 +190,16 @@ def send_push_to_all(
     body: str,
     url: str = "/",
     tag: str | None = None,
+    *,
+    endpoint: str | None = None,
 ) -> dict[str, int]:
     """Send a push notification to all subscriptions for a user. Returns counts."""
     from pywebpush import WebPushException
 
-    rows = gateway.select(
-        "push_subscriptions",
-        filters={"user_id": user_id, "workspace_id": workspace_id},
-    )
+    filters = {"user_id": user_id, "workspace_id": workspace_id}
+    if endpoint is not None:
+        filters["endpoint"] = endpoint
+    rows = gateway.select("push_subscriptions", filters=filters)
 
     sent, failed, expired = 0, 0, 0
     for row in rows:

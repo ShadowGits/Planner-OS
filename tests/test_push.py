@@ -154,3 +154,11 @@ def test_other_notification_text_is_preserved():
     for tag in (None, "morning-brief"):
         assert _notification_text("Morning Brief", "Your full summary", tag) == ("Morning Brief", "Your full summary")
     assert _notification_text("Custom reminder", "Keep this text", "event-task") == ("Custom reminder", "Keep this text")
+
+
+def test_push_delivery_test_targets_only_owned_device(fake_pywebpush):
+    class Gateway:
+        def select(self, table, *, filters):
+            assert filters == {"user_id": "user", "workspace_id": "workspace", "endpoint": "https://web.push.apple.com/abc"}
+            return [{"id": "device", **_subscription(), **_subscription()["keys"]}]
+    assert send_push_to_all(Gateway(), "user", "workspace", "Test", "Notification test", endpoint="https://web.push.apple.com/abc") == {"sent": 1, "failed": 0, "expired": 0}

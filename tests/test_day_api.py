@@ -495,3 +495,31 @@ def test_starring_a_habit_day_sticks(client, runtime) -> None:
     ).status_code == 200
     back = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]
     assert [i for i in back["items"] if i["title"] == "Gym"][0]["starred"] is False
+
+
+def test_push_test_requires_auth_and_forwards_selected_device(client, monkeypatch):
+    calls = []
+    def send(*args, **kwargs):
+        calls.append(kwargs)
+        return {"sent": 1, "failed": 0, "expired": 0}
+    monkeypatch.setattr("planner_core.push.send_push_to_all", send)
+    endpoint = "https://web.push.apple.com/test-device"
+    assert client.post("/v2/day/push/test", json={"endpoint": endpoint}).status_code == 401
+    response = client.post("/v2/day/push/test", headers=APP_KEY, json={"endpoint": endpoint})
+    assert response.status_code == 200
+    assert response.json()["data"]["sent"] == 1
+    assert calls == [{"url": "/app/", "endpoint": endpoint}]
+    assert client.post("/v2/day/push/test", headers=APP_KEY, json={"endpoint": "http://127.0.0.1/private"}).status_code == 400
+    assert len(calls) == 1
+
+
+def test_rotated_subscription_preserves_other_browser_installations(client, runtime):
+    def register(endpoint, label):
+        return client.post("/v2/day/push/subscribe", headers=APP_KEY, json={
+            "endpoint": endpoint, "keys": {"p256dh": "key", "auth": "auth"}, "device_label": label,
+        })
+    assert register("https://web.push.apple.com/first", "Same browser [installation-one]").status_code == 200
+    assert register("https://web.push.apple.com/second", "Same browser [installation-two]").status_code == 200
+    assert register("https://web.push.apple.com/rotated", "Same browser [installation-one]").status_code == 200
+    rows = runtime.service_client.tables["push_subscriptions"]
+    assert {row["endpoint"] for row in rows} == {"https://web.push.apple.com/second", "https://web.push.apple.com/rotated"}
