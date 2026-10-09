@@ -24,15 +24,15 @@ object TimerStore {
         .putExtra("connection_generation",SecureConfig(c).generation).putExtra("epoch",epoch(c))
     fun accepts(c:Context,i:Intent)=i.getLongExtra("connection_generation",-1)==SecureConfig(c).generation&&i.getStringExtra("epoch")==epoch(c)
     fun boot(c:Context)=Settings.Global.getInt(c.contentResolver,Settings.Global.BOOT_COUNT,0)
-    fun read(c:Context):TimerState?= c.getSharedPreferences("focus",Context.MODE_PRIVATE).getString("state",null)?.let{runCatching{
+    fun read(c:Context):TimerState?= if(!TimerPreferences.enabled(c))null else c.getSharedPreferences("focus",Context.MODE_PRIVATE).getString("state",null)?.let{runCatching{
         val j=JSONObject(it);val saved=TimerState(j.getString("id"),j.getString("title"),j.getLong("duration"),j.getLong("elapsed"),j.getLong("anchor"),j.getLong("wall"),j.getInt("boot"),j.getBoolean("running"))
         // Upgrading an already expired old timer must not play a retrospective tone.
         saved.copy(completionAlerted=j.optBoolean("completion_alerted",saved.remaining(SystemClock.elapsedRealtime(),System.currentTimeMillis(),boot(c))<=0),sessionId=j.optString("session_id",java.util.UUID.nameUUIDFromBytes("${saved.taskId}:${saved.anchorWallMs}:${saved.bootCount}".toByteArray()).toString()),scheduled=if(j.has("scheduled"))j.getBoolean("scheduled")else FocusWorkLogs.legacyScheduled(c,saved.taskId))
     }.getOrNull()}
     fun save(c:Context,s:TimerState?){val p=c.getSharedPreferences("focus",Context.MODE_PRIVATE).edit();if(s==null)p.remove("state").putString("epoch",java.util.UUID.randomUUID().toString()) else p.putString("state",JSONObject().put("id",s.taskId).put("title",s.title).put("duration",s.durationMs).put("elapsed",s.elapsedBeforeMs).put("anchor",s.anchorElapsedMs).put("wall",s.anchorWallMs).put("boot",s.bootCount).put("running",s.running).put("completion_alerted",s.completionAlerted).put("session_id",s.sessionId).put("scheduled",s.scheduled).toString());p.commit()}
     fun remaining(c:Context,s:TimerState)=s.remaining(SystemClock.elapsedRealtime(),System.currentTimeMillis(),boot(c))
-    fun start(c:Context,t:Task){val i=intent(c,"START").putExtra("id",t.id).putExtra("title",t.title).putExtra("minutes",t.minutes).putExtra("seconds",t.remainingSeconds.coerceAtLeast(1)).putExtra("scheduled",t.time!=null);c.startForegroundService(i)}
-    fun action(c:Context,action:String,sessionId:String?=null){c.startForegroundService(intent(c,action).putExtra("expected_session",sessionId))}
+    fun start(c:Context,t:Task){if(!TimerPreferences.enabled(c))return;val i=intent(c,"START").putExtra("id",t.id).putExtra("title",t.title).putExtra("minutes",t.minutes).putExtra("seconds",t.remainingSeconds.coerceAtLeast(1)).putExtra("scheduled",t.time!=null);c.startForegroundService(i)}
+    fun action(c:Context,action:String,sessionId:String?=null){if(!TimerPreferences.enabled(c))return;c.startForegroundService(intent(c,action).putExtra("expected_session",sessionId))}
     fun reset(c:Context){
         // No new foreground service is started merely to stop the old one.
         save(c,null)
@@ -64,6 +64,7 @@ class TimerService:Service(){
     private var hidden=false
     private var minimized=false
     private val ticker=object:Runnable{override fun run(){
+        if(!TimerPreferences.enabled(this@TimerService)){TimerStore.reset(this@TimerService);return}
         var s=state?:return
         s.claimCompletion(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(this@TimerService))?.let{finished->
             if(WorkLogPolicy.requiresAutomaticPrompt(finished,finished.durationMs))FocusWorkLogs.capture(this@TimerService,finished,true)
@@ -88,6 +89,7 @@ class TimerService:Service(){
     }
     override fun onBind(intent:Intent?)=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
+        if(!TimerPreferences.enabled(this)){TimerStore.reset(this);stopSelf();return START_NOT_STICKY}
         // A queued action from a prior connection or already-ended timer
         // must not restore that old task after a settings change or STOP.
         val automatic=if(intent?.action=="AUTO_START")AutoFocusScheduler.claim(this,intent)else null

@@ -336,8 +336,20 @@
     getContext:()=>({items:state.items,date:iso(state.selected),tz:state.tz}),
     onSaved:()=>loadDay({keepScroll:true})});
   window.PlannerFocus?.configure({getKey:key,toast,
+    onEnabledChanged:enabled=>{
+      $("tracking-enabled").checked=enabled;
+      // Re-render local rows so existing work-history labels disappear immediately.
+      queueMicrotask(render);
+      $("sheet-focus-actions").classList.toggle("hidden",!enabled||!state.editing);
+    },
     onFinish:(task,entry)=>window.PlannerWorkLog?.open(task,{seconds:entry.seconds,source:"timer"})});
 
+  $("timer-settings-open").addEventListener("click",()=>$("timer-settings").showModal());
+  $("timer-settings-close").addEventListener("click",()=>$("timer-settings").close());
+  $("tracking-enabled").addEventListener("change",event=>{
+    window.PlannerFocus?.setEnabled(event.target.checked);
+    event.target.checked=window.PlannerFocus?.enabled() !== false;
+  });
   function focusButton(task){
     const button=document.createElement("button");
     button.type="button";button.className="task-focus";button.textContent="▶";
@@ -653,7 +665,7 @@
     const meta=document.createElement("span");meta.className="todo-meta";
     meta.textContent=[task.start_time?fmtClock(timeToMin(task.start_time)):"Unscheduled",fmtDur(task.estimated_minutes||30),
       task.parent_task_id?`Part ${task.part_index??"?"}/${task.part_total??"?"}`:null,
-      task.worked_seconds?`${fmtDur(Math.floor(task.worked_seconds/60))} worked`:null].filter(Boolean).join(" · ");
+      window.PlannerFocus?.enabled()!==false&&task.worked_seconds?`${fmtDur(Math.floor(task.worked_seconds/60))} worked`:null].filter(Boolean).join(" · ");
     details.append(title,meta);details.addEventListener("click",()=>openEdit(task));row.appendChild(details);
     const actions=document.createElement("div");actions.className="todo-actions";
     if(!task.pending){actions.appendChild(starButton(task));if(!task.done)actions.appendChild(focusButton(task))}
@@ -1048,7 +1060,7 @@
     $("sheet-save").textContent = "Save";
     $("sheet-delete").classList.remove("hidden");
     $("sheet-split").classList.toggle("hidden",!!task.done||!!task.is_habit);
-    $("sheet-focus-actions").classList.remove("hidden");
+    $("sheet-focus-actions").classList.toggle("hidden",window.PlannerFocus?.enabled()===false);
     $("sheet-timer").classList.toggle("hidden",!!task.done);
     $("new-title").value = task.title;
     $("new-title").disabled = false;

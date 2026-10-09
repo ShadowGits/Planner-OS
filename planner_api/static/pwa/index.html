@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="styles.css?v=12">
   <link rel="stylesheet" href="focus-timer.css?v=1">
   <link rel="stylesheet" href="work-log.css?v=1">
+  <link rel="stylesheet" href="timer-settings.css?v=1">
 </head>
 <body>
   <div id="key-gate" class="key-gate hidden">
@@ -36,6 +37,7 @@
         <button id="jump-now" class="jump-now hidden" aria-label="Jump to the current time">Now</button>
         <button id="jump-today" class="jump-now hidden">Today</button>
         <button id="notif-btn" class="notif-btn hidden" aria-label="Turn on notifications" title="Notifications">🔔</button>
+        <button id="timer-settings-open" class="view-toggle" type="button" aria-label="Timer settings" title="Timer settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z"/><circle cx="12" cy="12" r="3"/></svg></button>
         <button id="view-toggle" class="view-toggle" aria-label="Show to-do list" aria-pressed="false" title="Toggle timeline / to-do list"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M9 6h10M9 12h10M9 18h10"/><path class="view-slash" d="M3 3l18 18"/></svg></button>
       </div>
     </div>
@@ -47,6 +49,12 @@
     </div>
   </header>
 
+  <dialog id="timer-settings" aria-labelledby="timer-settings-title">
+    <div class="timer-settings-heading"><h2 id="timer-settings-title">Time tracking</h2><button id="timer-settings-close" type="button" aria-label="Close settings">×</button></div>
+    <label class="timer-settings-switch"><span>Timers &amp; time logging</span><input id="tracking-enabled" type="checkbox" role="switch" checked aria-describedby="tracking-help"></label>
+    <p id="tracking-help">Turn off to hide timers, time logs and work-entry prompts. Your saved logs are kept.</p>
+    <p class="timer-settings-note">Applies to this browser or installed PWA.</p>
+  </dialog>
   <main>
     <!-- The few tasks the day is judged by, counted so the day has a shape
          beyond "31 of 44 done". -->
@@ -110,8 +118,8 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="focus-timer.js?v=1"></script>
-  <script src="work-log.js?v=1"></script>
-  <script src="app.js?v=13"></script>
+  <script src="focus-timer.js?v=2"></script>
+  <script src="work-log.js?v=2"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

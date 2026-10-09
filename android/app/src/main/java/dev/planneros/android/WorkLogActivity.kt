@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
 
 class WorkLogActivity:ComponentActivity(){
     override fun onCreate(savedInstanceState:Bundle?){
-        super.onCreate(savedInstanceState);enableEdgeToEdge();FocusWorkLogs.promptOpen=true
+        super.onCreate(savedInstanceState);if(!TimerPreferences.enabled(this)){finish();return};enableEdgeToEdge();FocusWorkLogs.promptOpen=true
         val task=intent.getStringExtra("task_ref")?:run{finish();return}
         val workId=intent.getStringExtra("work_id")
         val entry=FocusWorkLogs.entries(this).find{it.optString("id")==workId}
@@ -40,6 +40,7 @@ class WorkLogActivity:ComponentActivity(){
             MaterialTheme(colorScheme=plannerColorScheme(dark)){WorkLogScreen(task,entry,dark){finish()}}
         }
     }
+    override fun onResume(){super.onResume();if(!TimerPreferences.enabled(this))finish()}
     override fun onDestroy(){FocusWorkLogs.promptOpen=false;super.onDestroy()}
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable private fun WorkLogScreen(initialTask:String,entry:JSONObject?,dark:Boolean,close:()->Unit){

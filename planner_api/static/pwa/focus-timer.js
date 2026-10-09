@@ -2,6 +2,23 @@
 (() => {
   'use strict';
   const VERSION = 1;
+  const preferenceKey = 'planner-time-tracking-enabled';
+  let fallbackEnabled = true;
+  function enabled() { try { return localStorage.getItem(preferenceKey) !== 'false'; } catch { return fallbackEnabled; } }
+  function applyPreference() {
+    if (!enabled()) { suppress(); cancel(); audio?.suspend?.().catch?.(() => {}); }
+    document.body?.classList.toggle('time-tracking-off', !enabled());
+    if (!enabled()) window.PlannerWorkLog?.close();
+    config.onEnabledChanged?.(enabled());
+    render();
+  }
+  function setEnabled(value) {
+    try { localStorage.setItem(preferenceKey, String(!!value)); }
+    catch { notify('This setting could not be saved. Allow browser storage and try again.'); return false; }
+    fallbackEnabled = !!value;
+    // Consume the current block even when toggling on, so an old session stays stopped.
+    suppress(); persist(); applyPreference(); return true;
+  }
   const stylesheet = new URL('focus-timer.css', document.currentScript?.src || new URL('focus-timer.js', location.href)).href;
   const owner = Math.random().toString(36).slice(2);
   let config = {}, key = null, current = null, consumed = [], blocks = [];
@@ -20,7 +37,7 @@
       current = null; consumed = [];
       if (saved?.version === VERSION) {
         const c = saved.current;
-        if (c && typeof c.task?.id === 'string' && c.task.id && typeof c.task.title === 'string' &&
+        if (enabled() && c && typeof c.task?.id === 'string' && c.task.id && typeof c.task.title === 'string' &&
             ['running', 'paused', 'complete'].includes(c.status) &&
             Number.isFinite(c.duration) && c.duration > 0 &&
             Number.isFinite(c.remaining) && c.remaining >= 0 && c.remaining <= c.duration &&
@@ -40,7 +57,7 @@
     const next = value ? `planner-focus-v1:${hash(value)}` : null;
     if (next === key) return;
     key = next; current = null; consumed = []; blocks = []; floatingNotice = '';
-    if (key) read();
+    if (key) { read(); if (!enabled()) persist(); }
     closeFloating();
   }
   function remaining() { return current ? Math.max(0, current.status === 'running' ? current.deadline - now() : current.remaining) : 0; }
@@ -52,11 +69,12 @@
     return audio.resume();
   }
   function tone(end = false) {
+    if (!enabled()) return;
     try {
       const promise = unlockAudio();
       if (!audio) return;
       const play = () => {
-        if (audio.state !== 'running') return;
+        if (!enabled() || audio.state !== 'running') return;
         [0, .16, .32].forEach((offset, i) => {
           const osc = audio.createOscillator(), gain = audio.createGain();
           osc.type = 'sine'; osc.frequency.value = (end ? [660, 880, 990] : [440, 554, 660])[i];
@@ -69,7 +87,7 @@
     } catch (_) { /* Browser audio permission may require a later click. */ }
   }
   function begin(task, duration, occurrence = null, automatic = false) {
-    if (!key || !task?.id || !Number.isFinite(duration) || duration <= 0) return false;
+    if (!enabled() || !key || !task?.id || !Number.isFinite(duration) || duration <= 0) return false;
     suppress(automatic ? task.id : null);
     floatingNotice = '';
     current = { task: { id: String(task.id), title: String(task.title || 'Focus') }, duration, remaining: duration, deadline: now() + duration, status: 'running', occurrence, owner, automatic };
@@ -82,6 +100,7 @@
     return Math.max(0, Number(planned) - Number(task?.worked_seconds || 0)) * 1000;
   }
   function start(task) {
+    if (!enabled()) return false;
     connection();
     const duration = durationFor(task);
     if (!task?.id || !Number.isFinite(duration) || duration <= 0) return false;
@@ -92,7 +111,7 @@
     return begin(task, duration);
   }
   function pause() { if (current?.status !== 'running') return; current.remaining = remaining(); current.status = 'paused'; suppress(); persist(); render(); }
-  function resume() { if (current?.status !== 'paused' || current.remaining <= 0) return; current.deadline = now() + current.remaining; current.status = 'running'; current.owner = owner; persist(); render(); tone(); }
+  function resume() { if (!enabled()) return; if (current?.status !== 'paused' || current.remaining <= 0) return; current.deadline = now() + current.remaining; current.status = 'running'; current.owner = owner; persist(); render(); tone(); }
   function closeFloating() {
     floatingEpoch++; opening = false;
     const win = pip; pip = null;
@@ -101,7 +120,7 @@
   }
   function cancel() { if (current) suppress(); current = null; persist(); closeFloating(); render(); }
   function finish() {
-    if (!current) return;
+    if (!enabled() || !current) return;
     const finished = { ...current.task, elapsed_seconds: Math.round(Math.max(0, current.duration - remaining()) / 1000), timer_complete: current.status === 'complete' };
     const totalSeconds = Math.round(current.duration / 1000);
     cancel(); try { window.focus(); } catch (_) {}
@@ -147,6 +166,7 @@
     tick();
   }
   function tick() {
+    if (!enabled()) { if (current || pip || opening) applyPreference(); return; }
     if (current?.status === 'running' && remaining() <= 0) {
       current.status = 'complete'; current.remaining = 0;
       const audible = current.owner === owner; persist(); if (audible) tone(true);
@@ -201,7 +221,7 @@
   function render() {
     const left = remaining(), seconds = Math.ceil(left / 1000);
     for (const view of views) {
-      view.panel.hidden = !current;
+      view.panel.hidden = !enabled() || !current;
       if (!current) continue;
       view.title.textContent = current.task.title;
       view.notice.textContent = floatingNotice; view.notice.hidden = !floatingNotice;
@@ -215,7 +235,7 @@
   }
   function floatError(message) { floatingNotice = message; notify(message); render(); }
   function float() {
-    if (!current) return Promise.resolve(false);
+    if (!enabled() || !current) return Promise.resolve(false);
     current.owner = owner; persist();
     if (pip && !pip.closed) { pip.focus?.(); return Promise.resolve(true); }
     if (opening) return Promise.resolve(false);
@@ -233,7 +253,7 @@
     try { unlockAudio()?.catch?.(() => {}); } catch (_) {}
     render();
     return Promise.resolve(request).then(win => {
-      if (requestEpoch !== floatingEpoch || !current) { try { win.close(); } catch (_) {} return false; }
+      if (!enabled() || requestEpoch !== floatingEpoch || !current) { try { win.close(); } catch (_) {} return false; }
       pip = win; opening = false; floatingNotice = '';
       const doc = win.document; doc.title = 'Planner · Focus';
       const link = doc.createElement('link'); link.rel = 'stylesheet'; link.href = stylesheet; doc.head.append(link);
@@ -244,11 +264,11 @@
   }
   function reset() { current = null; consumed = []; blocks = []; persist(); closeFloating(); render(); }
   window.PlannerFocus = {
-    configure(options = {}) { config = { ...config, ...options }; connection(); tick(); }, update, start, pause, resume, cancel, finish, float, reset,
+    configure(options = {}) { config = { ...config, ...options }; connection(); applyPreference(); tick(); }, enabled, setEnabled, update, start, pause, resume, cancel, finish, float, reset,
     stopTask(id) { suppress(String(id)); blocks = blocks.filter(b => b.id !== String(id)); if (current?.task.id === String(id)) cancel(); else persist(); },
-    snapshot() { return current ? { ...current, task: { ...current.task }, remaining: remaining() } : null; }
+    snapshot() { return enabled() && current ? { ...current, task: { ...current.task }, remaining: remaining() } : null; }
   };
-  window.addEventListener('storage', event => { if (event.key === key) { current = null; consumed = []; read(); if (!current) closeFloating(); render(); } });
+  window.addEventListener('storage', event => { if (event.key === preferenceKey || event.key === null) { applyPreference(); return; } if (event.key === key) { current = null; consumed = []; read(); if (!current) closeFloating(); render(); } });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
   function init() { mount(document, false); timer ||= setInterval(tick, 500); render(); }
   if (document.body) init(); else document.addEventListener('DOMContentLoaded', init, { once: true });

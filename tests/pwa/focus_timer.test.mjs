@@ -220,3 +220,47 @@ test('Float transfers restored session audio ownership without a start tone', as
   await b.focus.float(); assert.notEqual(b.focus.snapshot().owner, previous); assert.equal(tones, 0);
   b.advance(1800000); await Promise.resolve(); assert.equal(tones, 3);
 });
+
+test('master off cancels the active clock and blocks manual, scheduled, resume and finish actions across reload', t => {
+  const a=boot(t); a.focus.start(task()); a.advance(60000); a.focus.pause();
+  assert.equal(a.focus.setEnabled(false),true);
+  assert.equal(a.focus.snapshot(),null);
+  assert.equal(a.w.document.querySelector('.focus-timer').hidden,true);
+  assert.equal(a.w.document.body.classList.contains('time-tracking-off'),true);
+  a.focus.resume(); a.focus.finish(); assert.equal(a.finished.length,0);
+  assert.equal(a.focus.start(task()),false);
+  a.focus.update({items:[task(),task({id:'future',start_time:'10:30'})],date:'2026-10-05',tz:'UTC'});
+  a.advance(20*60000); assert.equal(a.focus.snapshot(),null);
+  const b=boot(t,{saved:a.save()});
+  assert.equal(b.focus.enabled(),false); assert.equal(b.focus.start(task()),false);
+  assert.equal(b.focus.setEnabled(true),true);
+  assert.equal(b.focus.snapshot(),null);
+  assert.equal(b.focus.start(task()),true);
+});
+
+test('master off from another tab dismisses tracking and cannot restore a stale timer', t => {
+  const a=boot(t); a.focus.start(task()); const state=a.save().find(([k])=>k.startsWith('planner-focus-v1:'));
+  a.w.localStorage.setItem('planner-time-tracking-enabled','false');
+  a.w.dispatchEvent(new a.w.StorageEvent('storage',{key:'planner-time-tracking-enabled',newValue:'false'}));
+  a.w.localStorage.setItem(...state);
+  a.w.dispatchEvent(new a.w.StorageEvent('storage',{key:state[0],newValue:state[1]}));
+  a.advance(60000); assert.equal(a.focus.snapshot(),null);
+  assert.equal(a.w.document.querySelector('.focus-timer').hidden,true);
+});
+
+test('switching off closes a floating window that resolves after cancellation', async t => {
+  const a=boot(t); a.focus.start(task()); let resolve,closed=0;
+  a.w.documentPictureInPicture={requestWindow:()=>new Promise(r=>{resolve=r})};
+  const opening=a.focus.float(); a.focus.setEnabled(false);
+  resolve({close(){closed++}});
+  assert.equal(await opening,false); assert.equal(closed,1);
+  assert.equal(a.focus.snapshot(),null);
+});
+
+test('re-enabling tracking leaves the current scheduled occurrence stopped but permits future blocks', t => {
+  const a=boot(t); a.focus.update({items:[task(),task({id:'future',start_time:'10:30'})],date:'2026-10-05',tz:'UTC'});
+  assert.equal(a.focus.snapshot().task.id,'a');
+  a.focus.setEnabled(false); a.focus.setEnabled(true); a.advance(1000);
+  assert.equal(a.focus.snapshot(),null);
+  a.advance(15*60000); assert.equal(a.focus.snapshot().task.id,'future');
+});

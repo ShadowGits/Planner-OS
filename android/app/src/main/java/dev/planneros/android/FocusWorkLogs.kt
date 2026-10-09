@@ -73,6 +73,7 @@ internal object FocusWorkLogs {
     private fun scheduleSync(c:Context){WorkManager.getInstance(c).enqueueUniqueWork("actual-work-sync",ExistingWorkPolicy.APPEND_OR_REPLACE,OneTimeWorkRequestBuilder<WorkLogSyncWorker>().setInitialDelay(30,TimeUnit.SECONDS).setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build())}
     fun next(c:Context)=entries(c).firstOrNull{it.optBoolean("mandatory")}
     fun restoreNotifications(c:Context){
+        if(!TimerPreferences.enabled(c)){clearNotifications(c);return}
         val manager=c.getSystemService(android.app.NotificationManager::class.java)
         val active=manager.activeNotifications.map{it.id}.toSet()
         entries(c).forEach{row->
@@ -89,13 +90,14 @@ internal object FocusWorkLogs {
     }}
     fun allowEditing(c:Context,id:String){synchronized(lock){val rows=entries(c);rows.find{it.optString("id")==id}?.apply{remove("body");put("needs_input",true)};write(c,rows)}}
     fun open(c:Context,task:String,id:String?=null){
-        if(promptOpen)return
+        if(!TimerPreferences.enabled(c)||promptOpen)return
         val pendingId=id?:entries(c).firstOrNull{it.optString("task_ref")==task}?.optString("id")
         promptOpen=true
         try{c.startActivity(Intent(c,WorkLogActivity::class.java).putExtra("task_ref",task).putExtra("work_id",pendingId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))}catch(e:Exception){promptOpen=false;throw e}
     }
-    fun prompt(c:Context){if(!promptOpen&&foreground>0)next(c)?.let{open(c,it.getString("task_ref"),it.getString("id"))}}
+    fun prompt(c:Context){if(TimerPreferences.enabled(c)&&!promptOpen&&foreground>0)next(c)?.let{open(c,it.getString("task_ref"),it.getString("id"))}}
     fun finishTimer(c:Context,s:TimerState):Boolean {
+        if(!TimerPreferences.enabled(c)){TimerStore.reset(c);return false}
         val elapsed=s.elapsed(SystemClock.elapsedRealtime(),System.currentTimeMillis(),TimerStore.boot(c))
         val mandatory=s.scheduled||WorkLogPolicy.requiresActualEntry(s,elapsed)
         capture(c,s,mandatory)

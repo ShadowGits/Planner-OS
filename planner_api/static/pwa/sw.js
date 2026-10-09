@@ -1,8 +1,8 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v35";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "focus-timer.js", "focus-timer.css", "work-log.js", "work-log.css", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
+const CACHE = "day-planner-v36";
+const SHELL = ["./", "index.html", "styles.css", "app.js", "focus-timer.js", "focus-timer.css", "timer-settings.css", "work-log.js", "work-log.css", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
@@ -26,7 +26,7 @@ self.addEventListener("fetch", (event) => {
   // external responses must never be stored in the offline shell cache.
   if (event.request.method !== "GET" || url.origin !== scope.origin ||
       !url.pathname.startsWith(scope.pathname) ||
-      !["", "index.html", "styles.css", "app.js", "focus-timer.js", "focus-timer.css", "work-log.js", "work-log.css", "manifest.webmanifest", "icon-180.png", "icon-512.png"].includes(relative)) return;
+      !["", "index.html", "styles.css", "app.js", "focus-timer.js", "focus-timer.css", "timer-settings.css", "work-log.js", "work-log.css", "manifest.webmanifest", "icon-180.png", "icon-512.png"].includes(relative)) return;
   const cacheKey = new URL(url);
   cacheKey.search = "";
   // Network-first: always try the latest, fall back to cache when offline.

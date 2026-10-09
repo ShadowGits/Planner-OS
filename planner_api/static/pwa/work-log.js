@@ -66,7 +66,7 @@
     return { date: shiftDate(now.date, Math.floor(start / 1440)), time: timeString(start) };
   }
   function close(view = current) {
-    if (!view || current !== view || view.saving) return;
+    if (!view || current !== view || (view.saving && window.PlannerFocus?.enabled() !== false)) return;
     current = null;
     document.removeEventListener('keydown', view.keyHandler, true);
     window.removeEventListener('popstate', view.backHandler);
@@ -114,7 +114,7 @@
     view.save.textContent = view.saving ? 'Saving…' : view.pending ? 'Retry saved entry' : 'Save time';
   }
   async function save(view) {
-    if (view.saving || current !== view) return;
+    if (window.PlannerFocus?.enabled() === false || view.saving || current !== view) return;
     if (!view.pending) {
       if (!view.form.reportValidity()) return;
       const seconds = entrySeconds(view);
@@ -149,8 +149,8 @@
     }
     try { localStorage.removeItem(storageKey(view.task.id)); } catch { /* Server already confirmed this UUID. */ }
     view.saving = false; close(view);
-    config.toast?.('Time saved');
-    try { await config.onSaved?.(); } catch { config.toast?.('Time saved. Refresh the day to see the update.'); }
+    if (window.PlannerFocus?.enabled() !== false) config.toast?.('Time saved');
+    try { await config.onSaved?.(); } catch { if (window.PlannerFocus?.enabled() !== false) config.toast?.('Time saved. Refresh the day to see the update.'); }
   }
   async function load(view, task) {
     view.task = task; view.info = null; view.pending = readPending(task.id);
@@ -187,7 +187,7 @@
     }
   }
   async function open(task, options = {}) {
-    if (!task?.id || typeof config.api !== 'function') return;
+    if (window.PlannerFocus?.enabled() === false || !task?.id || typeof config.api !== 'function') return;
     if (current?.saving) return;
     close();
     const view = { task, focus: document.activeElement, inert: [], source: options.source === 'timer' ? 'timer' : 'manual', extraSeconds: Math.max(0, Math.floor(options.seconds || 0)) % 60, scheduleTouched: false };

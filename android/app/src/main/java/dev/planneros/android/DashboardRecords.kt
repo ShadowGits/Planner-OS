@@ -183,7 +183,7 @@ private fun snippet(value:String)=Html.fromHtml(value,Html.FROM_HTML_MODE_COMPAC
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=22.dp).padding(bottom=40.dp)){
         DashboardIconMark(dashboardIcon(row.optString("_section",row.optString("widget_type"))))
         Text(typedTitle(row.optString("_section"),row),fontSize=25.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=16.dp,bottom=16.dp))
-        if(row.optString("_section") in listOf("tasks","week")&&row.nullString("id")!=null)OutlinedButton(onClick={FocusWorkLogs.open(context,row.getString("id"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.Schedule,null);Spacer(Modifier.width(8.dp));Text("Log time")}
+        if(TimerPreferences.enabled(context)&&row.optString("_section") in listOf("tasks","week")&&row.nullString("id")!=null)OutlinedButton(onClick={FocusWorkLogs.open(context,row.getString("id"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.Schedule,null);Spacer(Modifier.width(8.dp));Text("Log time")}
         if(loading)Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp);Text("Loading full details…",fontSize=14.sp)}
         error?.let{Text(it,fontSize=14.sp,color=MaterialTheme.colorScheme.error)}
         row.optJSONObject("config")?.let{config->

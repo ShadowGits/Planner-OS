@@ -246,7 +246,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         optimistic(mutationKeys(task),{replaceTask(it,task.copy(starred=!task.starred))},{repo.patch(task,JSONObject().put("starred",!task.starred))},onSuccess={editorBackup=editorBackup?.takeIf{it.id==task.id}?.copy(starred=!task.starred)?:editorBackup})
     }
     fun startTimer(task:Task){
-        if(task.id.startsWith("pending:"))return
+        if(!TimerPreferences.enabled(context)||task.id.startsWith("pending:"))return
         if(timer!=null&&timer?.taskId!=task.id){replacement=task;return}
         requestNotification();TimerStore.start(context,task)
         if(!Settings.canDrawOverlays(context))scope.launch{snackbar.showSnackbar("Timer started. Enable floating timer in Settings to see it across apps.")}
@@ -305,7 +305,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_RESUME)latestResume() else if(event==Lifecycle.Event.ON_PAUSE)drag=null};lifecycle.lifecycle.addObserver(observer);onDispose{lifecycle.lifecycle.removeObserver(observer)}}
     Scaffold(containerColor=MaterialTheme.colorScheme.background,snackbarHost={SnackbarHost(snackbar)},bottomBar={
         Column{
-            timer?.let{s->Surface(color=if(dark)Color(0xFF332A23)else Color(0xFFF2E8D9)){Column{Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically){
+            timer?.takeIf{TimerPreferences.enabled(context)}?.let{s->Surface(color=if(dark)Color(0xFF332A23)else Color(0xFFF2E8D9)){Column{Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically){
                 Icon(Icons.Rounded.HourglassBottom,null,tint=if(dark)Color(0xFFD2A570)else Color(0xFF80502F));Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(s.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold);Text("${timerText(remaining)} · ${if(s.running)"Focus" else "Paused"}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 IconButton(onClick={TimerStore.action(context,"TOGGLE")}){Icon(if(s.running)Icons.Rounded.Pause else Icons.Rounded.PlayArrow,"Pause or resume timer")}
                 IconButton(onClick={TimerStore.action(context,"STOP")}){Icon(Icons.Rounded.Close,"Cancel timer")}
@@ -416,7 +416,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     }}
                 }
             }else if(todoView){
-                LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=todoScroll,contentPadding=PaddingValues(start=12.dp,end=12.dp,top=6.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                LazyColumn(Modifier.weight(1f).fillMaxWidth().then(swipe),state=todoScroll,contentPadding=PaddingValues(start=12.dp,end=12.dp,top=6.dp,bottom=24.dp)){
                     if(openTasks.isEmpty()&&completedTasks.isEmpty())item(key="empty"){EmptyState("A clear day","Add a task, with or without a time.")}
                     items(openTasks,key={"open:${it.id}"}){task->DayTodoCard(task,dark,!taskBusy(task),timer?.taskId==task.id,{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{startTimer(task)})}
                     if(completedTasks.isNotEmpty()){
@@ -466,8 +466,8 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     },{toggleStar(it)},{task->splitTarget=task},{deleteTarget=it},{startTimer(it);closeEditor()},{task->closeEditor();FocusWorkLogs.open(context,task.id)})
     splitTarget?.let{task->AlertDialog(onDismissRequest={splitTarget=null},title={Text("Split remaining work?")},text={Column{
         Text(task.title,fontWeight=FontWeight.SemiBold)
-        Text("Two sessions: ${workDuration((task.remainingSeconds+1)/2)} and ${workDuration(task.remainingSeconds/2)}. ${if(task.workedSeconds>0)"The first starts after the worked portion" else "The first keeps its slot"}; the second is unscheduled in Inbox.")
-        if(task.workedSeconds>0)Text("Your ${workDuration(task.workedSeconds)} already worked stays recorded in a completed session.")
+        Text("Two sessions: ${workDuration((task.remainingSeconds+1)/2)} and ${workDuration(task.remainingSeconds/2)}. ${if(TimerPreferences.enabled(context)&&task.workedSeconds>0)"The first starts after the worked portion" else "The first keeps its slot"}; the second is unscheduled in Inbox.")
+        if(TimerPreferences.enabled(context)&&task.workedSeconds>0)Text("Your ${workDuration(task.workedSeconds)} already worked stays recorded in a completed session.")
     }},confirmButton={TextButton(enabled=!taskBusy(task),onClick={
         splitTarget=null
         val keys=mutationKeys(task)
@@ -482,7 +482,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         }
     }){Text("Split")}},dismissButton={TextButton(onClick={splitTarget=null}){Text("Cancel")}})}
     deleteTarget?.let{task->AlertDialog(onDismissRequest={deleteTarget=null},title={Text(if(task.habit)"Skip this occurrence?" else "Delete this task?")},text={Text(task.title)},confirmButton={TextButton(enabled=!taskBusy(task),onClick={deleteTarget=null;closeEditor();optimistic(mutationKeys(task),{it.copy(tasks=it.tasks.filterNot{row->row.id==task.id})},{repo.delete(task)})}){Text(if(task.habit)"Skip" else "Delete")}},dismissButton={TextButton(onClick={deleteTarget=null}){Text("Cancel")}})}
-    replacement?.let{task->AlertDialog(onDismissRequest={replacement=null},title={Text("Switch focus?")},text={Text("This ends the timer for ${timer?.title}. Its task stays as it is.")},confirmButton={TextButton(onClick={TimerStore.start(context,task);replacement=null;requestNotification()}){Text("Start new timer")}},dismissButton={TextButton(onClick={replacement=null}){Text("Keep current")}})}
+    replacement?.takeIf{TimerPreferences.enabled(context)}?.let{task->AlertDialog(onDismissRequest={replacement=null},title={Text("Switch focus?")},text={Text("This ends the timer for ${timer?.title}. Its task stays as it is.")},confirmButton={TextButton(onClick={TimerStore.start(context,task);replacement=null;requestNotification()}){Text("Start new timer")}},dismissButton={TextButton(onClick={replacement=null}){Text("Keep current")}})}
     LaunchedEffect(finishId){if(finishId!=null){
         val state=TimerStore.read(context)
         if(state!=null&&state.taskId==finishId){

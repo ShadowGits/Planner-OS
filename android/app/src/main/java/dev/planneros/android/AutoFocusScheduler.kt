@@ -41,7 +41,7 @@ object AutoFocusScheduler {
         // A valid alarm already delivered to the service must survive a fresh
         // snapshot/re-arm. claim() still validates its current occurrence.
         cancelAlarms(c,false)
-        if(!enabled(c)||!backgroundAvailable(c))return
+        if(!TimerPreferences.enabled(c)||!enabled(c)||!backgroundAvailable(c))return
         val p=prefs(c);val now=System.currentTimeMillis();val epoch=p.getString("epoch",null)!!
         val future=blocks(c).filter{it.startMillis>now&&it.startMillis<now+7*86_400_000L}
             .sortedWith(compareBy<AutoFocusBlock>{it.startMillis}.thenBy{it.id}).take(256)
@@ -55,6 +55,13 @@ object AutoFocusScheduler {
         }
     }
     fun setEnabled(c:Context,value:Boolean)=synchronized(lock){prefs(c).edit().putBoolean("enabled",value).commit();if(!value)cancelAlarms(c)else arm(c)}
+    fun trackingChanged(c:Context)=synchronized(lock){
+        cancelAlarms(c)
+        val p=prefs(c);val now=System.currentTimeMillis()
+        val active=blocks(c).filter{it.startMillis<=now&&now<it.endMillis}.map{it.occurrence}
+        p.edit().putStringSet("consumed",p.getStringSet("consumed",emptySet()).orEmpty()+active).commit()
+        arm(c)
+    }
     fun rearm(c:Context)=synchronized(lock){arm(c)}
     fun reset(c:Context)=synchronized(lock){
         val p=prefs(c);val setting=enabled(c);cancelAlarms(c)
@@ -88,14 +95,14 @@ object AutoFocusScheduler {
             .putExtra("auto_epoch",epoch).putExtra("connection_generation",generation)
     /** Called only while the Activity is foreground; no background permission fallback. */
     fun catchUp(c:Context)=synchronized(lock){
-        if(!enabled(c))return@synchronized
+        if(!TimerPreferences.enabled(c)||!enabled(c))return@synchronized
         val p=prefs(c);val block=autoFocusCandidate(blocks(c),System.currentTimeMillis(),p.getStringSet("consumed",emptySet()).orEmpty())?:return@synchronized
         try{c.startForegroundService(request(c,block,p.getString("epoch",null)?:return@synchronized,SecureConfig(c).generation))}
         catch(_:IllegalStateException){}catch(_:SecurityException){}
     }
     fun receive(c:Context,i:Intent)=synchronized(lock){
         val token=i.data?.lastPathSegment?:return@synchronized;val p=prefs(c)
-        if(!enabled(c)||!backgroundAvailable(c)||token !in p.getStringSet("alarms",emptySet()).orEmpty()||
+        if(!TimerPreferences.enabled(c)||!enabled(c)||!backgroundAvailable(c)||token !in p.getStringSet("alarms",emptySet()).orEmpty()||
             i.getStringExtra("auto_epoch")!=p.getString("epoch",null)||i.getLongExtra("connection_generation",-1)!=SecureConfig(c).generation)return@synchronized
         val block=autoFocusCandidate(blocks(c),System.currentTimeMillis(),p.getStringSet("consumed",emptySet()).orEmpty())?:return@synchronized
         try{c.startForegroundService(request(c,block,i.getStringExtra("auto_epoch")!!,i.getLongExtra("connection_generation",-1)))}
@@ -104,7 +111,7 @@ object AutoFocusScheduler {
     /** The service atomically validates and claims immediately before changing timer state. */
     fun claim(c:Context,i:Intent):AutoFocusBlock?=synchronized(lock){
         val p=prefs(c)
-        if(!enabled(c)||i.getStringExtra("auto_epoch")!=p.getString("epoch",null)||
+        if(!TimerPreferences.enabled(c)||!enabled(c)||i.getStringExtra("auto_epoch")!=p.getString("epoch",null)||
             i.getLongExtra("connection_generation",-1)!=SecureConfig(c).generation)return@synchronized null
         val consumed=p.getStringSet("consumed",emptySet()).orEmpty()
         val block=autoFocusCandidate(blocks(c),System.currentTimeMillis(),consumed)?:return@synchronized null

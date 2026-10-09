@@ -29,8 +29,9 @@ object TimerSounds {
         }
     }
     fun clear(c:Context){val m=c.getSystemService(NotificationManager::class.java);m.cancel(START_ID);m.cancel(END_ID)}
-    fun started(c:Context,s:TimerState){c.getSystemService(NotificationManager::class.java).cancel(START_ID);post(c,s,false)}
+    fun started(c:Context,s:TimerState){if(!TimerPreferences.enabled(c))return;c.getSystemService(NotificationManager::class.java).cancel(START_ID);post(c,s,false)}
     fun completed(c:Context,s:TimerState,quiet:Boolean=false){
+        if(!TimerPreferences.enabled(c))return
         setup(c)
         if(s.scheduled){if(!quiet)post(c,s,true);return}
         c.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(WORK_CHANNEL,"Timer ended — log actual work",NotificationManager.IMPORTANCE_HIGH).apply{

@@ -49,7 +49,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal=22.dp).padding(bottom=24.dp)){
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(if(task==null)"New task" else "Edit task",fontSize=24.sp,fontWeight=FontWeight.Bold);IconButton(onClick=dismiss){Icon(Icons.Rounded.Close,"Close task editor")}}
             task?.parent?.let{Text("${task.parentTitle.orEmpty()} · Part ${task.partIndex?:"?"} of ${task.partCount?:"?"}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-            task?.let{t->
+            task?.takeIf{TimerPreferences.enabled(c)}?.let{t->
                 OutlinedButton(enabled=!busy,onClick={logTime(t)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.History,null);Text(" Log time")}
                 if(t.workedSeconds>0)Text("${workDuration(t.workedSeconds)} worked${if(t.done)""else " · ${workDuration(t.remainingSeconds)} remaining"}",fontSize=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=8.dp))
             }
@@ -78,7 +78,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
                     if(!t.habit)TextButton(enabled=!busy&&!t.done&&t.remainingSeconds>=2,onClick={split(t)}){Icon(Icons.AutoMirrored.Rounded.CallSplit,null);Text(" Split")}
                     TextButton(enabled=!busy,onClick={delete(t)}){Icon(Icons.Rounded.DeleteOutline,null);Text(if(t.habit)" Skip occurrence" else " Delete")}
                 }
-                if(t.time!=null)OutlinedButton(onClick={focus(t)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.PlayArrow,null);Text(" Start focus timer")}
+                if(TimerPreferences.enabled(c)&&t.time!=null)OutlinedButton(onClick={focus(t)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.PlayArrow,null);Text(" Start focus timer")}
             }
         }
     }
@@ -105,6 +105,12 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Text("Your key is encrypted using Android Keystore.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))
         Text("Appearance",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=10.dp))
         Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("system","light","dark").forEach{mode->FilterChip(selected=appearance==mode,onClick={onAppearance(mode)},label={Text(mode.replaceFirstChar(Char::titlecase))})}}
+        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+            Text("Timers & time logging",modifier=Modifier.weight(1f),fontWeight=FontWeight.SemiBold)
+            Switch(TimerPreferences.enabled(c),{TimerPreferences.setEnabled(c,it)})
+        }
+        Text("Turn off to hide timers, time logs and work-entry prompts. Your saved logs are kept. Applies to this device.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(TimerPreferences.enabled(c)){
         if(TimerStore.read(c)!=null){
             TextButton(onClick={TimerStore.action(c,"SHOW")}){Icon(Icons.Rounded.PictureInPictureAlt,null);Text(" Show floating timer")}
             TextButton(onClick={c.startActivity(Intent(c,TimerLockScreenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))}){Icon(Icons.Rounded.LockClock,null);Text(" Open wooden lock-screen timer")}
@@ -113,19 +119,22 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text("Start focus with scheduled blocks",modifier=Modifier.weight(1f));Switch(automatic,{automatic=it})}
         Text(if(AutoFocusScheduler.backgroundAvailable(c))"Automatic timers can start in the background. Pausing or canceling a block keeps that occurrence stopped." else "Automatic timers start while Planner OS is open. Allow precise alarms to start them in the background. Pausing or canceling keeps that occurrence stopped.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         if(Build.VERSION.SDK_INT>=31)TextButton(onClick={c.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:${c.packageName}")))}){Icon(Icons.Rounded.NotificationsActive,null);Text(" Allow precise alarms")}
+        }
         Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text("Native reminders",modifier=Modifier.weight(1f));Switch(reminders,{reminders=it;if(it)notification()})}
         Text(if(enabled)"System notifications enabled" else "System notifications blocked",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick={if(!enabled)notification();testResult=if(Reminders.test(c))"Test sent — check your notification shade." else "Notifications are blocked. Allow notifications and the Planner reminders channel in Android Settings, then test again."}){Icon(Icons.Rounded.NotificationsNone,null);Text(" Test notification")}
         testResult?.let{Text(it,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        if(TimerPreferences.enabled(c)){
         Text("Lock-screen timer",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=10.dp))
         Text(timerVisibility,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Open the wooden lock-screen timer, then lock your phone to keep that screen visible. While another app is open, Android controls which timer cards appear on the lock screen; the floating window cannot cover a secure lock screen automatically.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Samsung: Settings → Lock screen and AOD → Now bar → View more → enable Planner OS, if listed. In Notifications → Lock screen notifications, choose Cards, allow Planner OS under Show content, and turn off Show alerting notifications only. The running timer stays silent between its start and finish tones.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))
         TextButton(onClick={TimerVisibility.openChannelSettings(c)}){Text(" Timer visibility settings")}
         if(Build.VERSION.SDK_INT>=36)TextButton(onClick={TimerVisibility.openLiveSettings(c)}){Text(" Allow Live timer updates")}
+        }
         TextButton(onClick={TimerVisibility.openAppSettings(c)}){Text(" Android notification settings")}
         Text("Same 30/5-minute task reminders and daily briefs. Disable browser notifications on this phone to avoid receiving both. On Samsung, allow background battery usage for dependable delivery.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("Offline: saved days remain readable. Reconnect to save edits. Focus timers run without network access.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
+        Text("Offline: saved days remain readable. Reconnect to save edits.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
         error?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp)}
     }},confirmButton={TextButton(onClick={try{repo.config.save(url,key.ifBlank{repo.config.key()});repo.config.reminders=reminders;AutoFocusScheduler.setEnabled(c,automatic);Reminders.setup(c);saved();dismiss()}catch(e:Exception){error=e.message}}){Text("Save")}},dismissButton={TextButton(onClick=dismiss){Text("Close")}})
 }
