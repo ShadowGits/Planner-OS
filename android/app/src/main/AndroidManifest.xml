@@ -12,6 +12,18 @@
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
         <activity android:name=".TimerLockScreenActivity" android:exported="false" android:excludeFromRecents="true" android:launchMode="singleTop" android:taskAffinity="" />
+        <activity android:name=".TimelineWidgetEntryActivity" android:exported="false" android:theme="@android:style/Theme.NoDisplay" android:excludeFromRecents="true" />
+        <service android:name=".TimelineWidgetService" android:exported="false" android:permission="android.permission.BIND_REMOTEVIEWS" />
+        <receiver android:name=".TimelineWidgetProvider" android:exported="false" android:label="Planner OS timeline">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_timeline_info" />
+        </receiver>
         <activity android:name=".DashboardActivity" android:exported="false" />
         <activity android:name=".WorkLogActivity" android:exported="false" android:launchMode="singleTop" />
         <service android:name=".TimerService" android:exported="false" android:foregroundServiceType="specialUse">

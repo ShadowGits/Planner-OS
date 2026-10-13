@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="focus-timer.css?v=1">
   <link rel="stylesheet" href="work-log.css?v=1">
   <link rel="stylesheet" href="timer-settings.css?v=1">
+  <link rel="stylesheet" href="project-inbox.css?v=1">
 </head>
 <body>
   <div id="key-gate" class="key-gate hidden">
@@ -38,6 +39,7 @@
         <button id="jump-today" class="jump-now hidden">Today</button>
         <button id="notif-btn" class="notif-btn hidden" aria-label="Turn on notifications" title="Notifications">🔔</button>
         <button id="timer-settings-open" class="view-toggle" type="button" aria-label="Timer settings" title="Timer settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button id="inbox-view-toggle" class="view-toggle inbox-view-toggle" type="button" aria-label="Show project inbox" aria-pressed="false" title="Project inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 14h5l1 3h4l1-3h5"/></svg></button>
         <button id="view-toggle" class="view-toggle" aria-label="Show to-do list" aria-pressed="false" title="Toggle timeline / to-do list"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M9 6h10M9 12h10M9 18h10"/><path class="view-slash" d="M3 3l18 18"/></svg></button>
       </div>
     </div>
@@ -56,6 +58,11 @@
     <p class="timer-settings-note">Applies to this browser or installed PWA.</p>
   </dialog>
   <main>
+    <section id="project-inbox" class="hidden" aria-label="Project inbox">
+      <div class="project-inbox-heading"><h2>Inbox <span id="inbox-view-count">0</span></h2><p>Unscheduled &amp; overdue</p></div>
+      <div id="inbox-projects" class="project-segments" role="group" aria-label="Inbox project"></div>
+      <div id="project-inbox-list"></div><p id="project-inbox-empty">Loading your inbox…</p>
+    </section>
     <!-- The few tasks the day is judged by, counted so the day has a shape
          beyond "31 of 44 done". -->
     <div id="wins" class="wins hidden"></div>
@@ -82,7 +89,9 @@
     <div class="sheet-handle"></div>
     <button id="sheet-close" class="sheet-close" aria-label="Close task editor">×</button>
     <h2 id="sheet-title">New task</h2>
+    <div id="sheet-projects" class="project-segments" role="group" aria-label="Task project"></div>
     <input id="new-title" type="text" placeholder="What are you doing?" aria-label="Task name" autocomplete="off">
+    <div id="task-suggestions" class="task-suggestions hidden" role="group" aria-label="Existing unscheduled tasks"></div>
     <div class="sheet-row">
       <label class="sheet-label">Date
         <input id="new-date" type="date">
@@ -120,6 +129,7 @@
 
   <script src="focus-timer.js?v=2"></script>
   <script src="work-log.js?v=2"></script>
-  <script src="app.js?v=14"></script>
+  <script src="project-inbox.js?v=1"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>

@@ -165,7 +165,7 @@ class ProjectService:
         return _envelope(True, f"Milestone added: {row['name']}", {"milestone": row})
 
     def update_milestone(self, milestone_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"name", "status", "target_date", "start_date", "sort_order", "notes"}
+        allowed = {"name", "status", "target_date", "start_date", "sort_order", "notes", "project_id"}
         payload = {key: value for key, value in updates.items() if key in allowed}
         if not payload:
             raise PlannerCoreError(f"No valid milestone fields in update; allowed: {sorted(allowed)}")
@@ -615,6 +615,25 @@ class TaskService:
             raise PlannerCoreError(f"Invalid task status: {status}")
         if "start_time" in payload:
             _parse_time(payload["start_time"])
+        if "project_id" in payload or "milestone_id" in payload:
+            existing = self.repository.get_row("planner_tasks", task_id)
+            if existing is None:
+                raise PlannerCoreError(f"Task was not found: {task_id}")
+            project_id = payload.get("project_id", existing.get("project_id"))
+            milestone_id = payload.get("milestone_id", existing.get("milestone_id"))
+            if milestone_id:
+                milestone = self.repository.get_row("milestones", str(milestone_id))
+                if milestone is None:
+                    raise PlannerCoreError("milestone_id was not found in this workspace")
+                if str(milestone.get("project_id")) != str(project_id):
+                    if "milestone_id" in payload:
+                        if "project_id" in payload:
+                            raise PlannerCoreError("Choose a milestone from the selected project")
+                        # Linking a milestone implies its project, retaining the
+                        # dashboard's existing one-click link workflow.
+                        payload["project_id"] = milestone.get("project_id")
+                    else:
+                        payload["milestone_id"] = None
         if payload.get("starred"):
             self._check_star_budget(task_id, payload.get("scheduled_date"))
 
@@ -1074,6 +1093,51 @@ class TaskService:
                 items.append(occ)
         return items
 
+    def planning_context(self) -> dict[str, Any]:
+        """Compact shared context for local project matching; never per-keypress.
+
+        Include loose tasks on future dates too. This picker feed is distinct
+        from overdue Inbox semantics, and excludes split umbrella records.
+        """
+        projects = self.repository.list_rows(
+            "projects", {"status": "active"}, columns="id,name,status", strict=True,
+        )
+        fields = (
+            "id,title,status,start_time,estimated_minutes,priority,due_date,"
+            "scheduled_date,notes,project_id,milestone_id,parent_task_id,starred"
+        )
+        rows = self.repository.list_rows(
+            "planner_tasks", {"status": sorted(OPEN_TASK_STATUSES)},
+            columns=fields, query_string="start_time=is.null&order=title.asc,id.asc", strict=True,
+        )
+        rows = [row for row in rows if not row.get("start_time") and row.get("status") in OPEN_TASK_STATUSES]
+        umbrellas: set[str] = set()
+        for offset in range(0, len(rows), 100):
+            umbrellas.update(self._umbrella_ids(rows[offset:offset + 100]))
+        items = [
+            {**{field: row.get(field) for field in fields.split(",")}, "done": False, "is_habit": False}
+            for row in rows if str(row["id"]) not in umbrellas
+        ]
+        items.sort(key=lambda row: (row["title"].casefold(), str(row["id"])))
+        canonical = [row for row in projects if row["name"].casefold() in {"germany", "life other than germany"}]
+        aliases: dict[str, str] = {}
+        if len(canonical) == 2:
+            destinations = {row["name"].casefold(): str(row["id"]) for row in canonical}
+            germany_sources = {"germany", "language", "colleges", "finance", "study", "internship and project"}
+            aliases = {
+                str(row["id"]): destinations[
+                    "germany" if row["name"].casefold() in germany_sources else "life other than germany"
+                ] for row in projects
+            }
+            projects = canonical
+        projects.sort(key=lambda row: (row["name"].casefold(), str(row["id"])))
+        return _envelope(True, "Project planning context", {
+            "date": _local_today(self.timezone).isoformat(), "timezone": self.timezone,
+            "projects": [{key: row.get(key) for key in ("id", "name", "status")} for row in projects],
+            "project_aliases": aliases,
+            "items": items,
+        })
+
     def inbox_view(self, on_date: str | None = None) -> dict[str, Any]:
         """Open loose tasks and missed blocks across the workspace.
 
@@ -1087,7 +1151,7 @@ class TaskService:
         stamp = target.isoformat()
         columns = (
             "id,title,status,start_time,estimated_minutes,priority,due_date,"
-            "scheduled_date,notes,project_id,parent_task_id,starred"
+            "scheduled_date,notes,project_id,milestone_id,parent_task_id,starred"
         )
         rows = self.repository.list_rows(
             "planner_tasks",
@@ -1173,7 +1237,7 @@ class TaskService:
         )
         all_rows = self.repository.list_rows(
             "planner_tasks",
-            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,parent_task_id,starred",
+            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,milestone_id,parent_task_id,starred",
             query_string=qs,
             strict=strict,
         )
@@ -1226,6 +1290,7 @@ class TaskService:
                     "scheduled_date": row.get("scheduled_date"),
                     "notes": row.get("notes"),
                     "project_id": row.get("project_id"),
+                    "milestone_id": row.get("milestone_id"),
                     # lets the timeline tag a slot as part of a split task,
                     # and name the task it is a part of
                     "parent_task_id": row.get("parent_task_id"),

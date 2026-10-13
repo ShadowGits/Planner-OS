@@ -10,6 +10,9 @@ import android.provider.Settings
 import android.view.ContextThemeWrapper
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -22,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -31,19 +35,29 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.time.LocalDate
 
-internal data class EditorValues(val title:String,val date:LocalDate,val time:String?,val minutes:Int,val notes:String?)
+internal data class EditorValues(val title:String,val date:LocalDate,val time:String?,val minutes:Int,val notes:String?,val projectId:String?=null,val projectExplicit:Boolean=false)
 internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeWrapper(context,if(dark)android.R.style.Theme_Material_Dialog_Alert else android.R.style.Theme_Material_Light_Dialog_Alert)
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun PlannerEditor(task:Task?,selected:LocalDate,suggestedDate:String?,suggestedTime:String?,busy:Boolean,draft:EditorValues?,dismiss:()->Unit,
-    save:(String,LocalDate,String?,Int,String?)->Unit,star:(Task)->Unit,split:(Task)->Unit,delete:(Task)->Unit,focus:(Task)->Unit,logTime:(Task)->Unit){
+@Composable internal fun PlannerEditor(task:Task?,selected:LocalDate,suggestedDate:String?,suggestedTime:String?,busy:Boolean,draft:EditorValues?,
+    projects:List<PlanningProject>,projectAliases:Map<String,String>,suggestionRows:List<Task>,preferredProjectId:String?,chooseExisting:(Task)->Unit,dismiss:()->Unit,
+    save:(String,LocalDate,String?,Int,String?,String?,Boolean)->Unit,star:(Task)->Unit,split:(Task)->Unit,delete:(Task)->Unit,focus:(Task)->Unit,logTime:(Task)->Unit){
     val c=LocalContext.current;val dark=MaterialTheme.colorScheme.surface.luminance()<.5f
     val existing=task?.time?.let{normalizeSlot(if(task.clockMinutes<1440)task.date?.let(LocalDate::parse)?:selected else selected,task.clockMinutes)}
     var title by rememberSaveable(task?.id){mutableStateOf(draft?.title?:task?.title.orEmpty())}
     var date by rememberSaveable(task?.id){mutableStateOf(draft?.date?.toString()?:suggestedDate?:existing?.date?.toString()?:task?.date?:selected.toString())}
     var time by rememberSaveable(task?.id){mutableStateOf(if(draft!=null)draft.time.orEmpty() else suggestedTime?:existing?.clock.orEmpty())}
     var minutes by rememberSaveable(task?.id){mutableStateOf((draft?.minutes?:task?.minutes?:30).toString())}
-    var notes by rememberSaveable(task?.id){mutableStateOf(draft?.notes?:task?.notes.orEmpty())}
+    var notes by rememberSaveable(task?.id){mutableStateOf(if(draft!=null)draft.notes.orEmpty() else task?.notes.orEmpty())}
+    var projectId by rememberSaveable(task?.id){mutableStateOf(if(draft!=null)draft.projectId else if(task!=null)task.projectId else preferredProjectId?:pickerProjects(projects).firstOrNull()?.id)}
+    var projectExplicit by rememberSaveable(task?.id){mutableStateOf(draft?.projectExplicit?:false)}
+    val resolvedProjectId=resolvePlanningProject(projectId,projectAliases)
+    // Refreshes can resolve a migrated id, but never replace a typed draft or user choice.
+    LaunchedEffect(projects){if(task==null&&projectId==null)projectId=preferredProjectId?:pickerProjects(projects).firstOrNull()?.id}
+    val choices=pickerProjects(projects,resolvedProjectId)
+    val matches=remember(title,resolvedProjectId,suggestionRows,task?.id){if(task==null)taskSuggestions(suggestionRows,resolvedProjectId,title) else emptyList()}
+    val suggestionScroll=rememberLazyListState()
+    LaunchedEffect(title,resolvedProjectId){suggestionScroll.scrollToItem(0)}
     var validation by remember{mutableStateOf<String?>(null)}
     ModalBottomSheet(onDismissRequest=dismiss,containerColor=MaterialTheme.colorScheme.surface){
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal=22.dp).padding(bottom=24.dp)){
@@ -53,7 +67,23 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
                 OutlinedButton(enabled=!busy,onClick={logTime(t)},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.History,null);Text(" Log time")}
                 if(t.workedSeconds>0)Text("${workDuration(t.workedSeconds)} worked${if(t.done)""else " · ${workDuration(t.remainingSeconds)} remaining"}",fontSize=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=8.dp))
             }
-            OutlinedTextField(title,{title=it},label={Text("Task name")},readOnly=task?.habit==true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),maxLines=4)
+            Text("Project",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=5.dp))
+            if(choices.isNotEmpty())PlanningProjectSelector(choices,resolvedProjectId,{projectId=it;projectExplicit=true},enabled=!busy&&task?.habit!=true)
+            else Text("Projects are not saved on this device yet. Connect once to load them.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(resolvedProjectId!=null&&choices.none{it.id==resolvedProjectId})Text("Keeping the task's current project",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(title,{title=it},label={Text("Task name")},readOnly=task?.habit==true,modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp),maxLines=4)
+            if(matches.isNotEmpty()){
+                Text("Existing unscheduled tasks · ${matches.size}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp,bottom=3.dp))
+                LazyColumn(Modifier.fillMaxWidth().height((minOf(matches.size,PlanningCachePolicy.VISIBLE_SUGGESTIONS)*48).dp),state=suggestionScroll){
+                    items(matches,key={it.id}){match->
+                        Column(Modifier.fillMaxWidth().height(48.dp).clickable(enabled=!busy,onClick={chooseExisting(match)}).padding(horizontal=12.dp,vertical=5.dp)){
+                            Text(match.title,fontSize=14.sp,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
+                            Text("${durationLabel(match.minutes)} · ${match.date?.let{"$it · "}.orEmpty()}Schedule existing task",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+            }
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(date,{date=it},label={Text("Date · YYYY-MM-DD")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),trailingIcon={IconButton(onClick={val d=runCatching{LocalDate.parse(date)}.getOrDefault(selected);DatePickerDialog(pickerContext(c,dark),{_,y,m,day->date=LocalDate.of(y,m+1,day).toString()},d.year,d.monthValue-1,d.dayOfMonth).show()}){Icon(Icons.Rounded.CalendarMonth,"Choose task date")}})
             OutlinedTextField(time,{time=it},label={Text("Start time · HH:mm")},supportingText={Text("Leave blank for Inbox")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Ascii),modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp),trailingIcon={Row{
@@ -65,12 +95,13 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
                 listOf(15,30,45,60,90,120).forEach{value->FilterChip(selected=minutes.toIntOrNull()==value,onClick={minutes=value.toString()},label={Text(durationLabel(value))})}
             }
             OutlinedTextField(minutes,{minutes=it.filter(Char::isDigit)},label={Text("Custom minutes")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp))
-            if(task==null)OutlinedTextField(notes,{notes=it},label={Text("Notes (optional)")},modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp))
+            OutlinedTextField(notes,{notes=it},label={Text("Notes (optional)")},modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp))
             validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp,modifier=Modifier.padding(top=7.dp))}
             Button(enabled=!busy,onClick={
                 val parsed=runCatching{LocalDate.parse(date)}.getOrNull();val duration=minutes.toIntOrNull()
-                if(title.isBlank()||title.length>300||parsed==null||duration==null||duration !in 1..1440||!(time.isBlank()||Regex("([01][0-9]|2[0-3]):[0-5][0-9]").matches(time)))validation="Enter a task name, valid date, 1–1440 minutes and a time such as 09:30."
-                else save(title.trim(),parsed,time.takeIf{it.isNotBlank()},duration,notes.takeIf{it.isNotBlank()})
+                if(task==null&&resolvedProjectId==null)validation="Choose a project. Connect once if your projects have not loaded yet."
+                else if(title.isBlank()||title.length>300||parsed==null||duration==null||duration !in 1..1440||!(time.isBlank()||Regex("([01][0-9]|2[0-3]):[0-5][0-9]").matches(time)))validation="Enter a task name, valid date, 1–1440 minutes and a time such as 09:30."
+                else save(title.trim(),parsed,time.takeIf{it.isNotBlank()},duration,notes.takeIf{it.isNotBlank()},resolvedProjectId,projectExplicit)
             },modifier=Modifier.fillMaxWidth().padding(top=14.dp).height(48.dp),shape=RoundedCornerShape(14.dp)){Text(if(busy)"Saving…" else if(task==null)"Add to day" else "Save")}
             task?.let{t->
                 TextButton(enabled=!busy,onClick={star(t)},modifier=Modifier.fillMaxWidth()){Icon(if(t.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,null);Text(if(t.starred)" One of today's wins" else " Mark as one of today's wins")}

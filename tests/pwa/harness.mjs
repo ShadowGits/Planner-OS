@@ -123,7 +123,7 @@ export async function boot({ items = [], onRequest = null, beforeScripts = null 
 
   const errors = [];
   window.addEventListener("error", (e) => errors.push(e.error || e.message));
-  for (const name of ["focus-timer.js","work-log.js","app.js"]) {
+  for (const name of ["focus-timer.js","work-log.js","project-inbox.js","app.js"]) {
     const script=window.document.createElement("script");
     script.textContent=name==="app.js"?APP_JS:readFileSync(join(PWA,name),"utf8");
     window.document.body.appendChild(script);

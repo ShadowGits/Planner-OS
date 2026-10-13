@@ -7,6 +7,8 @@ import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -22,13 +24,13 @@ import javax.crypto.spec.GCMParameterSpec
 data class Task(val id: String, val title: String, val time: String?, val minutes: Int, val done: Boolean,
                 val starred: Boolean, val habit: Boolean, val parent: String?, val date: String?, val notes: String?, val projectId: String?,
                 val recurrenceKey: String? = null, val parentTitle: String? = null, val partIndex: Int? = null, val partCount: Int? = null, val dueDate: String? = null,
-                val workedSeconds:Int=0,val plannedSeconds:Int?=null) {
+                val workedSeconds:Int=0,val plannedSeconds:Int?=null,val milestoneId:String?=null) {
     val remainingSeconds:Int get()=((plannedSeconds?:minutes*60)-workedSeconds).coerceAtLeast(0)
     val clockMinutes: Int get() = time?.split(":")?.let { it[0].toIntOrNull()?.times(60)?.plus(it.getOrNull(1)?.toIntOrNull() ?: 0) } ?: Int.MAX_VALUE
     companion object {
         fun from(j: JSONObject) = Task(j.getString("id"), j.optString("title"), j.nullString("start_time"), j.optInt("estimated_minutes",30).coerceAtLeast(1),
             j.optBoolean("done"),j.optBoolean("starred"),j.optBoolean("is_habit"),j.nullString("parent_task_id"),j.nullString("scheduled_date"),j.nullString("notes"),j.nullString("project_id"),
-            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"))
+            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"),j.nullString("milestone_id"))
     }
 }
 fun JSONObject.nullString(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
@@ -75,8 +77,10 @@ class SecureConfig(private val context: Context) {
             context.getSharedPreferences("day-cache",Context.MODE_PRIVATE).edit().clear().commit()
             context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE).edit().clear().commit()
             context.getSharedPreferences("dashboard-cache",Context.MODE_PRIVATE).edit().clear().commit()
+            context.getSharedPreferences("planning-cache",Context.MODE_PRIVATE).edit().clear().commit()
         }
         check(prefs.edit().putString("url",origin).putString("secret",Base64.encodeToString(cipher.iv,Base64.NO_WRAP)+":"+Base64.encodeToString(encrypted,Base64.NO_WRAP)).putLong("generation",generation + if(changed) 1 else 0).commit()) { "Connection settings could not be saved." }
+        TimelineWidget.cacheChanged(context)
     }
     fun clear() = synchronized(connectionLock) {
         FocusWorkLogs.clearNotifications(context)
@@ -86,27 +90,37 @@ class SecureConfig(private val context: Context) {
         context.getSharedPreferences("day-cache",Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("dashboard-cache",Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("planning-cache",Context.MODE_PRIVATE).edit().clear().commit()
+        TimelineWidget.cacheChanged(context)
     }
 }
 
 class PlannerRepository(private val context: Context) {
     companion object {
+        val mutations = MutationCoordinator()
         private val cacheLock = Any()
+        private val planningMutex=Mutex()
         private var mutationRevision = 0L
         private var activeSnapshotWrites = 0
         private val pendingCacheKeys = mutableSetOf<String>()
         private var pendingInboxGeneration:Long?=null
+        private var pendingPlanningGeneration:Long?=null
     }
     val config=SecureConfig(context)
     private val cache=context.getSharedPreferences("day-cache",Context.MODE_PRIVATE)
     private val inboxCache=context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE)
+    private val planningCache=context.getSharedPreferences("planning-cache",Context.MODE_PRIVATE)
     private fun invalidateDays() = synchronized(cacheLock) {
         mutationRevision++
+        val key="${config.generation}:planning"
+        planningCache.getString(key,null)?.let{raw->runCatching{JSONObject(raw)}.getOrNull()?.let{
+            planningCache.edit().putString(key,it.put("_dirty",true).toString()).apply()
+        }}
         // Keep readable snapshots: quiet reconciliation replaces their contents.
     }
     private fun invalidateWorkSnapshots()=synchronized(cacheLock){
         invalidateDays()
-        for(store in listOf(cache,inboxCache)){
+        for(store in listOf(cache,inboxCache,planningCache)){
             val edit=store.edit()
             store.all.forEach{(key,value)->if(key.startsWith("${config.generation}:")&&value is String)runCatching{edit.putString(key,JSONObject(value).put("_dirty",true).toString())}}
             edit.commit()
@@ -133,6 +147,13 @@ class PlannerRepository(private val context: Context) {
             val key="${config.generation}:inbox"
             inboxCache.getString(key,null)?.let{raw->runCatching{JSONObject(raw)}.getOrNull()?.let{inboxCache.edit().putString(key,it.put("_pending",false).toString()).apply()}}
         };pendingInboxGeneration=null
+        if(pendingPlanningGeneration==config.generation){
+            val key="${config.generation}:planning"
+            planningCache.getString(key,null)?.let{raw->runCatching{JSONObject(raw)}.getOrNull()?.let{
+                planningCache.edit().putString(key,it.put("_pending",false).toString()).apply()
+            }}
+        };pendingPlanningGeneration=null
+        TimelineWidget.cacheChanged(context)
     }
     fun markPropagation(task:Task)=synchronized(cacheLock){
         val group=task.parent?:task.id;val edit=cache.edit()
@@ -168,12 +189,25 @@ class PlannerRepository(private val context: Context) {
             pendingInboxGeneration=generation
             inboxCache.edit().putString(inboxKey,encodeDay(updated).put("_saved_at",data.optLong("_saved_at",0)).put("_dirty",data.optBoolean("_dirty")).put("_pending",true).toString()).apply()
         }
+        TimelineWidget.cacheChanged(context)
+        val planningKey="$generation:planning"
+        planningCache.getString(planningKey,null)?.let{raw->
+            val data=runCatching{JSONObject(raw)}.getOrNull()?:return@let
+            val old=runCatching{PlanningContext.from(data)}.getOrNull()?:return@let
+            val updated=applyPlanningChanges(old,before,after)
+            pendingPlanningGeneration=generation
+            planningCache.edit().putString(planningKey,encodePlanning(updated).put("_saved_at",data.optLong("_saved_at",0))
+                .put("_dirty",data.optBoolean("_dirty")).put("_pending",true).toString()).apply()
+        }
     }
+    private fun encodePlanning(view:PlanningContext)=encodeDay(Day(view.date,view.timezone,view.tasks))
+        .put("projects",JSONArray(view.projects.map{JSONObject().put("id",it.id).put("name",it.name).put("status",it.status)}))
+        .put("project_aliases",JSONObject(view.projectAliases))
     private fun encodeDay(day:Day)=JSONObject().put("date",day.date).put("timezone",day.timezone).put("starred_limit",day.starLimit).put("items",JSONArray(day.tasks.map{task->
         JSONObject().put("id",task.id).put("title",task.title).put("start_time",task.time?:JSONObject.NULL)
             .put("estimated_minutes",task.minutes).put("done",task.done).put("starred",task.starred).put("is_habit",task.habit)
             .put("parent_task_id",task.parent?:JSONObject.NULL).put("scheduled_date",task.date?:JSONObject.NULL).put("notes",task.notes?:JSONObject.NULL)
-            .put("project_id",task.projectId?:JSONObject.NULL).put("recurrence_key",task.recurrenceKey?:JSONObject.NULL)
+            .put("project_id",task.projectId?:JSONObject.NULL).put("milestone_id",task.milestoneId?:JSONObject.NULL).put("recurrence_key",task.recurrenceKey?:JSONObject.NULL)
             .put("parent_title",task.parentTitle?:JSONObject.NULL).put("part_index",task.partIndex?:JSONObject.NULL).put("part_total",task.partCount?:JSONObject.NULL).put("due_date",task.dueDate?:JSONObject.NULL).put("worked_seconds",task.workedSeconds).put("planned_seconds",task.plannedSeconds?:JSONObject.NULL)
     }))
     suspend fun request(method: String,path: String,body: JSONObject?=null,dispatcher:CoroutineDispatcher=Dispatchers.IO): JSONObject = withContext(dispatcher) {
@@ -218,6 +252,46 @@ class PlannerRepository(private val context: Context) {
     }
     fun cached(date: LocalDate): Day? = (cache.getString("${config.generation}:$date",null) ?: if(config.generation==0L)cache.getString(date.toString(),null)else null)?.let{runCatching{Day.from(JSONObject(it),true)}.getOrNull()}
     fun cachedInbox():Day?=inboxCache.getString("${config.generation}:inbox",null)?.let{runCatching{Day.from(JSONObject(it),true)}.getOrNull()}
+    internal fun cachedPlanningContext():PlanningContext? {
+        val generation=config.generation
+        planningCache.getString("$generation:planning",null)?.let{raw->
+            runCatching{PlanningContext.from(JSONObject(raw),true)}.getOrNull()?.let{return it}
+        }
+        // Existing installations can paint their already-saved Dashboard projects and days
+        // before the first planning-context request finishes. Never mix account generations.
+        val dashboard=context.getSharedPreferences("dashboard-cache",Context.MODE_PRIVATE)
+        val projectData=dashboard.all.filterKeys{it.startsWith("$generation:")&&it.contains("section=projects")}.values
+            .mapNotNull{raw->(raw as? String)?.let{runCatching{JSONObject(it)}.getOrNull()}}
+            .maxByOrNull{it.optLong("_saved_at")}
+        val rows=projectData?.optJSONArray("rows")?:return null
+        val projects=(0 until rows.length()).mapNotNull{i->runCatching{rows.getJSONObject(i).let{PlanningProject(it.getString("id"),it.getString("name"),it.optString("status","active"))}}.getOrNull()}
+        if(projects.isEmpty())return null
+        val days=cache.all.filterKeys{it.startsWith("$generation:")}.values.mapNotNull{raw->
+            (raw as? String)?.let{runCatching{Day.from(JSONObject(it),true)}.getOrNull()}}
+        val tasks=(days.flatMap{it.tasks}+cachedInbox()?.tasks.orEmpty()).associateBy{it.id}.values.filter{!it.done&&it.time==null}
+        return PlanningContext(LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).toString(),"Asia/Kolkata",projects,tasks,true)
+    }
+    internal suspend fun planningContext(force:Boolean=false):PlanningContext=planningMutex.withLock{withContext(Dispatchers.IO){
+        val generation=config.generation
+        val key="$generation:planning"
+        val revision=synchronized(cacheLock){
+            planningCache.getString(key,null)?.let{raw->
+                val data=runCatching{JSONObject(raw)}.getOrNull()
+                if(!force&&data!=null&&PlanningCachePolicy.fresh(data.optLong("_saved_at"),System.currentTimeMillis(),data.optBoolean("_dirty"),data.optBoolean("_pending")))
+                    return@withContext PlanningContext.from(data)
+            }
+            check(activeSnapshotWrites==0){"Plan changed while refreshing. Refresh task suggestions again."}
+            mutationRevision
+        }
+        val data=request("GET","/v2/day/planning-context").getJSONObject("data")
+        synchronized(cacheLock){
+            check(PlanningCachePolicy.acceptRefresh(generation,config.generation,revision,mutationRevision,activeSnapshotWrites>0)){
+                "Plan changed while refreshing. Refresh task suggestions again."
+            }
+            planningCache.edit().putString(key,data.put("_saved_at",System.currentTimeMillis()).toString()).apply()
+        }
+        PlanningContext.from(data)
+    }}
     suspend fun inbox(force:Boolean=false):Day=withContext(Dispatchers.IO){
         val generation=config.generation
         val key="$generation:inbox"
@@ -247,6 +321,7 @@ class PlannerRepository(private val context: Context) {
             check(cacheRevision == mutationRevision) { "Plan changed while refreshing. Refresh this day again." }
             cache.edit().putString("$generation:$date",data.put("_saved_at",System.currentTimeMillis()).toString()).apply()
         }
+        TimelineWidget.cacheChanged(context)
         Day.from(data).copy(alarmRevision=alarmRevision,connectionGeneration=generation)
     }
     suspend fun patch(task: Task,body: JSONObject){

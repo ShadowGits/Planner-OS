@@ -19,6 +19,8 @@
     selected: getLogicalToday(),
     items: [],
     tz: null,
+    editingTask: null,
+    inboxView: false,
     editing: null, // task id when the sheet is in edit mode
     todoView: localStorage.getItem("day-planner-todo-view") === "true",
   };
@@ -209,6 +211,9 @@
   }
 
   async function api(method, path, body) {
+    const taskId = /\/v2\/day\/tasks\/([^/]+)$/.exec(path)?.[1];
+    const token = taskId && ["PATCH", "DELETE"].includes(method) ? window.PlannerProjects?.begin(taskId,method === "DELETE" ? null : { ...state.items.find(t=>t.id===taskId), ...(state.editingTask?.id===taskId ? state.editingTask : {}), ...body, ...(body && ("start_time" in body || "scheduled_date" in body) ? {overdue:false} : {}), id:taskId }) : null;
+    try {
     const res = await fetch(path, {
       method,
       headers: {
@@ -240,7 +245,15 @@
     if (payload && payload.success === false) {
       throw new Error(payload.message || "Request failed");
     }
+    if(taskId && method === "PATCH") {
+      for(const entry of dayCache.values()) {const item=entry.items?.find(t=>t.id===taskId);if(item)Object.assign(item,body,payload?.data?.task || {});}
+      const item=state.items.find(t=>t.id===taskId);if(item)Object.assign(item,body,payload?.data?.task || {});
+    }
+    window.PlannerProjects?.finish(token,true,payload?.data?.task);
+    if(method === "POST" && path === "/v2/day/tasks") window.PlannerProjects?.insert(payload?.data?.task);
+    else if(method === "POST" && path.startsWith("/v2/day/tasks")) window.PlannerProjects?.refresh({force:true});
     return payload;
+    } catch(error) { window.PlannerProjects?.finish(token,method === "DELETE" && error.status === 404); throw error; }
   }
 
   // A tiny per-day cache so swiping through the week is instant. Each entry
@@ -314,6 +327,7 @@
   $("key-save").addEventListener("click", async () => {
     localStorage.setItem(KEY_STORE, $("key-input").value.trim());
     $("key-gate").classList.add("hidden");
+    window.PlannerProjects?.refresh();
     try {
       await loadDay();
       resyncSubscription();
@@ -327,11 +341,14 @@
 
   /* View changes and timer ticks reuse the loaded day, without any API read. */
   $("view-toggle").addEventListener("click", () => {
+    state.inboxView = false;
     state.todoView = !state.todoView;
     localStorage.setItem("day-planner-todo-view", String(state.todoView));
     releaseDrag();
     render();
   });
+  window.PlannerProjects?.configure({ api,getKey:key,getDate:()=>iso(state.selected),getEditing:()=>state.editing,isInbox:()=>state.inboxView,openEdit,makeRow:todoRow,
+    toggleInbox:()=>{state.inboxView=!state.inboxView;releaseDrag();render();} });
   window.PlannerWorkLog?.configure({api,toast,getKey:key,
     getContext:()=>({items:state.items,date:iso(state.selected),tz:state.tz}),
     onSaved:()=>loadDay({keepScroll:true})});
@@ -370,7 +387,7 @@
     $("day-title").textContent = label;
     $("day-date").textContent = state.selected.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
     $("jump-today").classList.toggle("hidden", diff === 0);
-    $("jump-now").classList.toggle("hidden", diff !== 0 || !state.items.some((t) => t.start_time));
+    $("jump-now").classList.toggle("hidden", state.inboxView || diff !== 0 || !state.items.some((t) => t.start_time));
 
     const done = state.items.filter((t) => t.done).length;
     const total = state.items.length;
@@ -455,6 +472,12 @@
   function render() {
     renderHeader();
     renderWeek();
+    $("project-inbox").classList.toggle("hidden",!state.inboxView);
+    $("inbox-view-toggle").setAttribute("aria-pressed",String(state.inboxView));
+    $("inbox-view-toggle").setAttribute("aria-label",state.inboxView?"Show selected day":"Show project inbox");
+    $("inbox-view-toggle").classList.toggle("on",state.inboxView);
+    $("timeline").classList.toggle("hidden",state.inboxView);
+    window.PlannerProjects?.render();
     const viewButton=$("view-toggle");
     viewButton.classList.toggle("on",state.todoView);
     viewButton.setAttribute("aria-pressed",String(state.todoView));
@@ -470,6 +493,7 @@
     renderInbox(inbox);
     renderUnscheduledPill(inbox);
     renderWins();
+    if(state.inboxView){$("inbox").classList.add("hidden");$("unsched-pill").classList.add("hidden");$("wins").classList.add("hidden");return;}
 
     const list = $("list");
     list.innerHTML = "";
@@ -1038,6 +1062,7 @@
 
   function openSheet(prefillMin) {
     state.editing = null;
+    state.editingTask = null;
     $("sheet-title").textContent = "New task";
     $("sheet-save").textContent = "Add to day";
     $("sheet-delete").classList.add("hidden");
@@ -1051,11 +1076,13 @@
     $("new-time").value = prefillMin != null ? minToTime(prefillMin) : "";
     setDuration(30);
     openSheetEl();
+    window.PlannerProjects?.openEditor(null);
     $("new-title").focus();
   }
 
   function openEdit(task) {
     state.editing = task.id;
+    state.editingTask = task;
     $("sheet-title").textContent = "Edit task";
     $("sheet-save").textContent = "Save";
     $("sheet-delete").classList.remove("hidden");
@@ -1069,6 +1096,7 @@
     setDuration(task.estimated_minutes || 30);
     refreshSheetStar(task);
     openSheetEl();
+    window.PlannerProjects?.openEditor(task);
   }
 
   function refreshSheetStar(task) {
@@ -1115,11 +1143,11 @@
 
 
   $("sheet-timer").addEventListener("click",()=>{
-    const task=state.items.find(t=>t.id===state.editing);if(!task)return;
+    const task=state.items.find(t=>t.id===state.editing) || state.editingTask;if(!task)return;
     closeSheet();window.PlannerFocus?.start(task);
   });
   $("sheet-work").addEventListener("click",()=>{
-    const task=state.items.find(t=>t.id===state.editing);if(!task)return;
+    const task=state.items.find(t=>t.id===state.editing) || state.editingTask;if(!task)return;
     closeSheet();window.PlannerWorkLog?.open(task);
   });
 
@@ -1128,7 +1156,7 @@
   // still an hour, not two.
   $("sheet-split").addEventListener("click", async () => {
     if(!state.editing)return;
-    const task=state.items.find(t=>t.id===state.editing);
+    const task=state.items.find(t=>t.id===state.editing) || state.editingTask;
     if(!task||task.is_habit||task.done)return;
     const remaining=Math.max(0,(task.planned_seconds??(task.estimated_minutes||30)*60)-(task.worked_seconds||0));
     if(remaining<2){toast("No remaining work to split");return}
@@ -1151,6 +1179,8 @@
     $("sheet").classList.add("hidden");
     $("sheet-backdrop").classList.add("hidden");
     state.editing = null;
+    state.editingTask = null;
+    $("task-suggestions").classList.add("hidden");
     setSheetBackgroundInert(false);
     if (sheetReturnFocus && sheetReturnFocus.isConnected) sheetReturnFocus.focus({ preventScroll: true });
   }
@@ -1191,6 +1221,10 @@
     const time = $("new-time").value || null;
     const dateVal = $("new-date").value || iso(state.selected);
     const editing = state.editing;
+    const editingTask = state.editingTask;
+    const projectId = window.PlannerProjects?.projectId() || null;
+    const projectPatch = editing ? (window.PlannerProjects?.projectPatch(editingTask) || {}) : {project_id:projectId};
+    const projectChanged = editing && window.PlannerProjects?.projectChanged(editingTask);
     const staysHere = dateVal === iso(state.selected);
 
     // Paint the change and close the sheet before asking the server. Waiting
@@ -1199,14 +1233,18 @@
     closeSheet();
 
     if (editing) {
-      const item = state.items.find((t) => t.id === editing);
+      const item = state.items.find((t) => t.id === editing) || editingTask;
+      const wasVisible = state.items.some(t=>t.id===editing);
       const before = item ? { ...item } : null;
       if (item) {
         item.title = title;
         item.scheduled_date = dateVal;
         item.start_time = time;
         item.estimated_minutes = sheetMinutes;
+        if(projectChanged)item.milestone_id = null;
+        Object.assign(item,projectPatch);
       }
+      if(item && staysHere && !state.items.some(t=>t.id===editing))state.items.push(item);
       render();
       toast("Saved ✓");
       try {
@@ -1215,11 +1253,13 @@
           scheduled_date: dateVal,
           start_time: time,
           estimated_minutes: sheetMinutes,
+          ...projectPatch,
         });
         // Moved to another day: it belongs on that screen now, not this one.
         if (!staysHere) await loadDay({ keepScroll: true });
       } catch (err) {
         if (item && before) Object.assign(item, before);
+        if(!wasVisible)state.items=state.items.filter(t=>t.id!==editing);
         render();
         showError(err);
       } finally {
@@ -1242,7 +1282,7 @@
       due_date: null,
       scheduled_date: dateVal,
       notes: null,
-      project_id: null,
+      project_id: projectId,
       parent_task_id: null,
       pending: true,
     };
@@ -1257,6 +1297,7 @@
         date: dateVal,
         start_time: time,
         estimated_minutes: sheetMinutes,
+        project_id: projectId,
       });
       const row = created && created.data && created.data.task;
       const at = state.items.indexOf(draft);
@@ -1608,7 +1649,7 @@
     return now.hour*60+now.minute+(now.hour<4?1440:0);
   }
   setInterval(() => {
-    if (dragging || document.hidden || state.todoView) return;
+    if (dragging || document.hidden || state.todoView || state.inboxView) return;
     if (sameDay(state.selected, getLogicalToday())) {
       const list = $("list");
       const top0 = Number(list.dataset.top0);
@@ -1650,6 +1691,7 @@
       return;
     }
     loadDay({ keepScroll: true }).catch(showError);
+    window.PlannerProjects?.refresh();
   });
 
   if (!key()) {

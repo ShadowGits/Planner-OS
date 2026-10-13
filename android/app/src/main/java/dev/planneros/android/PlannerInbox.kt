@@ -10,9 +10,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-@Composable internal fun InboxOverview(rows:List<Task>,dayTasks:List<Task>,dayLabel:String,overdueCount:Int,filter:String,onFilter:(String)->Unit){
+@Composable internal fun InboxOverview(rows:List<Task>,dayTasks:List<Task>,dayLabel:String,overdueCount:Int,filter:String,onFilter:(String)->Unit,
+    projects:List<PlanningProject>,projectId:String?,onProject:(String?)->Unit){
     val open=rows.filterNot{it.done};val completed=dayTasks.count{it.done}
     Column(Modifier.fillMaxWidth().padding(horizontal=18.dp)){
+        if(projects.isNotEmpty()){
+            PlanningProjectSelector(projects,projectId,{onProject(it)},Modifier.padding(bottom=3.dp))
+            TextButton(onClick={onProject(null)},contentPadding=PaddingValues(horizontal=0.dp,vertical=0.dp),modifier=Modifier.heightIn(min=32.dp)){
+                Text(if(projectId==null)"All projects" else "Show all projects",fontSize=11.sp)
+            }
+        }
         Text("${open.size} open · $overdueCount overdue · ${durationLabel(open.sumOf{it.minutes})}",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth().padding(top=6.dp,bottom=3.dp),horizontalArrangement=Arrangement.SpaceBetween){
             Text("$dayLabel progress",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)

@@ -74,6 +74,8 @@ class DayTaskPatch(BaseModel):
     estimated_minutes: int | None = Field(default=None, gt=0, le=24 * 60)
     title: str | None = None
     milestone_id: str | None = None
+    project_id: str | None = None
+    notes: str | None = None
     # One of the few tasks the day is judged by.
     starred: bool | None = None
 
@@ -142,6 +144,17 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         data = core.tasks.day_view(on_date)["data"]
         attach_work_progress(data, core.repository)
         return _envelope(True, "Day view", {**data, "timezone": core.timezone})
+
+    @api.get("/v2/day/planning-context")
+    def get_planning_context(x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.planning_context()
+            attach_work_progress(result["data"], core.repository)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(status_code=400, detail={"code": "PLANNING_CONTEXT_INVALID", "message": str(error)}) from error
+        return result
 
     @api.get("/v2/day/inbox")
     def get_inbox(
@@ -300,7 +313,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 result = None
             updates = {
                 field: getattr(body, field)
-                for field in ("start_time", "scheduled_date", "estimated_minutes", "title", "milestone_id", "starred")
+                for field in ("start_time", "scheduled_date", "estimated_minutes", "title", "milestone_id", "project_id", "notes", "starred")
                 if field in body.model_fields_set
             }
             

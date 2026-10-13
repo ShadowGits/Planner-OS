@@ -1,0 +1,23 @@
+/* Plain project backlog and a compact two-way project selector. */
+.project-segments { display:flex; gap:3px; padding:3px; background:var(--chip); border-radius:12px; margin:6px 0 10px; }
+.project-segments button { flex:1; min-width:0; min-height:38px; padding:6px 10px; border:0; border-radius:9px; background:transparent; color:var(--ink-2); font:inherit; font-size:13px; line-height:17px; cursor:pointer; }
+.project-segments button[aria-pressed="true"] { background:var(--bg); color:var(--ink); box-shadow:0 1px 3px #00000012; font-weight:650; }
+.project-loading {padding:8px;font-size:13px;color:var(--ink-2);}
+.inbox-view-toggle {display:flex;align-items:center;gap:4px;font-size:13px;white-space:nowrap;}
+.inbox-view-toggle span {font-size:11px;}
+.project-inbox-heading {display:flex;align-items:baseline;justify-content:space-between;}
+.project-inbox-heading h2 {font-size:19px;margin:8px 0;}
+.project-inbox-heading p,#project-inbox-empty {font-size:13px;color:var(--ink-2);}
+#project-inbox-list .todo-row {position:relative;display:flex;align-items:center;gap:8px;min-height:52px;margin:0;padding:4px 0;border-radius:0;background:transparent;box-shadow:none;border-bottom:1px solid var(--line);--ring:var(--ink-2);}
+.project-inbox-row .title {color:var(--ink)!important;}
+.project-inbox-row .star,.project-inbox-row .task-focus {color:var(--ink-2);background:transparent;}
+.project-inbox-row .ring {position:relative;flex-shrink:0;}
+.project-inbox-row .ring.checked {background:var(--ink);border-color:var(--ink);color:var(--bg);}
+.inbox-overdue {align-self:flex-start;font-size:11px;font-weight:650;color:var(--ink-2);}
+.task-suggestions {max-height:264px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:10px;margin:6px 0 12px;}
+.task-suggestion {display:flex;flex-direction:column;justify-content:center;width:100%;height:44px;padding:4px 12px;border:0;border-bottom:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:14px;text-align:left;cursor:pointer;}
+.task-suggestion:last-child {border-bottom:0;}
+.task-suggestion span {white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.task-suggestion small {font-size:11px;color:var(--ink-2);}
+.project-segments button:focus-visible,.task-suggestion:focus-visible {outline:2px solid var(--ink);outline-offset:-2px;}
+#sheet-projects {margin:0 0 10px;}
