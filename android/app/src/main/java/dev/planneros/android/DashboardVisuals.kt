@@ -157,10 +157,10 @@ internal fun recordDone(row:JSONObject)=row.optBoolean("done")||row.optBoolean("
             }
         }}
         if(risks.isNotEmpty()){item{DashboardHeading("Needs attention","Milestones that need a decision")}
-            items(risks){row->Surface(onClick={projects.firstOrNull{it.optString("id")==row.optString("project_id")}?.let(onProject)},color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(18.dp)){
-                Column(Modifier.padding(16.dp)){Row(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.Top){Icon(Icons.Rounded.Flag,null,tint=MaterialTheme.colorScheme.error,modifier=Modifier.size(24.dp));Text(row.optString("name"),fontSize=17.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))}
+            items(risks){row->Surface(onClick={onRecord(JSONObject(row.toString()).put("_section","milestones").put("id",row.optString("milestone_id")).put("health_status",row.optString("status")).put("health",JSONObject(row.toString())).put("done_tasks",row.optInt("done")).put("total_tasks",row.optInt("total")))},color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(18.dp)){
+                Column(Modifier.padding(16.dp)){Row(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.Top){Icon(Icons.Rounded.Flag,null,tint=milestoneHealthColor(row.optString("status")),modifier=Modifier.size(24.dp));Text(row.optString("name"),fontSize=17.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))}
                     Text(row.optString("project_name"),fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp,bottom=10.dp))
-                    DashboardBadge(humanStatus(row.optString("status"))+" · "+row.optInt("done")+" of "+row.optInt("total")+" done",attention=true)
+                    MilestoneProgress(JSONObject(row.toString()).put("health_status",row.optString("status")).put("health",JSONObject(row.toString())).put("done_tasks",row.optInt("done")).put("total_tasks",row.optInt("total")))
                 }
             }}
         }

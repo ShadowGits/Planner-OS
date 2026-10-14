@@ -53,6 +53,7 @@ class DayTaskCreate(BaseModel):
     notes: str | None = None
     parent_task_id: str | None = None
     project_id: str | None = None
+    milestone_id: str | None = None
 
 
 class DayTaskUpdate(BaseModel):
@@ -235,6 +236,14 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         core = _core()
         try:
             norm_date, norm_time = _normalize_spillover(body.date, body.start_time)
+            project_id = body.project_id
+            if body.milestone_id:
+                milestone = core.repository.get_row("milestones", body.milestone_id)
+                if milestone is None:
+                    raise PlannerCoreError("Milestone was not found in this workspace")
+                if project_id is not None and str(milestone.get("project_id")) != project_id:
+                    raise PlannerCoreError("The milestone belongs to a different project")
+                project_id = str(milestone["project_id"])
             result = core.tasks.create_task(
                 body.title,
                 scheduled_date=norm_date,
@@ -242,7 +251,8 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 estimated_minutes=body.estimated_minutes,
                 notes=body.notes,
                 parent_task_id=body.parent_task_id,
-                project_id=body.project_id,
+                project_id=project_id,
+                milestone_id=body.milestone_id,
             )
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(

@@ -495,3 +495,7 @@ For operations affecting real data, identify the exact tasks/events and authoriz
 - **Historical/partly obsolete:** [cli](cli.md), [mcp](mcp.md), [planning layer](planning_layer.md), [MVP3 deployment](mvp3_deployment.md), [dashboard wiring](dashboard_wiring.md), [ROADMAP](../ROADMAP.md). Verify source before following old architecture/endpoint instructions.
 
 When shipping a behavior change, update the relevant focused guide and this handoff's current behavior/known gaps. Keep deployed state separate from local committed state, device observations separate from mocks, and desired parity separate from implemented parity.
+
+### Android milestone detail workspace (1.0.17)
+
+See [android_milestone_details.md](android_milestone_details.md) for full-screen milestone task management, web health parity, app-key milestone writes, milestone-scoped paginated task DTOs, and persistent Dashboard cache behavior across mutations.

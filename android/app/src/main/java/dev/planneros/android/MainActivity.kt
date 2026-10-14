@@ -112,9 +112,10 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
     var showMilestones by rememberSaveable{mutableStateOf(false)}
     val dashRepo=remember{DashboardRepository(context)}
-    var milestonesList by remember{mutableStateOf<List<JSONObject>>(emptyList())}
+    var milestonesList by remember{mutableStateOf(dashRepo.cached(dashRepo.path("milestones"))?.dashboardObjects("rows").orEmpty())}
     var milestonesLoading by remember{mutableStateOf(false)}
     var milestonesError by remember{mutableStateOf<String?>(null)}
+    var milestonesRequestSerial by remember{mutableIntStateOf(0)}
     var inboxFilter by rememberSaveable{mutableStateOf("Open")}
     var replacement by remember{mutableStateOf<Task?>(null)};var deleteTarget by remember{mutableStateOf<Task?>(null)}
     var splitTarget by remember{mutableStateOf<Task?>(null)}
@@ -196,18 +197,25 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     }
     suspend fun refreshMilestones(force:Boolean=false){
         if(!repo.config.configured)return
+        val ticket=++milestonesRequestSerial;val generation=dashRepo.generation;val revision=Reminders.revision(context)
         milestonesLoading=milestonesList.isEmpty()
         try{
             val path=dashRepo.path("milestones")
-            val data=dashRepo.load(path,force)
-            val rows=data.optJSONArray("rows")?.let{arr->
-                (0 until arr.length()).mapNotNull{arr.optJSONObject(it)}
-            }?:emptyList()
+            dashRepo.cached(path)?.let{milestonesList=it.dashboardObjects("rows")}
+            val rows=mutableListOf<JSONObject>()
+            var offset=0
+            do {
+                val data=dashRepo.load(dashRepo.path("milestones",offset=offset),force)
+                if(generation!=dashRepo.generation||ticket!=milestonesRequestSerial||revision!=Reminders.revision(context))return
+                rows.addAll(data.dashboardObjects("rows"))
+                offset=if(data.has("next_offset")&&!data.isNull("next_offset"))data.getInt("next_offset")else -1
+            }while(offset>=0)
             milestonesList=rows
+            dashRepo.store(path,JSONObject().put("rows",org.json.JSONArray(rows)).put("next_offset",JSONObject.NULL),generation,revision)
             milestonesError=null
         }catch(cancel:CancellationException){throw cancel}catch(e:Exception){
-            milestonesError=e.message?:"Couldn't load milestones."
-        }finally{milestonesLoading=false}
+            if(generation==dashRepo.generation&&ticket==milestonesRequestSerial)milestonesError=e.message?:"Couldn't load milestones."
+        }finally{if(ticket==milestonesRequestSerial)milestonesLoading=false}
     }
     fun reconcile(){
         reconcileJob?.cancel()
@@ -403,7 +411,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 Column(Modifier.weight(1f).then(if(inbox||showMilestones)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectedIso=LocalDate.of(y,m+1,d).toString()},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
                     Text(if(showMilestones)"Milestones" else if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                     if(!inbox&&!showMilestones)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    else if(showMilestones)Text("${milestonesList.count{recordDone(it)}} of ${milestonesList.size} milestones finished",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if(showMilestones)Text("${milestonesList.count{milestoneIsComplete(it)}} of ${milestonesList.size} milestones finished",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if(!inbox&&!showMilestones)TextButton(onClick={selectedIso=today.toString();if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
                 IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{
@@ -450,9 +458,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     error=milestonesError,
                     modifier=Modifier.weight(1f),
                     onRefresh={scope.launch{refreshMilestones(true)}},
-                    onMilestoneClick={
-                        context.startActivity(Intent(context,DashboardActivity::class.java))
-                    }
+                    onMilestoneClick={row->context.startActivity(MilestoneActivity.intent(context,row))}
                 )
             }else if(inbox){
                 val visible=when(inboxFilter){"Overdue"->filteredInbox.filter{isOverdue(it,clock)};"Done"->projectDayTasks.filter{it.done};else->filteredInbox.filterNot{it.done}}
@@ -492,7 +498,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         }
     }
     if(settings)ConnectionSettings(repo,appearance,onAppearance,{settings=false},requestNotification,{
-        closeEditor();drafts.clear();day=null;backlog=repo.cachedInbox();planning=repo.cachedPlanningContext();inboxProjectId=null;connectionRevision++;scope.launch{refresh(false)}
+        closeEditor();drafts.clear();day=null;milestonesList=emptyList();milestonesRequestSerial++;backlog=repo.cachedInbox();planning=repo.cachedPlanningContext();inboxProjectId=null;connectionRevision++;scope.launch{refresh(false)}
     })
     if(adding||editor!=null)PlannerEditor(editor,selected,suggestedDate,suggestedTime,editor?.let{taskBusy(it)}?:false,recovery,
         planningProjects,projectAliases,suggestionRows,resolvedInboxProjectId,{task->schedule(task)},::closeEditor,{title,date,time,minutes,notes,projectId,projectExplicit->

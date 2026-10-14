@@ -34,23 +34,17 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /* ── Status colours ─────────────────────────────────────────── */
-private val StatusRed    = Color(0xFFCF4444)   // At risk / overdue
-private val StatusAmber  = Color(0xFFD4912E)   // Behind schedule
-private val StatusGreen  = Color(0xFF3A8E6A)   // On track
-private val StatusTeal   = Color(0xFF2F6B64)   // Done
-private val StatusGray   = Color(0xFF8896A4)   // No schedule / to-do
+private val StatusRed    = Color(0xFFEF4444)   // At risk / overdue
+private val StatusAmber  = Color(0xFFF59E0B)   // Behind schedule
+private val StatusGreen  = Color(0xFF10B981)   // On track
+private val StatusTeal   = Color(0xFF059669)   // Done
+private val StatusGray   = Color(0xFF9CA3AF)   // No schedule / to-do
 
 private val StatusRedBg    = Color(0x1ACF4444)
 private val StatusAmberBg  = Color(0x1AD4912E)
 private val StatusGreenBg  = Color(0x1A3A8E6A)
 
-private fun statusColor(status: String): Color = when (status.lowercase()) {
-    "red", "overdue" -> StatusRed
-    "amber" -> StatusAmber
-    "green", "on_track" -> StatusGreen
-    "done", "complete", "completed" -> StatusTeal
-    else -> StatusGray
-}
+private fun statusColor(status: String): Color = milestoneHealthColor(status)
 
 private fun statusBgColor(status: String): Color = when (status.lowercase()) {
     "red", "overdue" -> StatusRedBg
@@ -70,10 +64,9 @@ internal fun DayMilestonesView(
 ) {
     var selectedProject by rememberSaveable { mutableStateOf("All") }
     var showCompleted by rememberSaveable { mutableStateOf(false) }
-    var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val total = milestones.size
-    val done = milestones.count { recordDone(it) }
+    val done = milestones.count { milestoneIsComplete(it) }
     val active = total - done
     val totalTasks = milestones.sumOf { it.optInt("total_tasks") }
     val doneTasks = milestones.sumOf { it.optInt("done_tasks") }
@@ -81,9 +74,9 @@ internal fun DayMilestonesView(
     val taskPct = if (totalTasks > 0) (doneTasks * 100f / totalTasks) else 0f
 
     // Health counts
-    val redCount = milestones.count { !recordDone(it) && it.optString("status") in listOf("red", "overdue") }
-    val amberCount = milestones.count { !recordDone(it) && it.optString("status") == "amber" }
-    val greenCount = milestones.count { !recordDone(it) && it.optString("status") == "green" }
+    val redCount = milestones.count { !milestoneIsComplete(it) && milestoneHealthStatus(it) in listOf("red", "overdue") }
+    val amberCount = milestones.count { !milestoneIsComplete(it) && milestoneHealthStatus(it) == "amber" }
+    val greenCount = milestones.count { !milestoneIsComplete(it) && milestoneHealthStatus(it) == "green" }
     val otherActive = active - redCount - amberCount - greenCount
 
     val projects = remember(milestones) {
@@ -95,10 +88,10 @@ internal fun DayMilestonesView(
         milestones.groupBy { it.optString("project_name", "General") }
             .map { (name, items) ->
                 val pTotal = items.size
-                val pDone = items.count { recordDone(it) }
-                val pRed = items.count { !recordDone(it) && it.optString("status") in listOf("red", "overdue") }
-                val pAmber = items.count { !recordDone(it) && it.optString("status") == "amber" }
-                val pGreen = items.count { !recordDone(it) && it.optString("status") == "green" }
+                val pDone = items.count { milestoneIsComplete(it) }
+                val pRed = items.count { !milestoneIsComplete(it) && milestoneHealthStatus(it) in listOf("red", "overdue") }
+                val pAmber = items.count { !milestoneIsComplete(it) && milestoneHealthStatus(it) == "amber" }
+                val pGreen = items.count { !milestoneIsComplete(it) && milestoneHealthStatus(it) == "green" }
                 val pTasks = items.sumOf { it.optInt("total_tasks") }
                 val pDoneTasks = items.sumOf { it.optInt("done_tasks") }
                 ProjectHealth(name, pTotal, pDone, pRed, pAmber, pGreen, pTasks, pDoneTasks)
@@ -107,16 +100,16 @@ internal fun DayMilestonesView(
     }
 
     val activeMilestones = remember(milestones, selectedProject) {
-        milestones.filter { !recordDone(it) && (selectedProject == "All" || it.optString("project_name") == selectedProject) }
+        milestones.filter { !milestoneIsComplete(it) && (selectedProject == "All" || it.optString("project_name") == selectedProject) }
             .sortedWith(compareBy<JSONObject> {
-                when (it.optString("status").lowercase()) {
+                when (milestoneHealthStatus(it).lowercase()) {
                     "red", "overdue" -> 0; "amber" -> 1; "green" -> 2; else -> 3
                 }
             }.thenBy { it.nullString("target_date") ?: "9999-99-99" })
     }
 
     val completedMilestones = remember(milestones, selectedProject) {
-        milestones.filter { recordDone(it) && (selectedProject == "All" || it.optString("project_name") == selectedProject) }
+        milestones.filter { milestoneIsComplete(it) && (selectedProject == "All" || it.optString("project_name") == selectedProject) }
             .sortedByDescending { it.nullString("target_date") ?: "" }
     }
 
@@ -177,7 +170,7 @@ internal fun DayMilestonesView(
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             HealthLegend(StatusRed, "At risk", redCount)
-                            HealthLegend(StatusAmber, "Behind", amberCount)
+                            HealthLegend(StatusAmber, "Slipping", amberCount)
                             HealthLegend(StatusGreen, "On track", greenCount)
                             if (otherActive > 0) HealthLegend(StatusGray, "Other", otherActive)
                         }
@@ -266,8 +259,7 @@ internal fun DayMilestonesView(
             items(activeMilestones, key = { "active:${it.optString("id")}" }) { row ->
                 ColoredMilestoneCard(
                     row = row,
-                    expanded = expandedId == row.optString("id"),
-                    onToggle = { expandedId = if (expandedId == row.optString("id")) null else row.optString("id") }
+                    onToggle = { onMilestoneClick(row) }
                 )
             }
         }
@@ -300,7 +292,7 @@ internal fun DayMilestonesView(
 
             if (showCompleted) {
                 items(completedMilestones, key = { "completed:${it.optString("id")}" }) { row ->
-                    ColoredMilestoneCard(row = row, completed = true, expanded = false, onToggle = {})
+                    ColoredMilestoneCard(row = row, completed = true, onToggle = { onMilestoneClick(row) })
                 }
             }
         }
@@ -358,7 +350,7 @@ private fun ProjectHealthCard(ph: ProjectHealth) {
         ph.red > 0 -> StatusRed; ph.amber > 0 -> StatusAmber; ph.green > 0 -> StatusGreen; else -> StatusTeal
     }
     Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             // Color edge strip
             Box(Modifier.width(5.dp).fillMaxHeight().clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)).background(dominant))
             Column(Modifier.weight(1f).padding(14.dp)) {
@@ -383,7 +375,7 @@ private fun ProjectHealthCard(ph: ProjectHealth) {
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (ph.red > 0) StatusChip("${ph.red} at risk", StatusRed)
-                    if (ph.amber > 0) StatusChip("${ph.amber} behind", StatusAmber)
+                    if (ph.amber > 0) StatusChip("${ph.amber} slipping", StatusAmber)
                     if (ph.green > 0) StatusChip("${ph.green} on track", StatusGreen)
                 }
                 if (ph.totalTasks > 0) {
@@ -407,20 +399,18 @@ private fun StatusChip(text: String, color: Color) {
 
 /* ── Color-coded milestone card ─────────────────────── */
 @Composable
-private fun ColoredMilestoneCard(
+internal fun ColoredMilestoneCard(
     row: JSONObject,
     completed: Boolean = false,
-    expanded: Boolean = false,
     onToggle: () -> Unit = {}
 ) {
     val totalTasks = row.optInt("total_tasks")
     val doneTasks = row.optInt("done_tasks")
     val taskPct = if (totalTasks > 0) (doneTasks * 100f / totalTasks) else 0f
-    val status = row.optString("status", if (completed) "done" else "todo")
+    val status = milestoneHealthStatus(row)
     val projectName = row.optString("project_name", "General")
     val targetDateStr = row.nullString("target_date")
     val color = statusColor(status)
-    val bgTint = statusBgColor(status)
 
     val daysText = remember(targetDateStr) {
         targetDateStr?.let {
@@ -444,7 +434,7 @@ private fun ColoredMilestoneCard(
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth().alpha(if (completed) 0.65f else 1f)
     ) {
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             // ── Color status strip on left edge ──
             Box(
                 Modifier
@@ -468,14 +458,7 @@ private fun ColoredMilestoneCard(
                         Icon(Icons.Rounded.FolderOpen, null, tint = color, modifier = Modifier.size(15.dp))
                         Text(projectName, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    // Status badge with color
-                    Surface(color = color.copy(alpha = 0.15f), shape = RoundedCornerShape(8.dp)) {
-                        Text(
-                            humanStatus(status),
-                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                        )
-                    }
+                    MilestoneHealthChip(status)
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -523,22 +506,7 @@ private fun ColoredMilestoneCard(
                             )
                         }
 
-                        if (totalTasks > 0 && !completed) {
-                            Spacer(Modifier.height(6.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                LinearProgressIndicator(
-                                    progress = { (taskPct / 100f).coerceIn(0f, 1f) },
-                                    modifier = Modifier.weight(1f).height(4.dp),
-                                    color = color,
-                                    trackColor = color.copy(alpha = 0.15f)
-                                )
-                                Text(
-                                    "$doneTasks/$totalTasks",
-                                    fontSize = 11.sp, fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+
                     }
 
                     if (totalTasks > 0 && !completed) {
@@ -547,21 +515,11 @@ private fun ColoredMilestoneCard(
                     }
                 }
 
-                // Expanded details
-                AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
-                    Column(Modifier.padding(top = 12.dp)) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                        Spacer(Modifier.height(10.dp))
-                        DetailRow("Status", humanStatus(status), color)
-                        DetailRow("Project", projectName)
-                        if (!targetDateStr.isNullOrBlank()) DetailRow("Deadline", friendlyDate(targetDateStr))
-                        if (daysText != null) DetailRow("Time left", daysText, if (status in listOf("red", "overdue")) StatusRed else null)
-                        if (totalTasks > 0) DetailRow("Tasks", "$doneTasks of $totalTasks complete (${taskPct.toInt()}%)")
-                        row.nullString("description")?.takeIf { it.isNotBlank() }?.let {
-                            Spacer(Modifier.height(6.dp))
-                            Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
-                        }
-                    }
+                Spacer(Modifier.height(10.dp))
+                MilestoneProgress(row)
+                Row(Modifier.fillMaxWidth().padding(top=8.dp),verticalAlignment=Alignment.CenterVertically){
+                    Text("Open tasks & details",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
+                    Icon(Icons.Rounded.ChevronRight,"Open milestone",tint=color,modifier=Modifier.size(18.dp))
                 }
             }
         }

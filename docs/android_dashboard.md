@@ -15,3 +15,7 @@ Dashboard performs no preloading from Day. It owns two Android network workers, 
 Verification includes 68 passing Android unit tests and lint, 294 passing backend tests (one skipped), backend authentication/scoping/pagination tests, a blocked Dashboard request concurrent with a successful Day request, and emulator checks of Inbox completion, normal light mode and 320dp dark mode with 150% text. Day refreshed 3.02 seconds after an eight-second Books request began. Home, project queues, Week and funding use read-only snapshots of live data in the isolated emulator. Books, Study and the populated monthly-summary layouts use explicit fixtures; the corresponding empty or unavailable production states are not replaced. Live transaction-order and Day checks returned HTTP 200 without modifying production data.
 
 The backend deployment is built from the committed production source plus the native Dashboard route. The separately proposed PWA day-recovery changes and migration 0033 are not part of this deployment.
+
+## Milestone workspace update — Android 1.0.17
+
+Milestones now open a full native task-management workspace. Progress health uses the exact web calculation and status palette. Saved Dashboard pages survive task revisions and appear immediately while refreshing in the background. The Dashboard's milestone/task workspace supports bounded edits; the older general read-only limitation above applies to the other trackers. See [Android milestone details](android_milestone_details.md) for features, routes, cache behavior and verification limits.

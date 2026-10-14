@@ -117,6 +117,11 @@ private fun tabs(group:String,project:String?):List<Pair<String,String>> = when 
         else{group="Projects";project=row.nullString("id");projectName=row.optString("name","Project");subtab=0};query=""
     }
     fun showRecord(row:JSONObject){
+        val milestoneId=row.nullString("milestone_id")?:row.nullString("id")
+        if((section=="milestones"||row.optString("_section")=="milestones"||row.has("milestone_id")&&section=="overview")&&milestoneId!=null){
+            val seed=JSONObject(row.toString()).put("id",milestoneId)
+            context.startActivity(MilestoneActivity.intent(context,seed));return
+        }
         detailSerial+=1;val serial=detailSerial
         record=row;recordError=null;recordLoading=false
         val id=row.nullString("id")?:return

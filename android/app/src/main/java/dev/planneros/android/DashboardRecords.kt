@@ -128,11 +128,7 @@ private fun snippet(value:String)=Html.fromHtml(value,Html.FROM_HTML_MODE_COMPAC
     if(row.optDouble("target_amount")>0)LinearProgressIndicator(progress={(row.optDouble("saved_amount")/row.optDouble("target_amount")).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().padding(top=14.dp).height(7.dp),color=MaterialTheme.colorScheme.tertiary,trackColor=MaterialTheme.colorScheme.outlineVariant)
     row.nullString("deadline")?.let{RecordLabel("Target · "+friendlyDate(it))}
 }}
-@Composable private fun MilestoneRecord(row:JSONObject,onClick:()->Unit){RecordSurface(onClick){
-    Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){DeadlineStamp(row.optString("target_date"));Column(Modifier.weight(1f)){Text(rowTitle(row),fontSize=18.sp,fontWeight=FontWeight.SemiBold);RecordLabel(humanStatus(row.optString("status","todo")))}
-        if(row.optInt("total_tasks")>0)DashboardRing(row.optInt("done_tasks")*100f/row.optInt("total_tasks"))}
-    if(row.optInt("total_tasks")>0)RecordLabel(row.optInt("done_tasks").toString()+" of "+row.optInt("total_tasks")+" tasks finished")
-}}
+@Composable private fun MilestoneRecord(row:JSONObject,onClick:()->Unit){ColoredMilestoneCard(row,completed=milestoneIsComplete(row),onToggle=onClick)}
 @Composable private fun QuestionRecord(row:JSONObject,onClick:()->Unit){RecordSurface(onClick){
     Icon(Icons.Rounded.QuestionAnswer,null,tint=MaterialTheme.colorScheme.secondary,modifier=Modifier.size(26.dp))
     Text(row.optString("question"),fontSize=18.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=10.dp))
