@@ -28,4 +28,13 @@ class MilestoneTaskPolicyTest {
         assertEquals("no_date",milestoneRating(false,0,10,false,null))
         assertEquals("no_tasks",milestoneRating(false,0,0,true,1.0))
     }
+    @Test fun trackingStartsAtEarliestTaskRatherThanInsertionOrder(){
+        val later=task("first added",date="2026-10-20")
+        val earliest=task("later added",date="2026-10-05")
+        val dueOnly=task("due only").copy(dueDate="2026-10-10")
+        val child=task("session",date="2026-01-01").copy(parent="first added")
+        assertEquals("2026-10-05" to "2026-10-20",milestoneTaskSpan(listOf(later,earliest,dueOnly,child)))
+        assertEquals("2026-10-10" to "2026-10-20",milestoneTaskSpan(listOf(later,dueOnly)))
+        assertEquals(null to null,milestoneTaskSpan(listOf(task("undated"))))
+    }
 }

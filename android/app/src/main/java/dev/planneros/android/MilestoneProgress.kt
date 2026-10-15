@@ -71,9 +71,9 @@ internal fun recalculateMilestoneHealth(row:JSONObject,today:java.time.LocalDate
     val total=next.optInt("total_tasks");val done=next.optInt("done_tasks")
     val progress=if(total>0)done.toDouble()/total else 0.0
     fun date(value:String?)=value?.let{runCatching{java.time.LocalDate.parse(it)}.getOrNull()}
-    val target=date(next.nullString("target_date")?:health.nullString("target_date"))
-    val start=date(next.nullString("start_date")?:health.nullString("start_date"))?.takeIf{target==null||it<target}
-    val elapsed=if(target!=null&&start!=null)((java.time.temporal.ChronoUnit.DAYS.between(start,today).toDouble()/java.time.temporal.ChronoUnit.DAYS.between(start,target)).coerceIn(0.0,1.0))else null
+    val target=date(next.nullString("target_date")?:next.nullString("tracking_last_date"))
+    val start=date(next.nullString("tracking_start_date"))
+    val elapsed=if(target!=null&&start!=null&&start<target)((java.time.temporal.ChronoUnit.DAYS.between(start,today).toDouble()/java.time.temporal.ChronoUnit.DAYS.between(start,target)).coerceIn(0.0,1.0))else null
     val status=milestoneRating(recordDone(next),done,total,target!=null&&today>target,elapsed)
     health.put("status",status).put("progress",progress).put("done",done).put("total",total).put("elapsed",elapsed?:JSONObject.NULL)
         .put("start_date",start?.toString()?:JSONObject.NULL).put("target_date",target?.toString()?:JSONObject.NULL)

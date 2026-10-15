@@ -1638,9 +1638,8 @@ def test_milestone_health_leaves_out_finished_and_empty_milestones(services):
     assert all(r["milestone_id"] != empty["id"] for r in rows)
 
 
-def test_milestone_health_prefers_an_explicit_start_date(services):
-    """Without a start date the earliest task stands in, but an explicit one
-    wins — it is what makes the elapsed share meaningful."""
+def test_milestone_health_starts_at_first_task_instead_of_explicit_start(services):
+    """Manual milestone dates must not start the clock before its work starts."""
     tasks, projects, metrics, _ = services
     today = _today()
     project = projects.create_project("Explicit")["data"]["project"]
@@ -1657,8 +1656,37 @@ def test_milestone_health_prefers_an_explicit_start_date(services):
 
     row = _health_for(metrics, milestone["id"])
 
-    assert row["start_date"] == (today - timedelta(days=50)).isoformat()
-    assert row["elapsed"] == 0.5
+    assert row["start_date"] == today.isoformat()
+    assert row["elapsed"] == 0.0
+
+
+def test_milestone_tracking_start_follows_earliest_task_when_rescheduled(services):
+    tasks, projects, metrics, _ = services
+    today = _today()
+    project = projects.create_project("Task dates")["data"]["project"]
+    milestone = projects.add_milestone(project["id"], "Automatic start",
+        start_date=(today-timedelta(days=100)).isoformat(),
+        target_date=(today+timedelta(days=50)).isoformat())["data"]["milestone"]
+    later = tasks.create_task("Later", project_id=project["id"], milestone_id=milestone["id"],
+        scheduled_date=today.isoformat())["data"]["task"]
+    first = tasks.create_task("First", project_id=project["id"], milestone_id=milestone["id"],
+        scheduled_date=(today-timedelta(days=20)).isoformat())["data"]["task"]
+    assert _health_for(metrics, milestone["id"])["start_date"] == (today-timedelta(days=20)).isoformat()
+    tasks.update_task(first["id"], {"scheduled_date":(today+timedelta(days=10)).isoformat()})
+    assert _health_for(metrics, milestone["id"])["start_date"] == later["scheduled_date"]
+
+
+def test_undated_milestone_tasks_do_not_use_manual_start_for_tracking(services):
+    tasks, projects, metrics, _ = services
+    today = _today()
+    project = projects.create_project("Undated")["data"]["project"]
+    milestone = projects.add_milestone(project["id"], "No task dates",
+        start_date=(today-timedelta(days=50)).isoformat(),
+        target_date=(today+timedelta(days=50)).isoformat())["data"]["milestone"]
+    tasks.create_task("Unscheduled", project_id=project["id"], milestone_id=milestone["id"])
+    health = _health_for(metrics, milestone["id"])
+    assert health["start_date"] is None and health["elapsed"] is None
+    assert health["status"] == "no_date"
 
 
 def test_a_task_carries_its_projects_own_columns(services):

@@ -164,7 +164,7 @@ def test_native_milestone_health_matches_web_and_keeps_raw_status(client, native
     monkeypatch.setattr(native_dashboard, "datetime", Clock)
     insert, calls = native_records
     project = insert("projects", name="Germany")
-    milestone = insert("milestones", project_id=project["id"], name="Applications", start_date="2026-10-01", target_date="2026-10-20", status="in_progress", notes="All applications")
+    milestone = insert("milestones", project_id=project["id"], name="Applications", start_date="2026-09-01", target_date="2026-10-20", status="in_progress", notes="All applications")
     parent = insert("planner_tasks", title="Application", project_id=project["id"], milestone_id=milestone["id"], status="todo", scheduled_date="2026-10-01")
     insert("planner_tasks", title="Part one", project_id=project["id"], milestone_id=milestone["id"], parent_task_id=parent["id"], status="done")
     expected = MetricsService._milestone_health([milestone], [project], {milestone["id"]:{"done":0,"total":1,"first":date(2026,10,1),"last":date(2026,10,1)}}, date(2026,10,15))[0]
@@ -172,6 +172,8 @@ def test_native_milestone_health_matches_web_and_keeps_raw_status(client, native
     detail = client.get(f"/v2/native/dashboard?section=milestones&row_id={milestone['id']}", headers=APP_KEY).json()["data"]["record"]
     assert listed["health"] == detail["health"] == expected
     assert detail["health_status"] == "red"
+    assert detail["start_date"] == "2026-09-01"  # Saved metadata is retained.
+    assert detail["tracking_start_date"] == detail["health"]["start_date"] == "2026-10-01"
     assert detail["status"] == "in_progress"
     assert detail["total_tasks"] == 1 and detail["done_tasks"] == 0
     assert detail["project_name"] == "Germany" and detail["notes"] == "All applications"

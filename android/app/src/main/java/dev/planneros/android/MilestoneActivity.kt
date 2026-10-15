@@ -94,7 +94,11 @@ class MilestoneActivity:ComponentActivity(){
     fun updateMilestoneCounts(){
         val roots=rows.filter{it.nullString("parent_task_id")==null&&it.optString("status")!="skipped"}
         val next=JSONObject(milestone.toString())
-        if(rowsComplete)next.put("total_tasks",roots.size).put("done_tasks",roots.count{it.optString("status")=="done"||it.optBoolean("done")})
+        if(rowsComplete){
+            next.put("total_tasks",roots.size).put("done_tasks",roots.count{it.optString("status")=="done"||it.optBoolean("done")})
+            val span=milestoneTaskSpan(rows.map(::decode))
+            next.put("tracking_start_date",span.first?:JSONObject.NULL).put("tracking_last_date",span.second?:JSONObject.NULL)
+        }
         milestone=recalculateMilestoneHealth(next,LocalDate.now(ZoneId.of(zone)))
         dashboard.store(detailPath,JSONObject().put("record",milestone),generation)
         val listPath=dashboard.path("milestones")
@@ -234,7 +238,7 @@ class MilestoneActivity:ComponentActivity(){
                     }
                     MilestoneProgress(milestone,Modifier.fillMaxWidth().padding(top=10.dp))
                     val health=milestone.optJSONObject("health")
-                    Text("${friendlyDate(milestone.nullString("start_date")?:health?.nullString("start_date")).ifBlank{"No start date"}} → ${friendlyDate(milestone.nullString("target_date")?:health?.nullString("target_date")).ifBlank{"No deadline"}}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp))
+                    Text("${friendlyDate(milestone.nullString("tracking_start_date")).ifBlank{"No dated tasks"}} → ${friendlyDate(milestone.nullString("target_date")?:health?.nullString("target_date")).ifBlank{"No deadline"}}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp))
                     milestone.nullString("notes")?.let{Text(it,fontSize=15.sp,lineHeight=22.sp,modifier=Modifier.padding(top=12.dp))}
                     TextButton(enabled=!milestoneBusy,onClick={
                         if(generation!=repository.config.generation){exit();return@TextButton}
@@ -317,17 +321,17 @@ class MilestoneActivity:ComponentActivity(){
 }
 
 @Composable private fun MilestoneEditor(row:JSONObject,busy:Boolean,dismiss:()->Unit,save:(JSONObject)->Unit){
-    var name by rememberSaveable{mutableStateOf(row.optString("name"))};var start by rememberSaveable{mutableStateOf(row.nullString("start_date").orEmpty())}
+    var name by rememberSaveable{mutableStateOf(row.optString("name"))}
     var target by rememberSaveable{mutableStateOf(row.nullString("target_date").orEmpty())};var notes by rememberSaveable{mutableStateOf(row.nullString("notes").orEmpty())}
     var error by remember{mutableStateOf<String?>(null)}
     AlertDialog(onDismissRequest={if(!busy)dismiss()},title={Text("Milestone details")},text={Column(Modifier.verticalScroll(rememberScrollState())){
         OutlinedTextField(name,{name=it},label={Text("Name")},modifier=Modifier.fillMaxWidth())
-        OutlinedTextField(start,{start=it},label={Text("Start · YYYY-MM-DD")},modifier=Modifier.fillMaxWidth().padding(top=8.dp),singleLine=true)
+        Text("Starts with first task · "+friendlyDate(row.nullString("tracking_start_date")).ifBlank{"Not dated yet"},fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
         OutlinedTextField(target,{target=it},label={Text("Deadline · YYYY-MM-DD")},modifier=Modifier.fillMaxWidth().padding(top=8.dp),singleLine=true)
         OutlinedTextField(notes,{notes=it},label={Text("Notes")},modifier=Modifier.fillMaxWidth().padding(top=8.dp))
         error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
     }},confirmButton={TextButton(enabled=!busy,onClick={
-        if(name.isBlank()||name.length>300||listOf(start,target).any{it.isNotBlank()&&runCatching{LocalDate.parse(it)}.isFailure})error="Use a name and valid dates, or leave dates blank."
-        else save(JSONObject().put("name",name.trim()).put("start_date",start.takeIf{it.isNotBlank()}?:JSONObject.NULL).put("target_date",target.takeIf{it.isNotBlank()}?:JSONObject.NULL).put("notes",notes.takeIf{it.isNotBlank()}?:JSONObject.NULL))
+        if(name.isBlank()||name.length>300||target.isNotBlank()&&runCatching{LocalDate.parse(target)}.isFailure)error="Use a name and valid dates, or leave dates blank."
+        else save(JSONObject().put("name",name.trim()).put("target_date",target.takeIf{it.isNotBlank()}?:JSONObject.NULL).put("notes",notes.takeIf{it.isNotBlank()}?:JSONObject.NULL))
     }){Text(if(busy)"Saving…"else "Save")}},dismissButton={TextButton(enabled=!busy,onClick=dismiss){Text("Cancel")}})
 }

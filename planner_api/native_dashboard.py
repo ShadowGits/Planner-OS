@@ -78,6 +78,8 @@ def _milestone_details(core: PlannerCoreBundle, rows: list[dict[str, Any]]) -> N
         row.update(done_tasks=done, total_tasks=total, open_tasks=max(0, total-done),
                    completion_pct=round(done*100/total, 1) if total else 0,
                    project_name=names.get(str(row.get("project_id")), "General"),
+                   tracking_start_date=counts["first"].isoformat() if counts.get("first") else None,
+                   tracking_last_date=counts["last"].isoformat() if counts.get("last") else None,
                    health=rating,
                    health_status=rating["status"] if rating else "complete" if row.get("status")=="done" else "no_tasks")
 

@@ -12,3 +12,12 @@ internal fun milestoneRating(explicitDone:Boolean,done:Int,total:Int,late:Boolea
     elapsed==null->"no_date";elapsed-done.toDouble()/total>.25->"red"
     elapsed-done.toDouble()/total>.10->"amber";else->"green"
 }
+
+/** Root task dates match the server's milestone rollup; sessions do not double-count. */
+internal fun milestoneTaskSpan(tasks:List<Task>):Pair<String?,String?> {
+    val dates=tasks.filter{it.parent==null}.mapNotNull{task->
+        val value=task.date?:task.dueDate
+        value?.let{runCatching{java.time.LocalDate.parse(it).toString()}.getOrNull()}
+    }
+    return dates.minOrNull() to dates.maxOrNull()
+}

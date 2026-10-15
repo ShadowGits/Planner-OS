@@ -106,7 +106,11 @@ internal class DashboardRepository(private val context:Context){
                 val revision=Reminders.revision(context)
                 val previous=cached(path)
                 val refreshedWhileWaiting=(published[key]?:0L)!=observed
-                if((!force||refreshedWhileWaiting)&&previous!=null&&DashboardCachePolicy.fresh(
+                val taskDatesCompatible=if(path.contains("section=milestones")&&previous!=null){
+                    previous.optJSONObject("record")?.has("tracking_start_date")
+                        ?:previous.optJSONArray("rows")?.let{rows->(0 until rows.length()).all{rows.optJSONObject(it)?.has("tracking_start_date")==true}}?:false
+                }else true
+                if((!force||refreshedWhileWaiting)&&taskDatesCompatible&&previous!=null&&DashboardCachePolicy.fresh(
                     previous.optLong("_saved_at"),System.currentTimeMillis(),previous.optLong("_revision",-1L),revision,previous.optBoolean("_dirty")
                 ))return@withLock previous
                 val data=transport.request("GET",path,dispatcher=network).getJSONObject("data")
