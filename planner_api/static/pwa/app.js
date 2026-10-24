@@ -1053,7 +1053,8 @@
     openEdit(task);
     $("new-date").value = iso(date);
     $("new-time").value = minToTime(candidate);
-    $("new-time").focus();
+    window.PlannerTimeEntry?.sync();
+    window.PlannerTimeEntry?.focus();
   }
 
   /* ---------- add / edit sheet ---------- */
@@ -1074,6 +1075,7 @@
     $("new-title").disabled = false;
     $("new-date").value = iso(state.selected);
     $("new-time").value = prefillMin != null ? minToTime(prefillMin) : "";
+    window.PlannerTimeEntry?.sync();
     setDuration(30);
     openSheetEl();
     window.PlannerProjects?.openEditor(null);
@@ -1093,6 +1095,7 @@
     $("new-title").disabled = false;
     $("new-date").value = task.scheduled_date || iso(state.selected);
     $("new-time").value = task.start_time ? task.start_time.slice(0, 5) : "";
+    window.PlannerTimeEntry?.sync();
     setDuration(task.estimated_minutes || 30);
     refreshSheetStar(task);
     openSheetEl();
@@ -1176,6 +1179,7 @@
   });
 
   function closeSheet() {
+    window.PlannerTimeEntry?.close();
     $("sheet").classList.add("hidden");
     $("sheet-backdrop").classList.add("hidden");
     state.editing = null;
@@ -1193,7 +1197,7 @@
     if (e.key === "Escape") { e.preventDefault(); closeSheet(); return; }
     if (e.key !== "Tab") return;
     const controls = [...$("sheet").querySelectorAll("button, input")]
-      .filter((el) => !el.disabled && !el.closest(".hidden"));
+      .filter((el) => !el.disabled && !el.hidden && el.tabIndex!==-1 && !el.closest(".hidden"));
     const first = controls[0], last = controls.at(-1);
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
@@ -1217,6 +1221,7 @@
     if (e.target.disabled) return;
     const title = $("new-title").value.trim();
     if (!title) return;
+    if(window.PlannerTimeEntry?.validate()===false)return;
     e.target.disabled = true;
     const time = $("new-time").value || null;
     const dateVal = $("new-date").value || iso(state.selected);

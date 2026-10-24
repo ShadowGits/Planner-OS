@@ -1,7 +1,6 @@
 package dev.planneros.android
 
 import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -86,10 +85,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
             }
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(date,{date=it},label={Text("Date · YYYY-MM-DD")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),trailingIcon={IconButton(onClick={val d=runCatching{LocalDate.parse(date)}.getOrDefault(selected);DatePickerDialog(pickerContext(c,dark),{_,y,m,day->date=LocalDate.of(y,m+1,day).toString()},d.year,d.monthValue-1,d.dayOfMonth).show()}){Icon(Icons.Rounded.CalendarMonth,"Choose task date")}})
-            OutlinedTextField(time,{time=it},label={Text("Start time · HH:mm")},supportingText={Text("Leave blank for Inbox")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Ascii),modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp),trailingIcon={Row{
-                if(time.isNotEmpty())IconButton(onClick={time=""}){Icon(Icons.Rounded.Close,"Move task to Inbox")}
-                IconButton(onClick={val parts=time.split(":");TimePickerDialog(pickerContext(c,dark),{_,h,m->time="%02d:%02d".format(h,m)},parts.firstOrNull()?.toIntOrNull()?.coerceIn(0,23)?:9,parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0,59)?:0,android.text.format.DateFormat.is24HourFormat(c)).show()}){Icon(Icons.Rounded.Schedule,"Choose task time")}
-            }})
+            TaskTimeField(time,{time=it},enabled=!busy)
             Text("Duration",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)){
                 listOf(15,30,45,60,90,120).forEach{value->FilterChip(selected=minutes.toIntOrNull()==value,onClick={minutes=value.toString()},label={Text(durationLabel(value))})}
@@ -98,10 +94,10 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
             OutlinedTextField(notes,{notes=it},label={Text("Notes (optional)")},modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp))
             validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp,modifier=Modifier.padding(top=7.dp))}
             Button(enabled=!busy,onClick={
-                val parsed=runCatching{LocalDate.parse(date)}.getOrNull();val duration=minutes.toIntOrNull()
+                val parsed=runCatching{LocalDate.parse(date)}.getOrNull();val duration=minutes.toIntOrNull();val startTime=normalizeTaskTime(time)
                 if(task==null&&resolvedProjectId==null)validation="Choose a project. Connect once if your projects have not loaded yet."
-                else if(title.isBlank()||title.length>300||parsed==null||duration==null||duration !in 1..1440||!(time.isBlank()||Regex("([01][0-9]|2[0-3]):[0-5][0-9]").matches(time)))validation="Enter a task name, valid date, 1–1440 minutes and a time such as 09:30."
-                else save(title.trim(),parsed,time.takeIf{it.isNotBlank()},duration,notes.takeIf{it.isNotBlank()},resolvedProjectId,projectExplicit)
+                else if(title.isBlank()||title.length>300||parsed==null||duration==null||duration !in 1..1440||startTime==null)validation="Enter a task name, valid date, 1–1440 minutes and a 24-hour time such as 14:30."
+                else save(title.trim(),parsed,startTime.takeIf{it.isNotBlank()},duration,notes.takeIf{it.isNotBlank()},resolvedProjectId,projectExplicit)
             },modifier=Modifier.fillMaxWidth().padding(top=14.dp).height(48.dp),shape=RoundedCornerShape(14.dp)){Text(if(busy)"Saving…" else if(task==null)"Add to day" else "Save")}
             task?.let{t->
                 TextButton(enabled=!busy,onClick={star(t)},modifier=Modifier.fillMaxWidth()){Icon(if(t.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,null);Text(if(t.starred)" One of today's wins" else " Mark as one of today's wins")}

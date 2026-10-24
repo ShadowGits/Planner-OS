@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="focus-timer.css?v=1">
   <link rel="stylesheet" href="work-log.css?v=1">
   <link rel="stylesheet" href="timer-settings.css?v=1">
+  <link rel="stylesheet" href="time-entry.css?v=1">
   <link rel="stylesheet" href="project-inbox.css?v=1">
 </head>
 <body>
@@ -96,9 +97,10 @@
       <label class="sheet-label">Date
         <input id="new-date" type="date">
       </label>
-      <label class="sheet-label">Start
-        <input id="new-time" type="time">
-      </label>
+      <fieldset class="time-entry"><legend>Start time · 24-hour</legend>
+        <input id="new-time" type="time" hidden tabindex="-1" aria-hidden="true">
+        <div id="task-time-control"></div>
+      </fieldset>
       <label class="sheet-label">Length
         <div class="dur-wrapper" style="display:flex; flex-direction:column; gap:12px;">
           <div id="dur-chips" class="chips">
@@ -130,6 +132,7 @@
   <script src="focus-timer.js?v=2"></script>
   <script src="work-log.js?v=2"></script>
   <script src="project-inbox.js?v=1"></script>
-  <script src="app.js?v=15"></script>
+  <script src="time-entry.js?v=1"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

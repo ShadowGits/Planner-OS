@@ -1,0 +1,19 @@
+.time-entry { border:0; padding:0; margin:0; flex:1 1 100%; min-width:0; }
+.time-entry legend { padding:0; margin-bottom:8px; font-size:12px; font-weight:700; color:var(--ink-2); }
+.time-entry-fields { display:flex; gap:12px; }
+.time-entry-segment { flex:1; min-width:0; }
+.time-entry-segment label { display:block; margin-bottom:5px; font-size:13px; color:var(--ink-2); }
+.time-entry-input { display:flex; align-items:stretch; background:var(--chip); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.time-entry-input:focus-within { outline:2px solid var(--wine); outline-offset:1px; }
+.sheet .time-entry-input input { border:0; border-radius:0; padding:10px 12px; min-height:48px; width:100%; min-width:0; background:transparent; font-family:inherit; font-size:20px; font-weight:600; line-height:1.3; font-variant-numeric:tabular-nums; }
+.time-entry-input input[aria-invalid=true] { box-shadow:inset 0 -2px #b13a3a; }
+.time-entry-input button { border:0; padding:0; min-width:48px; background:transparent; color:var(--ink); font-size:24px; cursor:pointer; }
+.time-entry-clear { min-height:44px; border:0; background:transparent; color:var(--wine); padding:4px 0; font:inherit; font-size:14px; cursor:pointer; }
+.time-entry-clear:disabled { color:var(--ink-2); cursor:default; }
+.time-entry-help { margin:0; font-size:12px; line-height:1.5; color:var(--ink-2); }
+.time-entry-help.time-entry-error { color:#b13a3a; }
+.time-entry-options { position:fixed; z-index:1000; overflow-y:auto; overscroll-behavior:contain; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--ink); box-shadow:0 8px 28px #0003; padding:4px; box-sizing:border-box; }
+.time-entry-options[hidden] { display:none; }
+.time-entry-options button { display:block; width:100%; min-height:44px; padding:8px 12px; text-align:left; border:0; border-radius:6px; background:transparent; color:inherit; font:600 18px/1.3 system-ui,sans-serif; font-variant-numeric:tabular-nums; cursor:pointer; }
+.time-entry-options button[aria-selected=true] { background:var(--wine); color:#fff; }
+@media (prefers-reduced-motion:reduce) { .time-entry-options { scroll-behavior:auto; } }
