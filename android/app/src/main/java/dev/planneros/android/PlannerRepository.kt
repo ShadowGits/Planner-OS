@@ -9,6 +9,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -16,6 +22,7 @@ import java.net.URI
 import java.net.URL
 import java.security.KeyStore
 import java.time.LocalDate
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -100,8 +107,10 @@ class PlannerRepository(private val context: Context) {
         val mutations = MutationCoordinator()
         private val cacheLock = Any()
         private val planningMutex=Mutex()
-        private var mutationRevision = 0L
-        private var activeSnapshotWrites = 0
+        private val mutationRevision = AtomicLong(0L)
+        private val mutationStateLock=Any()
+        @Volatile private var activeSnapshotWrites = 0
+        val pendingSnapshots=MutableStateFlow(0)
         private val pendingCacheKeys = mutableSetOf<String>()
         private var pendingInboxGeneration:Long?=null
         private var pendingPlanningGeneration:Long?=null
@@ -111,7 +120,7 @@ class PlannerRepository(private val context: Context) {
     private val inboxCache=context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE)
     private val planningCache=context.getSharedPreferences("planning-cache",Context.MODE_PRIVATE)
     private fun invalidateDays() = synchronized(cacheLock) {
-        mutationRevision++
+        mutationRevision.incrementAndGet()
         val key="${config.generation}:planning"
         planningCache.getString(key,null)?.let{raw->runCatching{JSONObject(raw)}.getOrNull()?.let{
             planningCache.edit().putString(key,it.put("_dirty",true).toString()).apply()
@@ -131,13 +140,14 @@ class PlannerRepository(private val context: Context) {
         val data=cache.getString("${config.generation}:$date",null)?.let{runCatching{JSONObject(it)}.getOrNull()}?:return false
         return !data.optBoolean("_dirty")&&!data.optBoolean("_pending")&&System.currentTimeMillis()-data.optLong("_saved_at",0) in 0..ttlMillis
     }
-    fun beginSnapshotWrite()=synchronized(cacheLock){activeSnapshotWrites++}
-    fun endSnapshotWrite()=synchronized(cacheLock){activeSnapshotWrites=(activeSnapshotWrites-1).coerceAtLeast(0)}
-    fun hasPendingSnapshots()=synchronized(cacheLock){activeSnapshotWrites>0}
+    fun beginSnapshotWrite()=synchronized(mutationStateLock){mutationRevision.incrementAndGet();activeSnapshotWrites++;pendingSnapshots.value=activeSnapshotWrites}
+    fun endSnapshotWrite()=synchronized(mutationStateLock){activeSnapshotWrites=(activeSnapshotWrites-1).coerceAtLeast(0);pendingSnapshots.value=activeSnapshotWrites}
+    fun hasPendingSnapshots()=activeSnapshotWrites>0
     fun confirmedCached(date:LocalDate,ttlMillis:Long=10*60*1000L):Day? = synchronized(cacheLock){
         if(!isFresh(date,ttlMillis))null else cached(date)?.copy(cached=false,alarmRevision=Reminders.revision(context),connectionGeneration=config.generation)
     }
     fun confirmSnapshots()=synchronized(cacheLock){
+        if(activeSnapshotWrites>0)return@synchronized
         val edit=cache.edit()
         pendingCacheKeys.filter{it.startsWith("${config.generation}:")}.forEach{key->
             val data=runCatching{JSONObject(cache.getString(key,null)!!)}.getOrNull()?:return@forEach
@@ -165,19 +175,21 @@ class PlannerRepository(private val context: Context) {
         val key="${config.generation}:inbox"
         inboxCache.getString(key,null)?.let{raw->runCatching{JSONObject(raw)}.getOrNull()?.let{inboxCache.edit().putString(key,it.put("_dirty",true).toString()).apply()}}
     }
-    fun saveSnapshot(before:Day,after:Day)=synchronized(cacheLock){
-        mutationRevision++
+    fun saveSnapshot(before:Day,after:Day,expectedGeneration:Long=config.generation)=synchronized(cacheLock){
+        if(config.generation!=expectedGeneration)return@synchronized
+        mutationRevision.incrementAndGet()
         val generation=config.generation
         val views=cache.all.keys.filter{it.startsWith("$generation:")}.mapNotNull{key->
             runCatching{Day.from(JSONObject(cache.getString(key,null)!!),true)}.getOrNull()
         }.associateBy{it.date}.toMutableMap()
-        views.putIfAbsent(before.date,before)
+        val projected=DayCachePolicy.project(views,before,after)
         val edit=cache.edit()
-        views.values.forEach{view->
+        projected.values.forEach{view->
             val key="$generation:${view.date}"
+            if(views[view.date]==view)return@forEach
             pendingCacheKeys.add(key)
             val previous=cache.getString(key,null)?.let{runCatching{JSONObject(it)}.getOrNull()}
-            edit.putString(key,encodeDay(projectChanges(view,before,after)).put("_pending",true).put("_saved_at",previous?.optLong("_saved_at",0)?:0).put("_dirty",previous?.optBoolean("_dirty")?:false).toString())
+            edit.putString(key,encodeDay(view).put("_pending",true).put("_saved_at",previous?.optLong("_saved_at",0)?:0).put("_dirty",previous?.optBoolean("_dirty")?:true).toString())
         }
         edit.apply()
         val inboxKey="$generation:inbox"
@@ -281,11 +293,11 @@ class PlannerRepository(private val context: Context) {
                     return@withContext PlanningContext.from(data)
             }
             check(activeSnapshotWrites==0){"Plan changed while refreshing. Refresh task suggestions again."}
-            mutationRevision
+            mutationRevision.get()
         }
         val data=request("GET","/v2/day/planning-context").getJSONObject("data")
         synchronized(cacheLock){
-            check(PlanningCachePolicy.acceptRefresh(generation,config.generation,revision,mutationRevision,activeSnapshotWrites>0)){
+            check(PlanningCachePolicy.acceptRefresh(generation,config.generation,revision,mutationRevision.get(),activeSnapshotWrites>0)){
                 "Plan changed while refreshing. Refresh task suggestions again."
             }
             planningCache.edit().putString(key,data.put("_saved_at",System.currentTimeMillis()).toString()).apply()
@@ -302,11 +314,11 @@ class PlannerRepository(private val context: Context) {
                     return@withContext Day.from(data).copy(connectionGeneration=generation)
             }
         }
-        val revision=synchronized(cacheLock){mutationRevision}
+        val revision=mutationRevision.get()
         val data=request("GET","/v2/day/inbox").getJSONObject("data")
         synchronized(cacheLock){
             check(config.generation==generation){"Connection changed. Refresh the current account."}
-            check(revision==mutationRevision){"Plan changed while refreshing. Refresh Inbox again."}
+            check(revision==mutationRevision.get()&&activeSnapshotWrites==0){"Plan changed while refreshing. Refresh Inbox again."}
             inboxCache.edit().putString(key,data.put("_saved_at",System.currentTimeMillis()).toString()).apply()
         }
         Day.from(data).copy(connectionGeneration=generation)
@@ -314,16 +326,26 @@ class PlannerRepository(private val context: Context) {
     suspend fun day(date: LocalDate): Day = withContext(Dispatchers.IO) {
         val generation = config.generation
         val alarmRevision = Reminders.revision(context)
-        val cacheRevision = synchronized(cacheLock) { mutationRevision }
+        val cacheRevision = mutationRevision.get()
         val data=request("GET","/v2/day?date=$date").getJSONObject("data")
         check(config.generation == generation) { "Connection changed. Refresh the current account." }
         synchronized(cacheLock) {
-            check(cacheRevision == mutationRevision) { "Plan changed while refreshing. Refresh this day again." }
+            if(cacheRevision!=mutationRevision.get()||activeSnapshotWrites>0)throw DayRefreshSuperseded()
             cache.edit().putString("$generation:$date",data.put("_saved_at",System.currentTimeMillis()).toString()).apply()
         }
         TimelineWidget.cacheChanged(context)
         Day.from(data).copy(alarmRevision=alarmRevision,connectionGeneration=generation)
     }
+    /** Neighbouring days warm independently after the selected day has painted. */
+    suspend fun warmDays(center:LocalDate)=withContext(Dispatchers.IO){coroutineScope {
+        val generation=config.generation
+        val slots=Semaphore(2)
+        listOf(-1L,1L,-2L,2L,-3L,3L).forEach{offset->launch{slots.withPermit{
+            val date=center.plusDays(offset)
+            if(config.generation!=generation||hasPendingSnapshots()||isFresh(date))return@withPermit
+            try{day(date)}catch(cancel:CancellationException){throw cancel}catch(_:Exception){/* Keep every saved page offline. */}
+        }}}
+    }}
     suspend fun patch(task: Task,body: JSONObject){
         request("PATCH","/v2/day/tasks/${java.net.URLEncoder.encode(task.id,"UTF-8")}",body)
         if(task.parent!=null&&body.has("done"))markPropagation(task)
@@ -338,7 +360,7 @@ class PlannerRepository(private val context: Context) {
         catch(error: PlannerHttpException) { if(error.statusCode != 404) throw error; Reminders.cancelTask(context,task.id); invalidateDays() }
         if(TimerStore.read(context)?.taskId == task.id) TimerStore.reset(context)
     }
-    suspend fun split(task: Task) {
+    suspend fun split(task: Task):JSONObject {
         require(!task.habit&&!task.done&&task.remainingSeconds>=2){"Choose an unfinished task with remaining work."}
         val store=context.getSharedPreferences("split-outbox",Context.MODE_PRIVATE)
         val key="${config.generation}:${task.id}"
@@ -348,8 +370,9 @@ class PlannerRepository(private val context: Context) {
             .put("first_seconds",(task.remainingSeconds+1)/2).put("expected_remaining",task.remainingSeconds)
         check(store.edit().putString(key,body.toString()).commit()){"Split couldn't be saved on this device."}
         try{
-            request("POST","/v2/day/tasks/${java.net.URLEncoder.encode(task.id,"UTF-8")}/split",body)
+            val result=request("POST","/v2/day/tasks/${java.net.URLEncoder.encode(task.id,"UTF-8")}/split",body).getJSONObject("data")
             store.edit().remove(key).commit();markPropagation(task)
+            return result
         }catch(e:PlannerHttpException){
             if(e.statusCode in listOf(400,404))store.edit().remove(key).commit()
             throw e
