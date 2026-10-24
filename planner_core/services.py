@@ -2226,74 +2226,50 @@ class ReminderService:
         due.extend(self._event_reminders(current, sent_today))
         return due
 
-    # Two reminders per timed item today: one 30 minutes ahead (🟡) and one at
-    # 5 minutes to go (🟢). Each fires once — the dedup key is the item and the
-    # kind for the day. The cron must run often enough to catch the windows;
-    # every five minutes keeps the 5-minute one on time.
-    LEAD_YELLOW = 30
-    LEAD_GREEN = 5
+    # One task alert, ten minutes before start. The scheduler checks each
+    # minute; a bounded one-minute grace catches delivery jitter without
+    # bringing back the old five-minute or starting-now alerts.
+    TASK_LEAD_MINUTES = 10
+    DELIVERY_GRACE_MINUTES = 1
 
     def _event_reminders(self, current: datetime, sent_today: set[str]) -> list[dict[str, Any]]:
         today = current.date()
-        now_min = current.hour * 60 + current.minute
+        dates = [today]
+        # A 00:05 task needs its reminder at 23:55 the previous day.
+        if current.hour == 23 and current.minute >= 50:
+            dates.append(today + timedelta(days=1))
         out: list[dict[str, Any]] = []
-        try:
-            items = self.tasks.timed_items(today)
-        except Exception as error:
-            # Still swallowed, so one bad read cannot stop the daily digests
-            # going out — but it is no longer invisible. Without this line a
-            # break in here looked exactly like a quiet day: no reminders, no
-            # error, nothing to find.
-            logger.error("Per-event reminders skipped, timed_items failed: %s", error)
-            return out
-        for item in items:
-            if item.get("done"):
+        for task_date in dates:
+            try:
+                items = self.tasks.timed_items(task_date)
+            except Exception as error:
+                logger.error("Per-event reminders skipped, timed_items failed: %s", error)
                 continue
-            start = item.get("start_time")
-            if not start:
-                continue
-            hh, mm = (int(x) for x in str(start).split(":")[:2])
-            if hh >= 24:      # a small-hours spillover slot; skip the edge case
-                continue
-            until = hh * 60 + mm - now_min
-            clock = f"{hh:02d}:{mm:02d}"
-            title = item.get("title", "Task")
-            item_id = str(item.get("id"))
-            tag = f"event-{item_id}"
-
-            # The subject goes in the title, not the body. A phone shows the
-            # title first and loudest, and often only that — "🟡 In 30 minutes"
-            # on its own says nothing about which thing, so it reads as noise
-            # and gets swiped away.
-            minutes = item.get("estimated_minutes")
-            body = f"Starts at {clock}" + (f" · {minutes} min" if minutes else "")
-
-            yellow = f"event30:{item_id}"
-            if self.LEAD_GREEN < until <= self.LEAD_YELLOW and yellow not in sent_today:
-                # Rounded to the nearest five so it reads as a round number
-                # rather than "in 27 minutes"; the cron's own five minute step
-                # means this almost always lands on the full lead time.
-                lead = max(5, round(until / 5) * 5)
+            for item in items:
+                if item.get("done") or not item.get("start_time"):
+                    continue
+                try:
+                    hh, mm = (int(x) for x in str(item["start_time"]).split(":")[:2])
+                    if not (0 <= hh < 24 and 0 <= mm < 60):
+                        continue
+                    start = datetime.combine(task_date, time(hh, mm), current.tzinfo)
+                except (TypeError, ValueError):
+                    continue
+                until = (start.timestamp() - current.timestamp()) / 60
+                if not self.TASK_LEAD_MINUTES - self.DELIVERY_GRACE_MINUTES <= until <= self.TASK_LEAD_MINUTES:
+                    continue
+                item_id = str(item["id"])
+                kind = f"event10:{item_id}"
+                if kind in sent_today:
+                    continue
+                title = " ".join(str(item.get("title") or "Task").split())
+                minutes = item.get("estimated_minutes")
                 out.append({
-                    "kind": yellow,
-                    "title": f"🟡 IN {lead} MINUTES : {title}",
-                    "message": body,
+                    "kind": kind,
+                    "title": title,
+                    "message": f"Starts in 10 min · {hh:02d}:{mm:02d}" + (f" · {minutes} min" if minutes else ""),
                     "url": "/app/",
-                    "tag": tag,
-                })
-            green = f"event5:{item_id}"
-            if -self.LEAD_GREEN <= until <= self.LEAD_GREEN and green not in sent_today:
-                headline = (
-                    f"🟢 STARTING NOW : {title}"
-                    if until <= 1
-                    else f"🟢 IN {until} MINUTES : {title}"
-                )
-                out.append({
-                    "kind": green,
-                    "title": headline,
-                    "message": body,
-                    "url": "/app/",
-                    "tag": tag,
+                    "tag": f"event-{item_id}",
                 })
         return out
 

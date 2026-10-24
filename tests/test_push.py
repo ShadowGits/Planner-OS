@@ -135,6 +135,7 @@ def test_push_redirects_are_disabled(fake_pywebpush):
 
 
 @pytest.mark.parametrize(("headline", "expected_body"), [
+    ("🟡 IN 10 MINUTES : Study German", "Starts in 10 min · 09:00 · 45 min"),
     ("🟡 IN 30 MINUTES : Study German", "Starts in 30 min · 09:00 · 45 min"),
     ("🟢 IN 5 MINUTES : Study German", "Starts in 5 min · 09:00 · 45 min"),
     ("🟢 STARTING NOW : Study German", "Starting now · 09:00 · 45 min"),

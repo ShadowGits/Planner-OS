@@ -604,42 +604,39 @@ def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
     assert "Write SOP" in nudge[0]["message"]
 
 
-def test_event_reminders_fire_at_30_and_5_minutes_once_each(services) -> None:
+def test_event_reminders_fire_only_ten_minutes_before_and_keep_task_name_first(services) -> None:
     tasks, _, _, reminders = services
     local = _today()
-    tasks.create_task("Dentist", scheduled_date=local.isoformat(), start_time="15:00")
+    task = tasks.create_task("Dentist — discuss the complete treatment plan", scheduled_date=local.isoformat(), start_time="15:00")["data"]["task"]
+    def at(hour, minute, second=0):
+        return datetime(local.year, local.month, local.day, hour, minute, second, tzinfo=ZoneInfo(TZ))
+    due = reminders._event_reminders(at(14, 50), set())
+    assert len(due) == 1
+    assert due[0]["kind"] == f"event10:{task['id']}"
+    assert due[0]["title"] == task["title"]
+    assert due[0]["message"].startswith("Starts in 10 min · 15:00")
+    assert due[0]["tag"] == f"event-{task['id']}"
+    assert reminders._event_reminders(at(14, 50, 30), set())
+    for hour, minute in [(14, 30), (14, 49), (14, 52), (14, 55), (15, 0), (15, 5)]:
+        assert reminders._event_reminders(at(hour, minute), set()) == []
+    sent={due[0]["kind"]}
+    assert reminders._event_reminders(at(14, 50), sent) == []
+    assert reminders._event_reminders(at(14, 51), sent) == []
 
-    def at(hour, minute):
-        return datetime(local.year, local.month, local.day, hour, minute, tzinfo=ZoneInfo(TZ))
 
-    # 14:30 — exactly 30 minutes ahead → the yellow reminder, not the green one.
-    due = reminders._event_reminders(at(14, 30), set())
-    assert [d["kind"].split(":")[0] for d in due] == ["event30"]
-    # The task's name belongs in the title: a phone shows that line first and
-    # often only that, so "In 30 minutes" alone says nothing worth opening.
-    assert due[0]["title"] == "🟡 IN 30 MINUTES : Dentist"
-    assert "15:00" in due[0]["message"]
-
-    # 14:57 — inside 5 minutes → the green reminder.
-    green = reminders._event_reminders(at(14, 57), set())
-    assert [d["kind"].split(":")[0] for d in green] == ["event5"]
-    assert green[0]["title"] == "🟢 IN 3 MINUTES : Dentist"
-
-    # Both warnings for one task carry the same tag, so the second replaces the
-    # first on the phone rather than stacking up beside it.
-    assert due[0]["tag"] == green[0]["tag"]
-
-    # At the hour itself there is nothing left to count down to.
-    starting = reminders._event_reminders(at(15, 0), set())
-    assert starting[0]["title"] == "🟢 STARTING NOW : Dentist"
-
-    # Already recorded for today → never fires twice.
-    sent = {due[0]["kind"], green[0]["kind"]}
-    assert reminders._event_reminders(at(14, 30), sent) == []
-    assert reminders._event_reminders(at(14, 57), sent) == []
-
-    # Well before (an hour out) → nothing yet.
-    assert reminders._event_reminders(at(13, 0), set()) == []
+def test_ten_minute_reminder_crosses_midnight_and_supports_exact_minutes(services) -> None:
+    tasks, _, _, reminders = services
+    local = _today()
+    next_day = local + timedelta(days=1)
+    task=tasks.create_task("Night reading", scheduled_date=next_day.isoformat(), start_time="00:05")["data"]["task"]
+    now=datetime(local.year,local.month,local.day,23,55,tzinfo=ZoneInfo(TZ))
+    due=reminders._event_reminders(now,set())
+    assert len(due)==1 and due[0]["kind"]==f"event10:{task['id']}"
+    assert "00:05" in due[0]["message"]
+    assert reminders._event_reminders(now,{due[0]["kind"]})==[]
+    tasks.create_task("Exact minute",scheduled_date=local.isoformat(),start_time="14:17")
+    exact=reminders._event_reminders(now.replace(hour=14,minute=7),set())
+    assert [row["title"] for row in exact]==["Exact minute"]
 
 
 def test_event_reminder_fires_once_across_cron_ticks(services) -> None:
@@ -648,17 +645,17 @@ def test_event_reminder_fires_once_across_cron_ticks(services) -> None:
     the bug was that the log write was rejected, so it fired every tick."""
     tasks, _, _, reminders = services
     local = _today()
-    tasks.create_task("Dentist", scheduled_date=local.isoformat(), start_time="14:25")
+    tasks.create_task("Dentist", scheduled_date=local.isoformat(), start_time="14:10")
     # 14:00 is outside the morning/evening digest windows, so only the event
-    # reminder is in play; the task is 25 minutes out -> the 30-minute one.
+    # reminder is in play; the task is ten minutes out.
     now = datetime(local.year, local.month, local.day, 14, 0, tzinfo=ZoneInfo(TZ))
 
-    first = [r for r in reminders.due_reminders(now) if r["kind"].startswith("event30:")]
-    assert len(first) == 1, "the 30-minute reminder should fire once"
+    first = [r for r in reminders.due_reminders(now) if r["kind"].startswith("event10:")]
+    assert len(first) == 1, "the ten-minute reminder should fire once"
 
     # Record it exactly as the cron does, then run again: it must not repeat.
     reminders.record_sent(first[0]["kind"], "push", {"message": first[0]["message"]})
-    again = [r for r in reminders.due_reminders(now) if r["kind"].startswith("event30:")]
+    again = [r for r in reminders.due_reminders(now) if r["kind"].startswith("event10:")]
     assert again == [], "the reminder re-fired — dedup is broken"
 
 
@@ -669,7 +666,7 @@ def test_event_reminders_skip_done_and_untimed(services) -> None:
     tasks.complete_task(done["id"])
     tasks.create_task("Someday", scheduled_date=local.isoformat())  # no start_time
 
-    when = datetime(local.year, local.month, local.day, 14, 30, tzinfo=ZoneInfo(TZ))
+    when = datetime(local.year, local.month, local.day, 14, 50, tzinfo=ZoneInfo(TZ))
     assert reminders._event_reminders(when, set()) == []
 
 

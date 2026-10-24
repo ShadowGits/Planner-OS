@@ -5,15 +5,15 @@ import { runInNewContext } from 'node:vm';
 
 const source=readFileSync(new URL('../../planner_api/static/pwa/sw.js',import.meta.url),'utf8');
 function worker({offline=false}={}) {
- const handlers={}; const matches=[]; const puts=[]; const opened=[];
+ const handlers={}; const matches=[]; const puts=[]; const opened=[]; const shown=[];
  runInNewContext(source,{
   URL,
-  self:{registration:{scope:'https://planner.test/app/'},addEventListener:(name,fn)=>handlers[name]=fn,
+  self:{registration:{scope:'https://planner.test/app/',showNotification:async(title,options)=>shown.push({title,options})},addEventListener:(name,fn)=>handlers[name]=fn,
    clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)},skipWaiting(){}},
   fetch:async()=>{if(offline)throw new Error('offline');return {ok:true,clone:()=>({shell:true})};},
   caches:{open:async()=>({put:async(key)=>puts.push(key)}),match:async key=>{matches.push(key);return {cached:true};}},
  });
- return {handlers,matches,puts,opened};
+ return {handlers,matches,puts,opened,shown};
 }
 
 test('the worker ignores authenticated pages, APIs and external requests',()=>{
@@ -49,4 +49,14 @@ test('timer and optional work form assets are cached for offline shell use',asyn
   handlers.fetch({request:{method:'GET',url:`https://planner.test/app/${name}?v=1`},respondWith:p=>response=p});
   assert.deepEqual(await response,{cached:true});assert.deepEqual(matches,[`https://planner.test/app/${name}`]);
  }
+});
+
+
+test('task pushes show the full task name in title and body, with timing beneath',async()=>{
+ const {handlers,shown}=worker();let done;
+ const title='Study probability — finish the conditional probability exercises';
+ handlers.push({data:{json:()=>({title,body:'Starts in 10 min · 14:17',tag:'event-123',url:'/app/'})},waitUntil:p=>done=p});
+ await done;assert.equal(shown.length,1);assert.equal(shown[0].title,title);
+ assert.equal(shown[0].options.body,`${title}\nStarts in 10 min · 14:17`);
+ assert.equal(shown[0].options.tag,'event-123');
 });

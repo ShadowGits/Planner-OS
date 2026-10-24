@@ -1,12 +1,13 @@
 package dev.planneros.android
 
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 
-/** Both lead times replace the same task notification, while delivery kinds stay distinct. */
+/** One ten-minute alert per task; legacy kinds are recognized only for upgrade cleanup. */
 fun reminderNotificationTag(kind: String): String =
-    if(kind.startsWith("event30:") || kind.startsWith("event5:")) "event:" + kind.substringAfter(':') else kind
+    if(kind.startsWith("event10:") || kind.startsWith("event30:") || kind.startsWith("event5:")) "event:" + kind.substringAfter(':') else kind
 fun reminderTitle(kind: String): String = when(kind) {
     "morning_brief" -> "☀️ Morning Brief"
     "evening_nudge" -> "🌙 Evening Nudge"
@@ -24,10 +25,9 @@ fun taskReminderAlarms(taskId:String,title:String,clockMinutes:Int,duration:Int,
     val day=LocalDate.parse(dayDate).plusDays((clockMinutes/1440).toLong())
     val clock=LocalTime.of((clockMinutes/60)%24,clockMinutes%60)
     val start=day.atTime(clock).atZone(ZoneId.of(timezone)).toInstant().toEpochMilli()
-    return listOf(30,5).mapNotNull { lead ->
-        val trigger=start-lead*60_000L
-        if(trigger<=nowMillis)null else TaskReminderAlarm("$day:event$lead:$taskId",day.toString(),
-            "event$lead:$taskId","${if(lead==30) "🟡" else "🟢"} IN $lead MINUTES : $title",
-            "Starts at %02d:%02d · %d min".format(clock.hour,clock.minute,duration),trigger)
-    }
+    val trigger=start-10*60_000L
+    if(trigger<=nowMillis)return emptyList()
+    val deliveryDate=Instant.ofEpochMilli(trigger).atZone(ZoneId.of(timezone)).toLocalDate().toString()
+    return listOf(TaskReminderAlarm("$deliveryDate:event10:$taskId",deliveryDate,"event10:$taskId",title,
+        "Starts in 10 min · %02d:%02d · %d min".format(clock.hour,clock.minute,duration),trigger))
 }

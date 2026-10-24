@@ -1,7 +1,7 @@
 /* Network-first app shell so new deploys load automatically; the cache is
    only a fallback for offline. The /v2 API always goes straight to network. */
 
-const CACHE = "day-planner-v38";
+const CACHE = "day-planner-v39";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "focus-timer.js", "focus-timer.css", "timer-settings.css", "time-entry.js", "time-entry.css", "project-inbox.js", "project-inbox.css", "work-log.js", "work-log.css", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -57,7 +57,7 @@ self.addEventListener("push", (event) => {
   }
   const title = data.title || "Planner OS";
   const options = {
-    body: data.body || "",
+    body: data.tag?.startsWith("event-") ? `${title}\n${data.body || ""}`.trim() : data.body || "",
     icon: "icon-180.png",
     badge: "icon-180.png",
     tag: data.tag || undefined,        // same tag replaces, never stacks duplicates

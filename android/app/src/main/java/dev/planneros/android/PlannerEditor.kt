@@ -160,7 +160,7 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         if(Build.VERSION.SDK_INT>=36)TextButton(onClick={TimerVisibility.openLiveSettings(c)}){Text(" Allow Live timer updates")}
         }
         TextButton(onClick={TimerVisibility.openAppSettings(c)}){Text(" Android notification settings")}
-        Text("Same 30/5-minute task reminders and daily briefs. Disable browser notifications on this phone to avoid receiving both. On Samsung, allow background battery usage for dependable delivery.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("One task reminder 10 minutes before start, with the task name first. Disable browser notifications on this phone to avoid receiving both. On Samsung, allow background battery usage for dependable delivery.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Offline: saved days remain readable. Reconnect to save edits.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
         error?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp)}
     }},confirmButton={TextButton(onClick={try{repo.config.save(url,key.ifBlank{repo.config.key()});repo.config.reminders=reminders;AutoFocusScheduler.setEnabled(c,automatic);Reminders.setup(c);saved();dismiss()}catch(e:Exception){error=e.message}}){Text("Save")}},dismissButton={TextButton(onClick=dismiss){Text("Close")}})

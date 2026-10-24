@@ -163,9 +163,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
                     push_title,
                     reminder["message"],
                     url=reminder.get("url", "/"),
-                    # Both warnings for one task share a tag, so the five
-                    # minute one replaces the thirty minute one instead of
-                    # leaving two entries to clear.
+                    # A stable task tag keeps retries in one notification.
                     tag=reminder.get("tag"),
                 )
                 if push_result["sent"] > 0:
@@ -177,7 +175,7 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             # Also try Telegram as fallback
             if reminder["kind"] not in sent and telegram is not None:
                 try:
-                    telegram.send_message(reminder["message"])
+                    telegram.send_message((reminder["title"]+"\n" if reminder["kind"].startswith("event10:") else "")+reminder["message"])
                     core.reminders.record_sent(reminder["kind"], "telegram", {"message": reminder["message"]})
                     sent.append(reminder["kind"])
                 except TelegramError as error:

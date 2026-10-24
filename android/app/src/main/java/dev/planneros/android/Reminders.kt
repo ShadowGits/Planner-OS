@@ -19,6 +19,8 @@ data class ReminderSession(val connection:Long,val epoch:String)
 
 object Reminders {
     private val lock=Any()
+    private const val POLICY_VERSION=2
+    private const val WINE_ACCENT=0xFF722F37.toInt()
     private fun prefs(c:Context)=c.getSharedPreferences("reminders",Context.MODE_PRIVATE)
     fun revision(c:Context):Long=prefs(c).getLong("schedule_revision",0L)
     fun invalidateSchedule(c:Context)=synchronized(lock){
@@ -31,6 +33,18 @@ object Reminders {
     }
     private fun matches(c:Context,expected:ReminderSession)=expected==session(c)
     fun setup(c:Context){
+        synchronized(lock){
+            val p=prefs(c)
+            if(p.getInt("policy_version",0)!=POLICY_VERSION){
+                cancelAlarms(c)
+                // Cancel old 30/5-minute PendingIntents before arming the new policy.
+                p.edit().putInt("policy_version",POLICY_VERSION).remove("last_refresh")
+                    .putString("epoch",UUID.randomUUID().toString()).putLong("schedule_revision",revision(c)+1).commit()
+                val notifications=c.getSystemService(NotificationManager::class.java)
+                notifications.activeNotifications.filter{it.notification.channelId=="reminders"}
+                    .forEach{notifications.cancel(it.tag,it.id)}
+            }
+        }
         val manager=WorkManager.getInstance(c)
         if(!SecureConfig(c).reminders)synchronized(lock){
             cancelAlarms(c)
@@ -119,11 +133,14 @@ object Reminders {
         return try {
             manager.notify("planner-notification-test",62,NotificationCompat.Builder(c,"reminders")
                 .setSmallIcon(R.drawable.ic_notification).setContentTitle("Planner OS notifications work")
-                .setContentText("Your Android reminder channel is ready.").setAutoCancel(true).setContentIntent(open).build())
+                .setContentText("Task names appear first · reminders arrive 10 minutes before start.")
+                .setStyle(NotificationCompat.BigTextStyle().bigText("Planner OS notifications work\nTask names appear first · reminders arrive 10 minutes before start."))
+                .setColor(WINE_ACCENT).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setAutoCancel(true).setContentIntent(open).build())
             true
         }catch(_:SecurityException){false}
     }
     fun notify(c:Context,date:String,kind:String,title:String,body:String,expected:ReminderSession=session(c),expectedRevision:Long?=null)=synchronized(lock){
+        if(kind.startsWith("event30:")||kind.startsWith("event5:"))return@synchronized
         if(!SecureConfig(c).reminders||!matches(c,expected)||kind in sent(c,date)||expectedRevision?.let{it!=revision(c)}==true)return@synchronized
         if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return@synchronized
         val manager=c.getSystemService(NotificationManager::class.java)
@@ -133,7 +150,8 @@ object Reminders {
         val pi=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notificationTag=reminderNotificationTag(kind)
         // A string tag avoids hash collisions replacing another task's alert.
-        manager.notify("$date:$notificationTag",61,NotificationCompat.Builder(c,"reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setAutoCancel(true).setContentIntent(pi).build())
+        manager.notify("$date:$notificationTag",61,NotificationCompat.Builder(c,"reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(if(kind.startsWith("event10:"))"$title\n$body" else body).setBigContentTitle(title))
+            .setColor(WINE_ACCENT).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setAutoCancel(true).setContentIntent(pi).build())
         val p=prefs(c)
         p.edit().putStringSet("sent:$date",sent(c,date)+kind).commit()
         val cutoff=LocalDate.parse(date).minusDays(7).toString()

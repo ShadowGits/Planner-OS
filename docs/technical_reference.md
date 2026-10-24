@@ -238,9 +238,9 @@ The integration uses persisted mappings, Planner OS private metadata, determinis
 
 ### Reminder rules and delivery
 
-The backend reminder service has morning (06:00–11:59), evening (18:00–22:59) and deadline windows. Per-item yellow reminders are more than five and up to thirty minutes before start; green reminders span five minutes before through five minutes after start. Server dedup uses date/kind history; yellow/green share a push tag so green can replace yellow. Delivery happens before history insertion, so overlapping cron executions can still double-deliver: database uniqueness alone does not make sending exactly once.
+The backend reminder service has morning (06:00–11:59), evening (18:00–22:59) and deadline windows. Each timed item has one `event10:<id>` reminder ten minutes before start, with a one-minute delivery grace. A once-per-minute scheduler check is required for exact-minute task times. Task names occupy the notification title; timing is secondary. Server dedup uses date/kind history and a stable task push tag. Delivery happens before history insertion, so overlapping independent cron callers can still double-deliver: database uniqueness alone does not make sending exactly once.
 
-`/v2/reminders/run` materializes due recurring finance, sends browser push and falls back to Telegram when no push succeeds. Native reminders instead use a device-supplied delivered-kind ledger and do not mark the server's send history. Android local 30/5-minute alarms and periodic WorkManager polling are another path; avoid enabling duplicate browser/native notifications on the same phone unintentionally.
+`/v2/reminders/run` materializes due recurring finance, sends browser push and falls back to Telegram when no push succeeds. Native reminders instead use a device-supplied delivered-kind ledger and do not mark the server's send history. Android local ten-minute alarms and periodic WorkManager polling are another path; avoid enabling duplicate browser/native notifications on the same phone unintentionally.
 
 Push validates destination endpoints, rejects redirects, bounds requests to ten seconds and removes expired 404/410 subscriptions. Telegram accepts today/status and task tick-back; ambiguous title completion returns candidates. A configured webhook secret and chat ID are both required. Recurring-finance catch-up is bounded to 62 days, and `(recurring_id, date)` is a database dedup backstop; individual materialization is not a guaranteed all-or-nothing batch.
 
@@ -274,7 +274,7 @@ Native **Kotlin/Jetpack Compose**, not a WebView wrapper or Flutter project. Mai
 | `AutoFocusPolicy`, `AutoFocusScheduler` | Schedule selection, occurrence suppression, exact-alarm starts and foreground catch-up |
 | `FocusWorkLogs`, `WorkLogActivity`, `WorkLogPolicy` | Account-scoped work outbox, input/ignore, identical retries and remainder scheduling |
 | `TimerVisibility`, `TimerLockScreenActivity` | Public ongoing entry, promoted Live Update request and above-keyguard timer Activity |
-| `Reminders`, `ReminderPolicy` | Local 30/5-minute alarms, periodic native feed and per-device delivery ledger |
+| `Reminders`, `ReminderPolicy` | Local ten-minute alarms, periodic native feed and per-device delivery ledger |
 | `DashboardActivity`, `DashboardRepository`, `DashboardRecords`, `DashboardMoney`, `DashboardVisuals` | Separate native dashboard requests, read caches, typed record/money views |
 | `PlannerTheme`, `TimelinePolicy`, `InboxPolicy`, `ApiResponsePolicy` | Stable styling, logical-day/layout/overdue rules and truthful response interpretation |
 

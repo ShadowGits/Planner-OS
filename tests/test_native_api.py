@@ -76,7 +76,7 @@ def test_native_reminder_input_accepts_documented_boundaries(client, native_core
 
 def test_native_reminder_feed_is_scoped_to_configured_tenant(client, native_core, native_clock, runtime):
     today = native_clock(9).date().isoformat()
-    native_core.tasks.create_task("My morning work", scheduled_date=today, start_time="09:25")
+    native_core.tasks.create_task("My morning work", scheduled_date=today, start_time="09:10")
     other_user, other_workspace = str(uuid4()), str(uuid4())
     runtime.service_client.tables["planner_tasks"].append({
         "id": str(uuid4()), "user_id": other_user, "workspace_id": other_workspace,
@@ -104,8 +104,8 @@ def test_native_reminder_feed_is_scoped_to_configured_tenant(client, native_core
 
 def test_each_native_device_has_independent_morning_and_event_reminders(client, native_core, native_clock, runtime):
     today = native_clock(9).date().isoformat()
-    task = native_core.tasks.create_task("Morning study", scheduled_date=today, start_time="09:25")["data"]["task"]
-    event_kind = f"event30:{task['id']}"
+    task = native_core.tasks.create_task("Morning study", scheduled_date=today, start_time="09:10")["data"]["task"]
+    event_kind = f"event10:{task['id']}"
     for kind in ["morning_brief", event_kind]:
         native_core.reminders.record_sent(kind, "push", {})
     log_before = list(runtime.service_client.tables["reminder_log"])
@@ -119,23 +119,22 @@ def test_each_native_device_has_independent_morning_and_event_reminders(client, 
     # Existing web-push delivery does not silence a new Android installation.
     first_device = feed([])
     assert {item["kind"] for item in first_device} == {"morning_brief", event_kind}
-    assert next(item for item in first_device if item["kind"] == event_kind)["title"] == "🟡 IN 25 MINUTES : Morning study"
+    assert next(item for item in first_device if item["kind"] == event_kind)["title"] == "Morning study"
     assert [item["kind"] for item in feed(["morning_brief"])] == [event_kind]
     assert feed(["morning_brief", event_kind]) == []
     assert {item["kind"] for item in feed([])} == {"morning_brief", event_kind}, "A second device must not inherit the first device's dedup"
     assert runtime.service_client.tables["reminder_log"] == log_before, "This feed must never mutate delivery logs"
 
-    native_clock(9, 22)
-    green = feed(["morning_brief", event_kind])
-    assert [item["kind"] for item in green] == [f"event5:{task['id']}"]
-    assert green[0]["title"] == "🟢 IN 3 MINUTES : Morning study"
-    assert green[0]["tag"] == next(item for item in first_device if item["kind"] == event_kind)["tag"]
-    native_clock(9, 35)
-    assert feed(["morning_brief", event_kind]) == [], "Native feed must retain the existing five-minute grace window"
+    native_clock(9, 1)
+    assert feed(["morning_brief", event_kind]) == [], "An exact local alarm and the feed share the same delivery kind"
+    native_clock(9, 5)
+    assert feed(["morning_brief"]) == [], "No five-minute or starting-now task alert remains"
+    native_clock(9, 10)
+    assert feed(["morning_brief"]) == []
 
 
 def test_native_event_feed_includes_habits_and_skips_done_or_untimed_tasks(client, native_core, native_clock):
-    today = native_clock(14, 30).date().isoformat()
+    today = native_clock(14, 50).date().isoformat()
     done = native_core.tasks.create_task("Already done", scheduled_date=today, start_time="15:00")["data"]["task"]
     native_core.tasks.complete_task(done["id"])
     native_core.tasks.create_task("Unscheduled", scheduled_date=today)
@@ -144,5 +143,27 @@ def test_native_event_feed_includes_habits_and_skips_done_or_untimed_tasks(clien
     assert response.status_code == 200
     reminders = response.json()["data"]["reminders"]
     assert len(reminders) == 1
-    assert reminders[0]["title"] == "🟡 IN 30 MINUTES : Daily walk"
-    assert reminders[0]["kind"].startswith("event30:habit:")
+    assert reminders[0]["title"] == "Daily walk"
+    assert reminders[0]["kind"].startswith("event10:habit:")
+
+
+def test_reminder_telegram_fallback_keeps_task_name(client, native_core, monkeypatch):
+    import planner_api.v2 as v2
+    from planner_core.services import ReminderService
+    sent = []
+
+    class Telegram:
+        def send_message(self, message):
+            sent.append(message)
+
+    monkeypatch.setenv("CRON_SECRET", "test-cron-secret")
+    monkeypatch.setattr(v2.TelegramClient, "from_env", lambda: Telegram())
+    monkeypatch.setattr("planner_core.push.send_push_to_all", lambda *args, **kwargs: {"sent": 0, "failed": 0})
+    monkeypatch.setattr(ReminderService, "due_reminders", lambda self: [{
+        "kind": "event10:example", "title": "Study probability exercises",
+        "message": "Starts in 10 min · 14:17", "tag": "event-example",
+    }])
+    response = client.post("/v2/reminders/run", headers={"X-Cron-Key": "test-cron-secret"})
+    assert response.status_code == 200
+    assert sent == ["Study probability exercises\nStarts in 10 min · 14:17"]
+    assert response.json()["data"]["sent"] == ["event10:example"]
