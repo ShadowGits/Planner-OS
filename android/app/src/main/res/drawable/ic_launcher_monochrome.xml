@@ -1,5 +1,13 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#00000000" android:strokeColor="#000000" android:strokeWidth="5" android:strokeLineCap="round" android:pathData="M54,29a25,25 0,1 1,-25 25M54,38L54,54L65,61" />
-    <path android:fillColor="#00000000" android:strokeColor="#000000" android:strokeWidth="4" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M24,50l7,7l10,-13" />
+    <!-- Themed launchers need a single-colour silhouette, not an opaque photo square. -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.86" android:scaleY="0.86">
+    <path android:fillColor="#00000000" android:strokeColor="#000000" android:strokeWidth="2.5"
+        android:pathData="M28,28a10,3.8 0,1 0,20 0a10,3.8 0,1 0,-20 0" />
+    <path android:fillColor="#000000" android:pathData="M38,34a7,7 0,1 0,0 14a7,7 0,1 0,0 -14M29,39C22,34 20,38 23,45L21,49L30,53L31,47ZM32,49L44,49L47,55L32,58Z" />
+    <path android:fillColor="#000000" android:pathData="M70,34a7,7 0,1 0,0 14a7,7 0,1 0,0 -14M64,37L62,27L69,34ZM72,34L79,27L76,38ZM78,39L87,35L84,45L88,51L78,53L77,46ZM64,49L76,49L77,58L61,55Z" />
+    <path android:fillColor="#000000" android:pathData="M32,55L51,60L49,64L53,68L49,72L52,76L50,82L33,76ZM58,60L76,55L75,76L59,82L57,77L60,73L56,68L60,64Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#000000" android:strokeWidth="2.5"
+        android:strokeLineCap="round" android:pathData="M80,65C89,65 86,57 87,55M84,58L87,54L89,59" />
+    </group>
 </vector>
