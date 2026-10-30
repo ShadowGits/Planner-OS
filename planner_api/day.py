@@ -68,6 +68,12 @@ class BatchDeleteRequest(BaseModel):
     task_ids: list[str]
 
 
+class TaskTriageRequest(BaseModel):
+    task_ids: list[str] = Field(min_length=1, max_length=500)
+    action: str
+    to_date: str | None = None
+
+
 class DayTaskPatch(BaseModel):
     done: bool | None = None
     start_time: str | None = None
@@ -388,6 +394,24 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(
                 status_code=400, detail={"code": "BATCH_DELETE_FAILED", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
+    @api.post("/v2/day/tasks/triage")
+    def triage_tasks_endpoint(req: TaskTriageRequest, x_app_key: str | None = Header(default=None)):
+        """Move many tasks to one day, or drop them, from the dashboard's backlog.
+
+        The per-task PATCH cannot touch a deadline or close a task as skipped,
+        so it cannot take a past-deadline task out of the overdue list. See
+        TaskService.triage_tasks for what each action changes.
+        """
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.triage_tasks(req.task_ids, req.action, req.to_date)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "TRIAGE_INVALID", "message": str(error)}
             ) from error
         return _envelope(True, result["message"], result["data"])
 

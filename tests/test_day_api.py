@@ -523,3 +523,108 @@ def test_rotated_subscription_preserves_other_browser_installations(client, runt
     assert register("https://web.push.apple.com/rotated", "Same browser [installation-one]").status_code == 200
     rows = runtime.service_client.tables["push_subscriptions"]
     assert {row["endpoint"] for row in rows} == {"https://web.push.apple.com/second", "https://web.push.apple.com/rotated"}
+
+
+def _task_row(runtime, task_id: str) -> dict:
+    return next(row for row in runtime.service_client.tables["planner_tasks"] if row["id"] == task_id)
+
+
+def _make_task(client, runtime, title: str, **fields) -> str:
+    created = client.post(
+        "/v2/day/tasks", json={"title": title, "date": "2026-07-22"}, headers=APP_KEY
+    )
+    task_id = created.json()["data"]["task"]["id"]
+    _task_row(runtime, task_id).update(fields)
+    return task_id
+
+
+def test_triage_move_takes_a_past_deadline_task_out_of_the_backlog(client, runtime) -> None:
+    """Planning a late task for a new day is not enough on its own.
+
+    The inbox lists a task by its deadline as well as its slot, so a task whose
+    deadline has passed would stay in the overdue pile after a move that only
+    changed its day. Moving it has to carry the broken deadline along.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    late = _make_task(
+        client, runtime, "Collect APS documents",
+        due_date=(today - timedelta(days=40)).isoformat(),
+        scheduled_date=(today - timedelta(days=40)).isoformat(),
+        start_time="14:00",
+    )
+    still_ahead = _make_task(
+        client, runtime, "Send LOR follow-up",
+        due_date=(today + timedelta(days=10)).isoformat(),
+        scheduled_date=(today - timedelta(days=2)).isoformat(),
+    )
+
+    resp = client.post(
+        "/v2/day/tasks/triage",
+        json={"task_ids": [late, still_ahead], "action": "move", "to_date": tomorrow},
+        headers=APP_KEY,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert sorted(data["updated"]) == sorted([late, still_ahead])
+    assert data["deadline_moved"] == [late]
+
+    moved = _task_row(runtime, late)
+    assert moved["scheduled_date"] == tomorrow
+    assert moved["due_date"] == tomorrow, "a passed deadline moves with the task"
+    assert moved["start_time"] is None, "it lands untimed, not on top of that day's plan"
+
+    kept = _task_row(runtime, still_ahead)
+    assert kept["scheduled_date"] == tomorrow
+    assert kept["due_date"] == (today + timedelta(days=10)).isoformat(), "a future deadline is real; leave it"
+
+
+def test_triage_drop_skips_rather_than_deletes(client, runtime) -> None:
+    keep = _make_task(client, runtime, "Keep me")
+    drop = _make_task(client, runtime, "Drop me")
+    finished = _make_task(client, runtime, "Already done", status="done")
+
+    resp = client.post(
+        "/v2/day/tasks/triage",
+        json={"task_ids": [drop, finished], "action": "drop"},
+        headers=APP_KEY,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["updated"] == [drop]
+    assert data["already_closed"] == [finished]
+
+    assert _task_row(runtime, drop)["status"] == "skipped", "dropped, with its history kept"
+    assert _task_row(runtime, finished)["status"] == "done", "a finished task is not reopened as skipped"
+    assert _task_row(runtime, keep)["status"] == "todo"
+
+
+def test_triage_refuses_bad_input(client, runtime) -> None:
+    from datetime import date, timedelta
+
+    task = _make_task(client, runtime, "Anything")
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    cases = [
+        {"task_ids": [task], "action": "move"},  # no day to move to
+        {"task_ids": [task], "action": "move", "to_date": yesterday},  # straight back into the backlog
+        {"task_ids": [task], "action": "archive"},
+        {"task_ids": ["1,2)"], "action": "drop"},  # would rewrite the PostgREST filter
+    ]
+    for body in cases:
+        assert client.post("/v2/day/tasks/triage", json=body, headers=APP_KEY).status_code == 400, body
+    assert _task_row(runtime, task)["status"] == "todo"
+
+    assert client.post(
+        "/v2/day/tasks/triage", json={"task_ids": [task], "action": "drop"}
+    ).status_code == 401
+
+
+def test_week_items_carry_their_milestone(client, runtime) -> None:
+    task = _make_task(client, runtime, "Screen 10 colleges", milestone_id="ms-shortlist", starred=True)
+    items = client.get("/v2/week?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    item = next(i for i in items if i["id"] == task)
+    assert item["milestone_id"] == "ms-shortlist"
+    assert item["starred"] is True

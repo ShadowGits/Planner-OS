@@ -577,6 +577,19 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.delete("/v2/milestones/{milestone_id}")
+    def delete_milestone(milestone_id: str, user=Depends(current_user)):
+        """Delete a milestone; its tasks stay, unlinked."""
+        core = build_core(cloud.service_client, user.user_id)
+        try:
+            result = core.projects.delete_milestone(milestone_id)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "MILESTONE_NOT_FOUND", "message": str(error)},
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
     @api.get("/v2/study/topics")
     def get_study_topics(user=Depends(current_user)):
         core = build_core(cloud.service_client, user.user_id)

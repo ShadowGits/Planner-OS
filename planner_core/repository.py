@@ -119,6 +119,19 @@ class PlannerCoreRepository:
             raise PlannerCoreError(f"{table} row was not found: {row_id}")
         return rows[0]
 
+    def update_rows(
+        self, table: str, row_ids: list[str], payload: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Apply one payload to many rows in a single write, scoped to this tenant."""
+        if not row_ids:
+            return []
+        self._validate_references(table, payload)
+        return self.gateway.update(
+            table,
+            {key: value for key, value in payload.items() if key not in {"id", "user_id", "workspace_id"}},
+            filters={**self._tenant(), "id": list(row_ids)},
+        ) or []
+
     def delete_row(self, table: str, row_id: str) -> None:
         self.gateway.delete(table, filters={**self._tenant(), "id": row_id})
 

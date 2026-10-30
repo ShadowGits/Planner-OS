@@ -175,6 +175,27 @@ class ProjectService:
         row = self.repository.update_row("milestones", milestone_id, payload)
         return _envelope(True, f"Milestone updated: {row['name']}", {"milestone": row})
 
+    def delete_milestone(self, milestone_id: str) -> dict[str, Any]:
+        """Delete a milestone. Its tasks are kept, no longer linked to it.
+
+        The unlinking is the database's: planner_tasks.milestone_id is
+        `on delete set null`, so it happens in the same statement as the delete
+        and cannot be left half done. The tasks are counted first only so the
+        caller can say how many were affected.
+        """
+        milestone = self.repository.get_row("milestones", milestone_id)
+        if milestone is None:
+            raise PlannerCoreError(f"Milestone was not found: {milestone_id}")
+        linked = self.repository.list_rows(
+            "planner_tasks", {"milestone_id": milestone_id}, columns="id", strict=True
+        )
+        self.repository.delete_row("milestones", milestone_id)
+        return _envelope(
+            True,
+            f"Milestone deleted: {milestone['name']} ({len(linked)} tasks kept, unlinked)",
+            {"deleted": milestone_id, "tasks_unlinked": len(linked)},
+        )
+
     def project_tree(self) -> dict[str, Any]:
         projects = self.repository.list_rows("projects")
         milestones = self.repository.list_rows("milestones")
@@ -725,6 +746,100 @@ class TaskService:
             logger.warning("Could not record deletions for the calendar: %s", error)
         self.repository.delete_rows("planner_tasks", {"id": clean_ids})
         return _envelope(True, f"{len(clean_ids)} tasks deleted", {"deleted": clean_ids})
+
+    TRIAGE_ACTIONS = ("move", "drop")
+    # Ids go into the request URL, so a long selection is written in slices
+    # rather than as one URL long enough to be refused.
+    TRIAGE_CHUNK = 100
+
+    def triage_tasks(
+        self, task_ids: list[str], action: str, to_date: str | None = None
+    ) -> dict[str, Any]:
+        """Move a set of open tasks to one day, or drop them, in a few writes.
+
+        This is how an overdue backlog gets cleared without opening every task
+        in turn, so it has to leave each task actually out of the backlog —
+        changing the planned day alone does not do that for a task whose
+        deadline has passed: the inbox lists it by its deadline, so it would
+        sit in the overdue pile looking untouched.
+
+        move: the task is planned for to_date with no time, so it lands in that
+        day's unscheduled tray to be given a slot in the day planner, rather
+        than reappearing at its old hour and stacking on top of whatever is
+        already there. A deadline that has already passed moves with it — that
+        commitment is already broken, and choosing a new day is choosing a new
+        one. A deadline still ahead is left alone, even when the new day is
+        later: that deadline is real, and missing it should show.
+
+        drop: the task is closed as skipped, not deleted, so its history stays
+        and it can be reopened. Closed tasks in the selection are left as they
+        are and reported, as are ids that are not this workspace's.
+        """
+        if action not in self.TRIAGE_ACTIONS:
+            raise PlannerCoreError(f"action must be one of {list(self.TRIAGE_ACTIONS)}")
+        target = None
+        if action == "move":
+            target = _parse_date(to_date)
+            if target is None:
+                raise PlannerCoreError("Moving tasks needs to_date (YYYY-MM-DD)")
+            if target < _local_today(self.timezone):
+                # Into the past would put them straight back in the backlog.
+                raise PlannerCoreError("Tasks can only be moved to today or later")
+        clean_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids))
+        for task_id in clean_ids:
+            try:
+                UUID(task_id)
+            except (ValueError, AttributeError, TypeError):
+                raise PlannerCoreError(f"Not a valid task id: {task_id!r}") from None
+
+        rows: list[dict[str, Any]] = []
+        for start in range(0, len(clean_ids), self.TRIAGE_CHUNK):
+            rows += self.repository.list_rows(
+                "planner_tasks",
+                {"id": clean_ids[start:start + self.TRIAGE_CHUNK]},
+                columns="id,status,due_date",
+                strict=True,
+            )
+        found = {str(row["id"]): row for row in rows}
+        missing = [task_id for task_id in clean_ids if task_id not in found]
+        closed = [
+            task_id for task_id in clean_ids
+            if task_id in found and found[task_id].get("status") not in OPEN_TASK_STATUSES
+        ]
+        open_ids = [
+            task_id for task_id in clean_ids
+            if task_id in found and task_id not in closed
+        ]
+
+        today = _local_today(self.timezone)
+        deadline_moved: list[str] = []
+        if action == "drop":
+            self._update_in_chunks(open_ids, {"status": "skipped"})
+            message = f"{len(open_ids)} tasks dropped"
+        else:
+            stamp = target.isoformat()
+            self._update_in_chunks(open_ids, {"scheduled_date": stamp, "start_time": None})
+            deadline_moved = [
+                task_id for task_id in open_ids
+                if (due := _parse_date(found[task_id].get("due_date"))) is not None and due < today
+            ]
+            self._update_in_chunks(deadline_moved, {"due_date": stamp})
+            message = f"{len(open_ids)} tasks moved to {stamp}"
+
+        return _envelope(True, message, {
+            "action": action,
+            "to_date": target.isoformat() if target else None,
+            "updated": open_ids,
+            "deadline_moved": deadline_moved,
+            "already_closed": closed,
+            "not_found": missing,
+        })
+
+    def _update_in_chunks(self, task_ids: list[str], payload: dict[str, Any]) -> None:
+        for start in range(0, len(task_ids), self.TRIAGE_CHUNK):
+            chunk = task_ids[start:start + self.TRIAGE_CHUNK]
+            if chunk:
+                self.repository.update_rows("planner_tasks", chunk, payload)
 
     def update_task_date_time_batch(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
         if not updates:
@@ -1353,7 +1468,7 @@ class TaskService:
             query_string=qs,
             columns=(
                 "id,title,status,start_time,estimated_minutes,priority,"
-                "due_date,scheduled_date,notes,project_id"
+                "due_date,scheduled_date,notes,project_id,milestone_id,starred"
             ),
         )
         umbrellas = self._umbrella_ids(all_rows)
@@ -1382,6 +1497,9 @@ class TaskService:
                     "scheduled_date": row.get("scheduled_date"),
                     "notes": row.get("notes"),
                     "project_id": row.get("project_id"),
+                    # The dashboard lays the week out in milestone rows.
+                    "milestone_id": row.get("milestone_id"),
+                    "starred": bool(row.get("starred")),
                 }
             )
         items.extend(self.habits.occurrences(monday, monday + timedelta(days=6)))

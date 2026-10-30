@@ -165,6 +165,12 @@ def register_core_tools(server: Any) -> None:
         _, projects, _, _, _ = _core_for_current_user()
         return projects.update_milestone(milestone_id, updates)
 
+    @server.tool(name="core_delete_milestone")
+    def core_delete_milestone(milestone_id: str) -> dict:
+        """Delete a milestone permanently. Its tasks are kept, just no longer linked to any milestone. Returns how many tasks were unlinked."""
+        _, projects, _, _, _ = _core_for_current_user()
+        return projects.delete_milestone(milestone_id)
+
     @server.tool(name="core_list_projects")
     def core_list_projects() -> dict:
         """List all projects with their milestones and open/done task counts."""
@@ -234,6 +240,12 @@ def register_core_tools(server: Any) -> None:
         """Batch delete multiple tasks permanently."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.delete_tasks_batch(task_ids)
+
+    @server.tool(name="core_triage_tasks")
+    def core_triage_tasks(task_ids: list[str], action: str, to_date: str | None = None) -> dict:
+        """Clear backlog tasks in bulk. action "move" plans them for to_date (YYYY-MM-DD, today or later) with no time, so they land in that day's unscheduled tray; a deadline that has already passed moves to to_date too, a deadline still ahead is kept. action "drop" closes them as skipped (not deleted, history kept). Already-closed tasks are left alone and reported."""
+        tasks, _, _, _, _ = _core_for_current_user()
+        return tasks.triage_tasks(task_ids, action, to_date)
 
     @server.tool(name="core_list_tasks")
     def core_list_tasks(status: str | None = None, project_id: str | None = None) -> dict:

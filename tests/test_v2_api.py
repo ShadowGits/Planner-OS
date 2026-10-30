@@ -411,3 +411,37 @@ def test_drive_create_api_failure_returns_failure_without_fake_rows(client, runt
 def test_global_service_account_drive_cleanup_is_retired(client):
     response = client.post("/v2/admin/cleanup-duplicates", headers={"Authorization": "Bearer valid-token"})
     assert response.status_code == 410
+
+
+def test_deleting_a_milestone_keeps_its_tasks(client, runtime) -> None:
+    owner = {"user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID)}
+    runtime.service_client.insert("projects", {"id": "proj-del", **owner, "name": "Colleges"})
+    runtime.service_client.insert("milestones", {"id": "ms-del", **owner, "project_id": "proj-del", "name": "Old sprint"})
+    headers = {"Authorization": "Bearer valid-token"}
+    for title in ("Lecture 1", "Lecture 2"):
+        client.post(
+            "/v2/projects/proj-del/tasks", json={"title": title, "milestone_id": "ms-del"}, headers=headers
+        )
+
+    resp = client.delete("/v2/milestones/ms-del", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"] == {"deleted": "ms-del", "tasks_unlinked": 2}
+    assert not [m for m in runtime.service_client.tables["milestones"] if m["id"] == "ms-del"]
+    titles = [t["title"] for t in runtime.service_client.tables["planner_tasks"]]
+    assert {"Lecture 1", "Lecture 2"} <= set(titles), "the tasks themselves are not deleted"
+
+    assert client.delete("/v2/milestones/ms-del", headers=headers).status_code == 404
+    assert client.delete("/v2/milestones/ms-del").status_code == 401
+
+
+def test_milestone_tasks_are_unlinked_by_the_database() -> None:
+    """delete_milestone relies on this rather than unlinking tasks itself.
+
+    The schema does it in the same statement as the delete, so it cannot be
+    left half done. If the constraint ever changes, deleting a milestone would
+    start failing (restrict) or deleting tasks (cascade) — catch that here.
+    """
+    from pathlib import Path
+
+    schema = Path("supabase/migrations/0005_projects_tasks_reminders.sql").read_text()
+    assert "milestone_id uuid references public.milestones(id) on delete set null" in schema
