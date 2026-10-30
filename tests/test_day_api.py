@@ -628,3 +628,73 @@ def test_week_items_carry_their_milestone(client, runtime) -> None:
     item = next(i for i in items if i["id"] == task)
     assert item["milestone_id"] == "ms-shortlist"
     assert item["starred"] is True
+
+
+def _milestone(runtime, milestone_id: str, target: str | None, status: str = "in_progress") -> dict:
+    row = {
+        "id": milestone_id, "user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID),
+        "project_id": "proj-1", "name": f"Milestone {milestone_id}", "status": status,
+        "target_date": target,
+    }
+    runtime.service_client.insert("milestones", row)
+    return next(m for m in runtime.service_client.tables["milestones"] if m["id"] == milestone_id)
+
+
+def test_moving_a_task_past_its_milestone_extends_the_milestone(client, runtime) -> None:
+    """A milestone cannot end before its own work does."""
+    milestone = _milestone(runtime, "ms-short", "2026-11-02")
+    task = _make_task(client, runtime, "Cut list to 20", milestone_id="ms-short", scheduled_date="2026-11-01")
+
+    resp = client.patch(f"/v2/day/tasks/{task}", json={"scheduled_date": "2026-11-09"}, headers=APP_KEY)
+    assert resp.status_code == 200, resp.text
+    assert milestone["target_date"] == "2026-11-09"
+    assert resp.json()["data"]["milestones_extended"] == [
+        {"milestone_id": "ms-short", "name": "Milestone ms-short", "from": "2026-11-02", "to": "2026-11-09"}
+    ]
+
+
+def test_the_new_target_is_the_milestones_last_task_not_just_the_moved_one(client, runtime) -> None:
+    milestone = _milestone(runtime, "ms-last", "2026-11-02")
+    _make_task(client, runtime, "Already later", milestone_id="ms-last", scheduled_date="2026-11-20")
+    _make_task(client, runtime, "Finished, ignored", milestone_id="ms-last", scheduled_date="2026-12-31", status="done")
+    task = _make_task(client, runtime, "Moved", milestone_id="ms-last", scheduled_date="2026-11-01")
+
+    client.patch(f"/v2/day/tasks/{task}", json={"scheduled_date": "2026-11-05"}, headers=APP_KEY)
+    assert milestone["target_date"] == "2026-11-20", "ends with its last open task"
+
+
+def test_milestones_are_only_ever_extended(client, runtime) -> None:
+    earlier = _milestone(runtime, "ms-earlier", "2026-11-30")
+    done = _milestone(runtime, "ms-done", "2026-10-01", status="done")
+    undated = _milestone(runtime, "ms-undated", None)
+    a = _make_task(client, runtime, "Pulled in", milestone_id="ms-earlier", scheduled_date="2026-11-25")
+    b = _make_task(client, runtime, "Leftover", milestone_id="ms-done", scheduled_date="2026-10-01")
+    c = _make_task(client, runtime, "No target", milestone_id="ms-undated", scheduled_date="2026-10-01")
+
+    for task, day in ((a, "2026-11-03"), (b, "2026-12-01"), (c, "2026-12-01")):
+        resp = client.patch(f"/v2/day/tasks/{task}", json={"scheduled_date": day}, headers=APP_KEY)
+        assert resp.json()["data"]["milestones_extended"] == []
+    assert earlier["target_date"] == "2026-11-30", "moving work earlier does not pull a milestone in"
+    assert done["target_date"] == "2026-10-01", "a finished milestone keeps its date"
+    assert undated["target_date"] is None, "no target is not invented"
+
+
+def test_triage_moves_extend_milestones_too(client, runtime) -> None:
+    from datetime import date, timedelta
+
+    target = (date.today() + timedelta(days=2)).isoformat()
+    later = (date.today() + timedelta(days=9)).isoformat()
+    milestone = _milestone(runtime, "ms-triage", target)
+    task = _make_task(
+        client, runtime, "Late task", milestone_id="ms-triage",
+        due_date=(date.today() - timedelta(days=3)).isoformat(),
+    )
+
+    resp = client.post(
+        "/v2/day/tasks/triage",
+        json={"task_ids": [task], "action": "move", "to_date": later},
+        headers=APP_KEY,
+    )
+    assert resp.status_code == 200, resp.text
+    assert milestone["target_date"] == later
+    assert resp.json()["data"]["milestones_extended"][0]["to"] == later

@@ -219,7 +219,7 @@ def register_core_tools(server: Any) -> None:
 
     @server.tool(name="core_update_task")
     def core_update_task(task_id: str, updates: dict) -> dict:
-        """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes, parent_task_id, depends_on, and metadata (extra project columns, replaced wholesale)."""
+        """Update task fields: title, status (todo/in_progress/blocked/done/skipped), priority, due_date, scheduled_date, start_time (HH:MM), estimated_minutes, project_id, milestone_id, notes, parent_task_id, depends_on, and metadata (extra project columns, replaced wholesale). Moving a milestone's task past the milestone's target date extends the target to the milestone's last open task (never shortens it; done or undated milestones are left alone); see milestones_extended in the result."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.update_task(task_id, updates)
 
@@ -243,7 +243,7 @@ def register_core_tools(server: Any) -> None:
 
     @server.tool(name="core_triage_tasks")
     def core_triage_tasks(task_ids: list[str], action: str, to_date: str | None = None) -> dict:
-        """Clear backlog tasks in bulk. action "move" plans them for to_date (YYYY-MM-DD, today or later) with no time, so they land in that day's unscheduled tray; a deadline that has already passed moves to to_date too, a deadline still ahead is kept. action "drop" closes them as skipped (not deleted, history kept). Already-closed tasks are left alone and reported."""
+        """Clear backlog tasks in bulk. action "move" plans them for to_date (YYYY-MM-DD, today or later) with no time, so they land in that day's unscheduled tray; a deadline that has already passed moves to to_date too, a deadline still ahead is kept. action "drop" closes them as skipped (not deleted, history kept). Already-closed tasks are left alone and reported. Moving a milestone's task past the milestone's target date extends the target to the milestone's last open task (never shortens it; done or undated milestones are left alone); see milestones_extended in the result."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.triage_tasks(task_ids, action, to_date)
 
@@ -330,7 +330,7 @@ def register_core_tools(server: Any) -> None:
     @server.tool(name="core_update_task_date_time_batch")
     def core_update_task_date_time_batch(updates: list[dict]) -> str:
         """Batch update scheduled dates and times for multiple tasks.
-        Updates should be a list of dicts, each with 'id' and optionally 'scheduled_date', 'due_date', 'start_time'."""
+        Updates should be a list of dicts, each with 'id' and optionally 'scheduled_date', 'due_date', 'start_time'. Moving a milestone's task past the milestone's target date extends the target to the milestone's last open task (never shortens it; done or undated milestones are left alone); see milestones_extended in the result."""
         result = _core().tasks.update_task_date_time_batch(updates)
         return json.dumps(result)
 

@@ -659,7 +659,12 @@ class TaskService:
             self._check_star_budget(task_id, payload.get("scheduled_date"))
 
         row = self.repository.update_row("planner_tasks", task_id, payload)
-        return _envelope(True, f"Task updated: {row['title']}", {"task": row})
+        extended: list[dict[str, Any]] = []
+        if {"scheduled_date", "due_date", "milestone_id"} & payload.keys():
+            extended = self._extend_milestones(self._milestone_moves([row]))
+        return _envelope(
+            True, f"Task updated: {row['title']}", {"task": row, "milestones_extended": extended}
+        )
 
     def _check_star_budget(self, task_id: str, moving_to: str | None = None) -> None:
         """Refuse a star once the day is full.
@@ -797,7 +802,7 @@ class TaskService:
             rows += self.repository.list_rows(
                 "planner_tasks",
                 {"id": clean_ids[start:start + self.TRIAGE_CHUNK]},
-                columns="id,status,due_date",
+                columns="id,status,due_date,milestone_id",
                 strict=True,
             )
         found = {str(row["id"]): row for row in rows}
@@ -813,6 +818,7 @@ class TaskService:
 
         today = _local_today(self.timezone)
         deadline_moved: list[str] = []
+        milestones_extended: list[dict[str, Any]] = []
         if action == "drop":
             self._update_in_chunks(open_ids, {"status": "skipped"})
             message = f"{len(open_ids)} tasks dropped"
@@ -824,6 +830,15 @@ class TaskService:
                 if (due := _parse_date(found[task_id].get("due_date"))) is not None and due < today
             ]
             self._update_in_chunks(deadline_moved, {"due_date": stamp})
+            moved_deadlines = set(deadline_moved)
+            milestones_extended = self._extend_milestones(self._milestone_moves([
+                {
+                    "milestone_id": found[task_id].get("milestone_id"),
+                    "scheduled_date": stamp,
+                    "due_date": stamp if task_id in moved_deadlines else found[task_id].get("due_date"),
+                }
+                for task_id in open_ids
+            ]))
             message = f"{len(open_ids)} tasks moved to {stamp}"
 
         return _envelope(True, message, {
@@ -831,9 +846,62 @@ class TaskService:
             "to_date": target.isoformat() if target else None,
             "updated": open_ids,
             "deadline_moved": deadline_moved,
+            "milestones_extended": milestones_extended,
             "already_closed": closed,
             "not_found": missing,
         })
+
+    @staticmethod
+    def _task_end(row: Mapping[str, Any]) -> date | None:
+        """The last day a task occupies: the later of its planned day and its deadline."""
+        days = [d for d in (_parse_date(row.get("scheduled_date")), _parse_date(row.get("due_date"))) if d]
+        return max(days) if days else None
+
+    def _extend_milestones(self, moved: Mapping[str, date]) -> list[dict[str, Any]]:
+        """Push out any milestone a task has just been moved past.
+
+        `moved` maps milestone id to the latest new date among its moved tasks.
+        A milestone cannot end before its own work does, so when that date is
+        beyond its target, the target becomes the date of its last open task —
+        read from all of them, not just the one that moved, so a task already
+        sitting past the old target is not left beyond the new one either.
+
+        Only ever later: moving work earlier does not pull a milestone in. A
+        milestone with no target has no date to keep consistent, and a finished
+        one keeps the date it was finished against.
+        """
+        extended: list[dict[str, Any]] = []
+        for milestone_id, latest in moved.items():
+            milestone = self.repository.get_row("milestones", milestone_id)
+            if milestone is None or milestone.get("status") == "done":
+                continue
+            target = _parse_date(milestone.get("target_date"))
+            if target is None or latest <= target:
+                continue
+            rows = self.repository.list_rows(
+                "planner_tasks",
+                {"milestone_id": milestone_id, "status": sorted(OPEN_TASK_STATUSES)},
+                columns="scheduled_date,due_date",
+                strict=True,
+            )
+            last = max([latest, *(end for row in rows if (end := self._task_end(row)))])
+            self.repository.update_row("milestones", milestone_id, {"target_date": last.isoformat()})
+            extended.append({
+                "milestone_id": milestone_id,
+                "name": milestone.get("name"),
+                "from": target.isoformat(),
+                "to": last.isoformat(),
+            })
+        return extended
+
+    def _milestone_moves(self, rows: list[Mapping[str, Any]]) -> dict[str, date]:
+        moved: dict[str, date] = {}
+        for row in rows:
+            milestone_id = row.get("milestone_id")
+            end = self._task_end(row)
+            if milestone_id and end and (str(milestone_id) not in moved or end > moved[str(milestone_id)]):
+                moved[str(milestone_id)] = end
+        return moved
 
     def _update_in_chunks(self, task_ids: list[str], payload: dict[str, Any]) -> None:
         for start in range(0, len(task_ids), self.TRIAGE_CHUNK):
@@ -867,12 +935,15 @@ class TaskService:
                     logger.error("Batch reschedule failed for %s: %s", task_id, error)
                     failed.append({"id": str(task_id), "error": str(error)})
 
+        extended = self._extend_milestones(self._milestone_moves(updated_tasks))
         if failed:
             message = f"{len(updated_tasks)} tasks updated, {len(failed)} failed"
         else:
             message = f"{len(updated_tasks)} tasks updated"
         return _envelope(
-            not failed, message, {"updated": updated_tasks, "failed": failed}
+            not failed,
+            message,
+            {"updated": updated_tasks, "failed": failed, "milestones_extended": extended},
         )
 
     def complete_task(self, task_id: str, *, source: str = "mcp", note: str | None = None) -> dict[str, Any]:
