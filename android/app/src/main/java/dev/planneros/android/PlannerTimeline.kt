@@ -40,8 +40,9 @@ internal data class DragPreview(val taskId:String,val deltaDp:Float,val dayShift
 internal data class DragState(val task:Task,val originDate:LocalDate,val originScroll:Int,val deltaX:Float=0f,val deltaY:Float=0f,val pointerY:Float=0f)
 
 @Composable internal fun WinsPanel(tasks:List<Task>,limit:Int,onJump:(Task)->Unit){
-    if(tasks.isEmpty())return
-    val wins=tasks.filter{it.starred};val hit=wins.count{it.done}
+    // Only once something is starred: an empty "pick your wins" prompt was noise.
+    val wins=tasks.filter{it.starred};if(wins.isEmpty())return
+    val hit=wins.count{it.done}
     Surface(color=MaterialTheme.colorScheme.primary.copy(alpha=.055f),shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=7.dp)){
         Column(Modifier.padding(horizontal=12.dp,vertical=9.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Rounded.Star,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp));Text(if(wins.isNotEmpty()&&hit==wins.size)"Day won" else "Top Wins"+(if(wins.isNotEmpty())" · $hit of ${wins.size}" else ""),fontWeight=FontWeight.SemiBold,fontSize=13.sp)}

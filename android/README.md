@@ -16,6 +16,9 @@ For Samsung background delivery, Settings → Apps → Planner OS → Battery �
 
 Version 1.0.11 (version code 13) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
+* Version 1.0.23 opens on **Focus**, the same view as the web dashboard: overdue task cards ranked by deadline (starred/high first, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), what is left today, and the week as milestone rows. Cards have Done / Tomorrow / Date / Drop; long-press selects several for a bulk move or drop. Moving a task past its milestone's target pushes the milestone out. Drop closes a task as skipped, never deletes it.
+* The bottom bar is Today · (+) · Focus. Inbox, Milestones, Dashboard and Settings sit in the ⋮ menu; the week strip, progress bar and Top Wins row show only on Today, and Top Wins only once something is starred.
+
 * Proportional, overlapping day timeline with a dotted spine, duration/end-time labels, current-time marker and active block. Hold a block to drag on a five-minute grid; move sideways while dragging to choose the previous/next date. Failed saves restore the original schedule.
 * Named Top Wins chips, direct stars in timeline/inbox, completion progress, week arrows, day swipes and native date/time pickers. Today rolls at 04:00 in the workspace timezone.
 * Timeline icon toggles the compact scheduled/unscheduled day todo list; the date header is compact. Starred-first inbox with a Schedule action that finds a gap fitting the full task duration. Presets/custom durations, category icons, recurrence and split-session metadata are retained.

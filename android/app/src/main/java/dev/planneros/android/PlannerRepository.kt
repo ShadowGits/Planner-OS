@@ -31,13 +31,15 @@ import javax.crypto.spec.GCMParameterSpec
 data class Task(val id: String, val title: String, val time: String?, val minutes: Int, val done: Boolean,
                 val starred: Boolean, val habit: Boolean, val parent: String?, val date: String?, val notes: String?, val projectId: String?,
                 val recurrenceKey: String? = null, val parentTitle: String? = null, val partIndex: Int? = null, val partCount: Int? = null, val dueDate: String? = null,
-                val workedSeconds:Int=0,val plannedSeconds:Int?=null,val milestoneId:String?=null) {
+                val workedSeconds:Int=0,val plannedSeconds:Int?=null,val milestoneId:String?=null,
+                // Focus ranks starred and high-priority work first.
+                val priority:String?=null) {
     val remainingSeconds:Int get()=((plannedSeconds?:minutes*60)-workedSeconds).coerceAtLeast(0)
     val clockMinutes: Int get() = time?.split(":")?.let { it[0].toIntOrNull()?.times(60)?.plus(it.getOrNull(1)?.toIntOrNull() ?: 0) } ?: Int.MAX_VALUE
     companion object {
         fun from(j: JSONObject) = Task(j.getString("id"), j.optString("title"), j.nullString("start_time"), j.optInt("estimated_minutes",30).coerceAtLeast(1),
             j.optBoolean("done"),j.optBoolean("starred"),j.optBoolean("is_habit"),j.nullString("parent_task_id"),j.nullString("scheduled_date"),j.nullString("notes"),j.nullString("project_id"),
-            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"),j.nullString("milestone_id"))
+            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"),j.nullString("milestone_id"),j.nullString("priority"))
     }
 }
 fun JSONObject.nullString(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
@@ -118,6 +120,7 @@ class PlannerRepository(private val context: Context) {
     val config=SecureConfig(context)
     private val cache=context.getSharedPreferences("day-cache",Context.MODE_PRIVATE)
     private val inboxCache=context.getSharedPreferences("inbox-cache",Context.MODE_PRIVATE)
+    private val weekCache=context.getSharedPreferences("week-cache",Context.MODE_PRIVATE)
     private val planningCache=context.getSharedPreferences("planning-cache",Context.MODE_PRIVATE)
     private fun invalidateDays() = synchronized(cacheLock) {
         mutationRevision.incrementAndGet()
@@ -221,6 +224,7 @@ class PlannerRepository(private val context: Context) {
             .put("parent_task_id",task.parent?:JSONObject.NULL).put("scheduled_date",task.date?:JSONObject.NULL).put("notes",task.notes?:JSONObject.NULL)
             .put("project_id",task.projectId?:JSONObject.NULL).put("milestone_id",task.milestoneId?:JSONObject.NULL).put("recurrence_key",task.recurrenceKey?:JSONObject.NULL)
             .put("parent_title",task.parentTitle?:JSONObject.NULL).put("part_index",task.partIndex?:JSONObject.NULL).put("part_total",task.partCount?:JSONObject.NULL).put("due_date",task.dueDate?:JSONObject.NULL).put("worked_seconds",task.workedSeconds).put("planned_seconds",task.plannedSeconds?:JSONObject.NULL)
+            .put("priority",task.priority?:JSONObject.NULL)
     }))
     suspend fun request(method: String,path: String,body: JSONObject?=null,dispatcher:CoroutineDispatcher=Dispatchers.IO): JSONObject = withContext(dispatcher) {
         val connection = config.connection()
@@ -360,6 +364,28 @@ class PlannerRepository(private val context: Context) {
         catch(error: PlannerHttpException) { if(error.statusCode != 404) throw error; Reminders.cancelTask(context,task.id); invalidateDays() }
         if(TimerStore.read(context)?.taskId == task.id) TimerStore.reset(context)
     }
+    /**
+     * Move tasks to one day, untimed, or drop them as skipped, in a single
+     * request. The per-task PATCH cannot move a broken deadline or close a task
+     * as skipped, so it cannot take an overdue task off the Focus list.
+     */
+    suspend fun triage(ids:List<String>,action:String,to:LocalDate?=null):JSONObject {
+        val body=JSONObject().put("task_ids",JSONArray(ids)).put("action",action).put("to_date",to?.toString()?:JSONObject.NULL)
+        val data=request("POST","/v2/day/tasks/triage",body).getJSONObject("data")
+        invalidateDays()
+        return data
+    }
+    /** Focus's week, read whole in one request; the last copy stays for offline. */
+    suspend fun week(anchor:LocalDate):Day=withContext(Dispatchers.IO){
+        val generation=config.generation
+        val data=request("GET","/v2/week?date=$anchor").getJSONObject("data")
+        check(config.generation==generation){"Connection changed. Refresh the current account."}
+        weekCache.edit().putString("$generation:week",data.toString()).apply()
+        weekFrom(data)
+    }
+    fun cachedWeek():Day?=weekCache.getString("${config.generation}:week",null)?.let{runCatching{weekFrom(JSONObject(it)).copy(cached=true)}.getOrNull()}
+    private fun weekFrom(data:JSONObject):Day{val items=data.getJSONArray("items")
+        return Day(data.getString("week_start"),data.optString("timezone","Asia/Kolkata"),List(items.length()){Task.from(items.getJSONObject(it))})}
     suspend fun split(task: Task):JSONObject {
         require(!task.habit&&!task.done&&task.remainingSeconds>=2){"Choose an unfinished task with remaining work."}
         val store=context.getSharedPreferences("split-outbox",Context.MODE_PRIVATE)

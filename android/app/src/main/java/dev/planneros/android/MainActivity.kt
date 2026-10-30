@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -118,6 +119,10 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     val viewPrefs=remember{context.getSharedPreferences("appearance",android.content.Context.MODE_PRIVATE)}
     var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
     var showMilestones by rememberSaveable{mutableStateOf(false)}
+    // The app opens on Focus: what needs you, ranked, before the timeline.
+    var focus by rememberSaveable{mutableStateOf(true)}
+    var week by remember{mutableStateOf(repo.cachedWeek())}
+    var menu by remember{mutableStateOf(false)}
     val dashRepo=remember{DashboardRepository(context)}
     var milestonesList by remember{mutableStateOf(dashRepo.cached(dashRepo.path("milestones"))?.dashboardObjects("rows").orEmpty())}
     var milestonesLoading by remember{mutableStateOf(false)}
@@ -139,6 +144,11 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     val todoTasks=remember(openTasks,completedTasks){openTasks+completedTasks}
     val unscheduled=inboxRows(day?.takeIf{it.date==selectedIso},backlog,clock)
     val unfinishedInbox=unscheduled.count{!it.done}
+    val focusMilestones=remember(milestonesList){milestonesList.mapNotNull{row->row.nullString("id")?.let{FocusMilestone(it,row.optString("name"),row.nullString("target_date"))}}.associateBy{it.id}}
+    val focusProjectNames=remember(planning){planning?.projects.orEmpty().associate{it.id to it.name}}
+    val focusOverdue=rankOverdue(unscheduled,focusMilestones,clock)
+    val focusTodayTasks=focusToday(dayPages[today.toString()]?:day?.takeIf{it.date==today.toString()},unscheduled,clock)
+    val onDay=!focus&&!inbox&&!showMilestones
     val projectAliases=planning?.projectAliases.orEmpty()
     val planningAssignments=remember(planning){planning?.tasks.orEmpty().associate{it.id to it.projectId}}
     val resolvedInboxProjectId=resolvePlanningProject(inboxProjectId,projectAliases)
@@ -250,13 +260,20 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             if(generation==dashRepo.generation&&ticket==milestonesRequestSerial)milestonesError=e.message?:"Couldn't load milestones."
         }finally{if(ticket==milestonesRequestSerial)milestonesLoading=false}
     }
+    suspend fun refreshWeek(anchor:LocalDate=week?.date?.let(LocalDate::parse)?:today){
+        if(!repo.config.configured)return
+        val generation=repo.config.generation
+        try{val fresh=repo.week(anchor);if(generation==repo.config.generation)week=fresh}
+        catch(cancel:CancellationException){throw cancel}catch(_:Exception){/* The saved week stays on screen. */}
+    }
     fun reconcile(){
         reconcileJob?.cancel()
         reconcileJob=scope.launch{
             delay(350)
             while(pendingWrites.isNotEmpty()||drag!=null||editorId!=null||adding)delay(100)
             refresh(true,true,true)
-            if(inbox)refreshInbox(true)
+            if(inbox||focus)refreshInbox(true)
+            if(focus)refreshWeek()
             refreshPlanning(true)
         }
     }
@@ -307,6 +324,30 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         val prevOffset=todoScroll.firstVisibleItemScrollOffset
         optimistic(mutationKeys(task),{replaceTask(it,task.copy(done=!task.done))},{repo.patch(task,JSONObject().put("done",!task.done))})
         if(todoView){scope.launch{todoScroll.scrollToItem(prevIndex,prevOffset)}}
+    }
+    fun openFocus(){drag=null;inbox=false;showMilestones=false;focus=true;if(selectedIso!=today.toString())selectDate(today.toString())}
+    fun plural(n:Int,word:String)="$n $word${if(n==1)"" else "s"}"
+    // Focus moves and drops go through the same optimistic path as every other
+    // edit, so day caches, the backlog, alarms and timers follow them.
+    fun moveTasks(tasks:List<Task>,to:LocalDate){
+        val live=tasks.filterNot{it.id.startsWith("pending:")};if(live.isEmpty())return
+        val ids=live.map{it.id};val calendarToday=clock.toLocalDate()
+        var extended=emptyList<String>()
+        optimistic(live.flatMap{mutationKeys(it)}.toSet(),{view->live.fold(view){v,t->replaceTask(v,movedForFocus(t,to,calendarToday))}},
+            {extended=milestoneNotes(repo.triage(ids,"move",to))},
+            onSuccess={
+                val label=if(to==today)"today" else to.format(DateTimeFormatter.ofPattern("EEE d MMM",java.util.Locale.ENGLISH))
+                scope.launch{snackbar.showSnackbar("Moved ${plural(ids.size,"task")} to $label"+extended.joinToString(""){". $it"})}
+                if(extended.isNotEmpty())refreshMilestones(true)
+                refreshWeek()
+            })
+    }
+    fun dropTasks(tasks:List<Task>){
+        val live=tasks.filterNot{it.id.startsWith("pending:")};if(live.isEmpty())return
+        val ids=live.map{it.id}
+        optimistic(live.flatMap{mutationKeys(it)}.toSet(),{view->live.fold(view){v,t->replaceTask(v,t.copy(done=true))}},
+            {repo.triage(ids,"drop");if(TimerStore.read(context)?.taskId in ids)TimerStore.reset(context)},
+            onSuccess={scope.launch{snackbar.showSnackbar("Dropped ${plural(ids.size,"task")} — kept as skipped, not deleted")};refreshWeek()})
     }
     fun toggleStar(task:Task){
         // The backend counts actual scheduled dates, including overnight copies.
@@ -362,7 +403,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     LaunchedEffect(widgetOpen){
         val request=widgetOpen?:return@LaunchedEffect
         if(request.generation!=repo.config.generation){widgetHandled();return@LaunchedEffect}
-        closeEditor();inbox=false;showMilestones=false;drag=null
+        closeEditor();focus=false;inbox=false;showMilestones=false;drag=null
         selectDate(request.date)
         val task=request.task?.let{id->day?.tasks?.find{it.id==id}}
         if(task!=null)openEditor(task)
@@ -384,6 +425,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     LaunchedEffect(adding,editorId,connectionRevision){if(adding||editorId!=null)refreshPlanning()}
     LaunchedEffect(inbox,connectionRevision){if(inbox){refreshInbox();refreshPlanning()}}
     LaunchedEffect(showMilestones,connectionRevision){if(showMilestones)refreshMilestones()}
+    LaunchedEffect(focus,connectionRevision){if(focus){refreshInbox();refreshWeek();refreshMilestones()}}
     LaunchedEffect(selectedIso,connectionRevision){while(true){delay(60*60*1000L);refresh(true)}}
     LaunchedEffect(Unit){while(true){timer=TimerStore.read(context);remaining=timer?.let{TimerStore.remaining(context,it)}?:0;clock=ZonedDateTime.now(ZoneId.of(day?.timezone?:"Asia/Kolkata"));FocusWorkLogs.prompt(context);delay(1000)}}
     LaunchedEffect(clock.toLocalDate(),clock.hour,clock.minute){if(lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))AutoFocusScheduler.catchUp(context)}
@@ -396,7 +438,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         if(actual!=lastToday){if(selectedIso==lastToday)selectDate(actual);lastToday=actual}
         Reminders.setup(context);AutoFocusScheduler.catchUp(context)
         if(TimerStore.read(context)!=null)TimerStore.action(context,"SHOW")
-        scope.launch{refresh(true);if(inbox)refreshInbox();if(showMilestones)refreshMilestones()}
+        scope.launch{refresh(true);if(inbox||focus)refreshInbox();if(showMilestones||focus)refreshMilestones();if(focus)refreshWeek()}
         scope.launch{refreshPlanning()}
         scope.launch{if(FocusWorkLogs.entries(context).any{it.has("body")}&&FocusWorkLogs.syncReady(context)){refresh(true);if(inbox)refreshInbox()}}
     })
@@ -411,58 +453,58 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
                 LinearProgressIndicator(progress={(remaining.toFloat()/s.durationMs.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp),color=if(dark)Color(0xFFD2A570)else Color(0xFF80502F),trackColor=if(dark)Color(0xFF4C3C2E)else Color(0xFFDCC7AE))
             }}}
+            // Two places to be: what needs you (Focus) and the day itself (Today).
+            // Inbox, Milestones and Dashboard moved to the top bar's menu, so the
+            // bar no longer mixes destinations with a view toggle.
             Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=10.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                TextButton(onClick={
-                    drag=null
-                    if(inbox||showMilestones){inbox=false;showMilestones=false} else{todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()}
-                },modifier=Modifier.weight(1f).height(62.dp).semantics{
-                    contentDescription=if(inbox||showMilestones)"Return to day" else if(todoView)"Show timeline" else "Show to-do list"
-                    stateDescription=if(!inbox&&!showMilestones&&todoView)"To-do list view" else "Timeline view"
-                },contentPadding=PaddingValues(2.dp)){
-                    val slashColor=MaterialTheme.colorScheme.primary
-                    val slashOutline=MaterialTheme.colorScheme.surface
-                    val activeDay=!inbox&&!showMilestones
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.ViewDay,null,modifier=Modifier.size(22.dp).drawWithContent{
-                        drawContent()
-                        if(activeDay&&todoView){
-                            val start=Offset(size.width*.10f,size.height*.10f);val end=Offset(size.width*.90f,size.height*.90f)
-                            drawLine(slashOutline,start,end,5.dp.toPx(),androidx.compose.ui.graphics.StrokeCap.Round)
-                            drawLine(slashColor,start,end,2.dp.toPx(),androidx.compose.ui.graphics.StrokeCap.Round)
-                        }
-                    },tint=if(activeDay)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Day" else "Timeline",fontSize=11.sp,color=if(activeDay)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
-                }
-                TextButton(onClick={
-                    drag=null
-                    inbox=false
-                    showMilestones=true
-                },modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Flag,"Milestones",modifier=Modifier.size(22.dp),tint=if(showMilestones)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Miles" else "Milestones",fontSize=11.sp,color=if(showMilestones)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                val onDayTab=!focus&&!inbox&&!showMilestones
+                TextButton(onClick={drag=null;focus=false;inbox=false;showMilestones=false},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){
+                        Icon(Icons.Rounded.ViewDay,null,modifier=Modifier.size(22.dp),tint=if(onDayTab)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Today",fontSize=11.sp,color=if(onDayTab)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+                    }
                 }
                 FilledIconButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},modifier=Modifier.size(48.dp),shape=CircleShape){Icon(Icons.Rounded.Add,"Add a task")}
-                TextButton(onClick={drag=null;showMilestones=false;inbox=true},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Inbox,"Inbox",modifier=Modifier.size(22.dp),tint=if(inbox)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Inbox" else "Inbox $unfinishedInbox",fontSize=11.sp,color=if(inbox)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
-                }
-                TextButton(onClick={context.startActivity(Intent(context,DashboardActivity::class.java))},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Dashboard,"Dashboard",modifier=Modifier.size(22.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant);Text(if(compactNavigation)"Dash" else "Dashboard",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                TextButton(onClick={openFocus()},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){
+                        Icon(Icons.Rounded.CenterFocusStrong,null,modifier=Modifier.size(22.dp),tint=if(focus)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Focus",fontSize=11.sp,color=if(focus)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+                    }
                 }
             }}
         }
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
             Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp,top=2.dp),verticalAlignment=Alignment.CenterVertically){
-                Column(Modifier.weight(1f).then(if(inbox||showMilestones)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectDate(LocalDate.of(y,m+1,d).toString())},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
-                    Text(if(showMilestones)"Milestones" else if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    if(!inbox&&!showMilestones)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f).then(if(!onDay)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectDate(LocalDate.of(y,m+1,d).toString())},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
+                    Text(if(focus)"Focus" else if(showMilestones)"Milestones" else if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(focus)Text("${focusOverdue.size} overdue · ${focusTodayTasks.size} left today",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if(onDay)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     else if(showMilestones)Text("${milestonesList.count{milestoneIsComplete(it)}} of ${milestonesList.size} milestones finished",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if(!inbox&&!showMilestones)TextButton(onClick={selectDate(today.toString());if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
+                if(onDay)TextButton(onClick={selectDate(today.toString());if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
                 IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{
                     if(showMilestones)refreshMilestones(true) else refresh(true,false,true)
-                    if(inbox)refreshInbox(true)
+                    if(inbox||focus)refreshInbox(true)
+                    if(focus){refreshWeek();refreshMilestones(true)}
                     refreshPlanning(true)
-                }}){Icon(Icons.Rounded.Refresh,"Refresh")};IconButton(onClick={settings=true}){Icon(Icons.Rounded.Tune,"Settings")}
+                }}){Icon(Icons.Rounded.Refresh,"Refresh")}
+                // Timeline or list is a view of the day, so it sits with the day
+                // rather than doubling as a tab.
+                if(onDay)IconButton(onClick={todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()}){
+                    Icon(if(todoView)Icons.Rounded.ViewTimeline else Icons.AutoMirrored.Rounded.ViewList,if(todoView)"Show timeline" else "Show list")
+                }
+                Box{
+                    IconButton(onClick={menu=true}){Icon(Icons.Rounded.MoreVert,"More")}
+                    DropdownMenu(expanded=menu,onDismissRequest={menu=false}){
+                        DropdownMenuItem(text={Text("Inbox")},leadingIcon={Icon(Icons.Rounded.Inbox,null)},onClick={menu=false;drag=null;focus=false;showMilestones=false;inbox=true})
+                        DropdownMenuItem(text={Text("Milestones")},leadingIcon={Icon(Icons.Rounded.Flag,null)},onClick={menu=false;drag=null;focus=false;inbox=false;showMilestones=true})
+                        DropdownMenuItem(text={Text("Dashboard")},leadingIcon={Icon(Icons.Rounded.Dashboard,null)},onClick={menu=false;context.startActivity(Intent(context,DashboardActivity::class.java))})
+                        DropdownMenuItem(text={Text("Settings")},leadingIcon={Icon(Icons.Rounded.Tune,null)},onClick={menu=false;settings=true})
+                    }
+                }
             }
-            if(!inbox&&!showMilestones)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+            if(onDay)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 IconButton(onClick={selectDate(selected.minusDays(7).toString())},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronLeft,"Previous week")}
                 val start=selected.minusDays((selected.dayOfWeek.value-1).toLong())
                 for(index in 0..6){val d=start.plusDays(index.toLong());val isSelected=d==selected
@@ -475,8 +517,8 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 }
                 IconButton(onClick={selectDate(selected.plusDays(7).toString())},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronRight,"Next week")}
             }
-            if(!inbox&&!showMilestones&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
-            if(!inbox&&!showMilestones)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
+            if(onDay&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
+            if(onDay)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
             if(inbox)InboxOverview(filteredInbox,projectDayTasks,if(selected==today)"Today" else selected.format(DateTimeFormatter.ofPattern("MMM d")),filteredInbox.count{isOverdue(it,clock)},inboxFilter,{inboxFilter=it},pickerProjects(planningProjects,resolvedInboxProjectId),resolvedInboxProjectId,{inboxProjectId=it})
             if(pendingSnapshotCount>0)Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
                 Icon(Icons.Rounded.CloudUpload,null,Modifier.size(15.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -506,7 +548,14 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                         selectDate(selected.plusDays(if(delta.x<0)1 else -1).toString())
                 }
             }
-            if(showMilestones){
+            if(focus){
+                FocusScreen(focusOverdue,focusTodayTasks,week,focusMilestones,focusProjectNames,clock,today,dark,backlog!=null,
+                    busy={taskBusy(it)},onOpen={openEditor(it)},onDone={toggleDone(it)},
+                    onMove={tasks,to->moveTasks(tasks,to)},onDrop={dropTasks(it)},
+                    onWeek={anchor->scope.launch{refreshWeek(anchor)}},
+                    onOpenDay={date->drag=null;focus=false;inbox=false;showMilestones=false;selectDate(date.toString())},
+                    modifier=Modifier.weight(1f).fillMaxWidth())
+            }else if(showMilestones){
                 DayMilestonesView(
                     milestones=milestonesList,
                     loading=milestonesLoading,
