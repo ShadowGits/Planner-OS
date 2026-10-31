@@ -32,6 +32,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -377,11 +379,16 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         val target=timed.find{!it.done&&nowMinute>=it.clockMinutes&&nowMinute<it.clockMinutes+it.minutes}?:timed.find{it.clockMinutes>=nowMinute}?:timed.lastOrNull()
         target?.let{reveal(it)}
     }
-    val dragPreview=dragPreviewOf(drag,scroll.value,density)
+    val timelineEntries=remember(timed){dayEntries(timed)}
+    var trashBounds by remember{mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)}
+    val dragPreview=dragPreviewOf(drag,scroll.value,density,timelineEntries)
     fun finishDrag(task:Task){
         // Read the finger's final position now, not the last frame's preview,
         // so a quick last movement before letting go still counts.
-        val preview=dragPreviewOf(drag,scroll.value,density);val origin=drag?.originDate;drag=null
+        val held=drag
+        // Dropped on the + button, which is a bin while dragging: delete, after asking.
+        if(held!=null&&trashBounds?.contains(Offset(held.pointerX,held.pointerY))==true){drag=null;deleteTarget=task;return}
+        val preview=dragPreviewOf(drag,scroll.value,density,timelineEntries);val origin=drag?.originDate;drag=null
         if(preview==null||origin==null||selected!=origin)return
         val previous=normalizeSlot(origin,task.clockMinutes)
         if(preview.target==previous)return
@@ -452,17 +459,27 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
                 LinearProgressIndicator(progress={(remaining.toFloat()/s.durationMs.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp),color=if(dark)Color(0xFFD2A570)else Color(0xFF80502F),trackColor=if(dark)Color(0xFF4C3C2E)else Color(0xFFDCC7AE))
             }}}
-            // As in Structured: the places along the bottom, the + floating above.
-            NavigationBar{
+            // As in Structured: a floating pill of places, and a round + beside it that
+            // turns into a bin while a task is being dragged.
+            Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(start=16.dp,end=16.dp,top=6.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically){
                 val onDayTab=!focus&&!inbox&&!showMilestones
-                NavigationBarItem(selected=focus,onClick={openFocus()},icon={Icon(Icons.Rounded.Inbox,null)},label={Text("Focus")})
-                NavigationBarItem(selected=onDayTab,onClick={drag=null;focus=false;inbox=false;showMilestones=false},icon={Icon(Icons.AutoMirrored.Rounded.ViewList,null)},label={Text("Timeline")})
-                NavigationBarItem(selected=settings,onClick={settings=true},icon={Icon(Icons.Rounded.Settings,null)},label={Text("Settings")})
+                Surface(shape=RoundedCornerShape(30.dp),shadowElevation=6.dp,color=MaterialTheme.colorScheme.surface,modifier=Modifier.weight(1f).height(60.dp)){
+                    Row(Modifier.fillMaxSize().padding(horizontal=6.dp),verticalAlignment=Alignment.CenterVertically){
+                        BottomTab("Inbox",Icons.Rounded.Inbox,focus){openFocus()}
+                        BottomTab("Timeline",Icons.AutoMirrored.Rounded.ViewList,onDayTab){drag=null;focus=false;inbox=false;showMilestones=false}
+                        BottomTab("Settings",Icons.Rounded.Settings,settings){settings=true}
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                val dragging=drag!=null
+                Surface(onClick={if(!dragging){closeEditor();recovery=drafts.remove("new");adding=true}},shape=CircleShape,
+                    color=if(dragging)Color(0xFFE5484D) else Accent,shadowElevation=6.dp,
+                    modifier=Modifier.size(60.dp).onGloballyPositioned{val p=it.positionInWindow();trashBounds=androidx.compose.ui.geometry.Rect(p.x,p.y,p.x+it.size.width,p.y+it.size.height)}
+                        .semantics{contentDescription=if(dragging)"Drop here to delete" else "Add a task"}){
+                    Box(contentAlignment=Alignment.Center){Icon(if(dragging)Icons.Rounded.Delete else Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(28.dp))}
+                }
             }
         }
-    },floatingActionButton={
-        if(!showMilestones)FloatingActionButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},shape=CircleShape,
-            containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary){Icon(Icons.Rounded.Add,"Add a task",modifier=Modifier.size(28.dp))}
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
             Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp,top=2.dp),verticalAlignment=Alignment.CenterVertically){
@@ -494,7 +511,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     }
                 }
             }
-            if(onDay)StructuredWeekStrip(selected,today,{d->if(d==selected)currentTasks.isNotEmpty() else repo.cached(d)?.tasks?.isNotEmpty()==true}){selectDate(it.toString())}
+            if(onDay)StructuredWeekStrip(selected,today,{d->(if(d==selected)currentTasks else repo.cached(d)?.tasks.orEmpty()).filterNot{it.habit}.sortedBy{it.clockMinutes}.map(::blockColor)}){selectDate(it.toString())}
             if(inbox)InboxOverview(filteredInbox,projectDayTasks,if(selected==today)"Today" else selected.format(DateTimeFormatter.ofPattern("MMM d")),filteredInbox.count{isOverdue(it,clock)},inboxFilter,{inboxFilter=it},pickerProjects(planningProjects,resolvedInboxProjectId),resolvedInboxProjectId,{inboxProjectId=it})
             if(pendingSnapshotCount>0)Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
                 Icon(Icons.Rounded.CloudUpload,null,Modifier.size(15.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -565,12 +582,12 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     }
                 }
             }else{
-                StructuredTimeline(timed,currentTasks.filter{it.time==null},selected,selected==today,nowMinute,timer?.taskId,true,scroll,dragPreview,
+                StructuredTimeline(timed,currentTasks.filter{it.time==null},selected,nowOnDay(selected,today,nowMinute),timer?.taskId,true,scroll,dragPreview,
                     Modifier.weight(1f).fillMaxWidth().then(swipe),
                     {openEditor(it)},{toggleDone(it)},{startTimer(it)},
                     {minute->closeEditor();adding=true;val slot=normalizeSlot(selected,minute);suggestedDate=slot.date.toString();suggestedTime=slot.clock},
                     {task->requestSerial++;loading=false;drag=DragState(task,selected,scroll.value)},
-                    {_,offset,y->drag=drag?.let{it.copy(deltaX=it.deltaX+offset.x,deltaY=it.deltaY+offset.y,pointerY=y)}},
+                    {_,offset,pointer->drag=drag?.let{it.copy(deltaX=it.deltaX+offset.x,deltaY=it.deltaY+offset.y,pointerY=pointer.y,pointerX=pointer.x)}},
                     {finishDrag(it)},{drag=null},{top,bottom->viewportTop=top;viewportBottom=bottom})
             }
         }

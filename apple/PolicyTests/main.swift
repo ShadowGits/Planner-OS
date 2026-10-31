@@ -80,12 +80,6 @@ check(rows[0].cells[6].map(\.id), ["b"], "sunday cell")
 check(rows[0].cells.map(\.count).reduce(0, +), 1, "outside the week is left out")
 check(Civil.weekStart("2026-11-01"), "2026-10-26", "week start")
 
-// Timeline lanes and drag snapping.
-let lanes = timelineLanes([task("x", time: "09:00", minutes: 60), task("y", time: "09:30"), task("z", time: "11:00")])
-check(lanes["x"]!.count, 2, "overlap lanes"); check(lanes["y"]!.index, 1, "second lane"); check(lanes["z"]!.count, 1, "own cluster")
-check(snappedStart(540, minutes: 30, dragMinutes: 13), 555, "snap to five")
-check(snappedStart(1410, minutes: 60, dragMinutes: 100), 1380, "kept in the day")
-
 // Reminders: ten minutes before, future only, soonest first.
 let kolkata = TimeZone(identifier: "Asia/Kolkata")!
 let noon = Civil.instant("2026-10-31", "13:00", in: kolkata)!
@@ -112,7 +106,8 @@ check(day.map(\.id), ["wake", "yoga", "gap-465", "coffee"], "timeline items")
 if case .task(_, let shows) = day[1] { check(shows, false, "shared edge hides the start") }
 if case .task(_, let shows) = day[3] { check(shows, true, "after a gap the start shows") }
 if case .gap(_, let minutes, let next) = day[2] { check(minutes, 60, "gap length"); check(next, "coffee", "gap leads to") }
-check(pillHeight(15), 52, "short task is a circle"); check(pillHeight(30), 72, "30m"); check(pillHeight(600), 216, "capped")
+check(pillHeight(15), 48, "a 15-minute task is a circle"); check(pillHeight(120), 192, "two hours is about 190 pt"); check(pillHeight(900), 640, "capped")
+check(gapHeight(15), 16, "a few minutes is a short piece of spine"); check(gapHeight(60), 96, "free time keeps the scale"); check(gapHeight(600), 104, "a long window is capped")
 check(durationText(15), "15m", "minutes"); check(durationText(60), "1h", "hour"); check(durationText(90), "1h 30m", "mixed")
 check(taskSymbol(task("Wake Up")), "alarm", "wake icon"); check(taskSymbol(task("Bike to Office")), "bicycle", "bike icon")
 check(taskSymbol(task("Coffee")), "cup.and.saucer", "coffee icon"); check(taskSymbol(task("Something else")), "checklist", "default icon")
@@ -124,17 +119,37 @@ check(Civil.weekdayShort("2026-05-13"), "Wed", "weekday")
 
 // Drop maths: a point in the list to a time and back.
 let dropDay = timelineItems([task("wake", time: "07:00", minutes: 15), task("yoga", time: "07:15"), task("coffee", time: "08:45", minutes: 15)])
-// Rows: wake 0-62, yoga 62-144 (pill 72), gap 144-180 (60m at 0.6 = 36), coffee 180-242.
+// Rows: wake 0-56, yoga 56-112, an hour of free time 112-208, coffee 208-264.
 check(minuteAt(0, in: dropDay), 420, "top of the list is the first start")
-check(minuteAt(62 + 5 + 36, in: dropDay), 450, "halfway down a 30-minute capsule is 15 minutes in")
-check(minuteAt(144 + 18, in: dropDay), 495, "halfway through an hour of free time")
-check(minuteAt(242 + 24, in: dropDay), 550, "below the last task at 2.4 points a minute")
-check(minuteAt(-50, in: dropDay), 420, "above the top is the first start")
+check(minuteAt(56 + 4 + 24, in: dropDay), 450, "halfway down a 30-minute capsule is 15 minutes in")
+check(minuteAt(112 + 48, in: dropDay), 495, "halfway through an hour of free time")
+check(minuteAt(264 + 16, in: dropDay), 550, "below the last task at 1.6 points a minute")
+check(minuteAt(-50, in: dropDay), 390, "above the top is earlier, at scale")
 for minute in stride(from: 420, through: 600, by: 5) {
     check(minuteAt(offsetFor(minute, in: dropDay), in: dropDay), minute, "round trip \(Civil.clock(minute))")
 }
-check(minuteAt(30, in: []), 555, "an empty day starts from 09:00")
+check(minuteAt(30, in: []), 560, "an empty day starts from 09:00")
 check(dropStart(1430, duration: 60), 1380, "a drop keeps the task inside the day")
+
+// Capsules fill by time; words match Structured.
+let emails = task("Emails", time: "16:00", minutes: 30)
+check(taskPhase(emails, now: 15 * 60), .upcoming, "ahead of now")
+check(taskPhase(emails, now: 16 * 60 + 1), .underway, "under way")
+check(taskProgress(emails, now: 16 * 60 + 15), 0.5, "half done")
+check(taskPhase(emails, now: 17 * 60), .past, "passed")
+var ticked = emails; ticked.done = true
+check(taskPhase(ticked, now: 15 * 60), .done, "done")
+check(remainingText(emails, now: 16 * 60 + 1), "29m remaining", "remaining")
+check(taskPhase(emails, now: nowOnDay("2026-05-12", today: "2026-05-13", minutes: 600)), .past, "an earlier day has all passed")
+check(taskPhase(emails, now: nowOnDay("2026-05-14", today: "2026-05-13", minutes: 600)), .upcoming, "a later day is all ahead")
+check(rangeText(420, 435, twentyFour: false), "7:00–7:15 AM", "range"); check(rangeText(690, 735, twentyFour: false), "11:30 AM–12:15 PM", "across noon")
+check(rangeText(420, 435, twentyFour: true), "07:00–07:15", "24-hour range")
+check(durationWords(15), "15 min", "words"); check(durationWords(60), "1 hr", "hour words"); check(durationWords(90), "1 hr, 30 min", "mixed words")
+check(fullClock(16 * 60 + 15, twentyFour: false), "4:15 PM", "drag label")
+check(hourMarks(task("Blog", time: "13:30", minutes: 120)), [14 * 60, 15 * 60], "whole hours inside a long task")
+var colourHash: UInt64 = 5381
+for scalar in "Yoga".unicodeScalars { colourHash = (colourHash &* 33) &+ UInt64(scalar.value) }
+check(paletteIndex(task("Yoga"), count: 8), Int(colourHash % 8), "same colour hash as Android")
 
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

@@ -21,6 +21,12 @@ final class PlannerStore {
     private(set) var loading = false
     /// A short message for the bottom of the screen.
     var toast: String?
+    /// The task being dragged on the Timeline, for the bin the + button turns into.
+    var draggingID: String?
+    /// The last moment a drag was seen moving; a drag the system cancels sends no word.
+    var dragSignal = Date.distantPast
+    /// A task dropped on the bin, waiting for the user to confirm.
+    var confirmingDelete: PlannerTask?
 
     /// Bumped by every write, so a refresh that started before it is not applied.
     private var revision = 0
@@ -255,6 +261,13 @@ final class PlannerStore {
             try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["starred": !task.starred])
         }
     }
+
+    func beginDrag(_ id: String) {
+        draggingID = id
+        dragSignal = Date()
+    }
+
+    func endDrag() { draggingID = nil }
 
     /// A timeline drop: moves the task on screen in this same frame, inside the
     /// caller's animation, then saves it. Waiting for a Task to start would let

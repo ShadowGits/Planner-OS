@@ -49,7 +49,7 @@ struct FocusView: View {
             .frame(maxWidth: 1200, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle("Focus")
+        .navigationTitle("Inbox")
         .refreshable { await store.refreshAll() }
         .safeAreaInset(edge: .bottom) {
             if selecting && !selected.isEmpty { bulkBar(overdue.map(\.task)) }

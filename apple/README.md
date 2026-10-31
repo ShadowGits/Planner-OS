@@ -3,21 +3,18 @@
 One SwiftUI app for all three, built from Xcode with a free Apple account.
 It talks to the same backend as Android, with the same app key.
 
-* **Timeline** (opens first), laid out like Structured:
-  * The month and year sit on top, above a week strip (swipe it for other weeks, or use the calendar button).
-  * Untimed tasks show as round chips.
-  * Each timed task is a coloured capsule on a spine, with an icon taken from its title and a height that follows its duration.
-  * Times are on the left, "start – end (duration)" and the title on the right, and a circle to tick it off at the far edge.
-  * Free time between tasks is shown, with "Now · 25m until …" when you are in a gap.
-  * The task under way fills up as time passes.
-  * **Hold a task to lift it, then drag it**: a line under your finger shows the start time it will get, ticking in 5-minute steps with a haptic each step, and it moves there when you let go. This uses the system's drag and drop, so scrolling still works everywhere.
+* **Timeline** (opens first), matching Structured as measured in `docs/structured-ux.md`:
+  * "16. October 2025 ›" on top, the week strip with each day's task colours under it, untimed tasks as round chips.
+  * Time runs down the page at 1.6 pt a minute. Capsules ahead of now are pale with a coloured icon; the one under way fills with colour down to now and says "28m remaining"; passed and done ones are solid. The line is coloured up to now and the current time is bold on the left.
+  * Free time reads "You'll have 30m free. Anything you'd like to fit in?"; a long stretch offers "Add Task".
+  * **Hold a task and drag it**: an outlined capsule shows where it will land with the new times in bold, a chip follows your finger, and the + turns into a bin to delete. Scrolling still works everywhere.
   * Tap a task to edit it.
-* **Focus**: overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
+* **Inbox** (the Focus board): overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
   * Hold a card for its menu (Select, Done, Tomorrow, Pick a date, Drop), or tap **Select** to move or drop several.
   * Milestones are in the ⋯ menu.
 * **Settings**: server, app key and reminders.
-* The floating **+** adds a task (⌘N on iPad keyboards and Mac).
+* The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
 * **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
 * **Reminders** arrive 10 minutes before every timed task. They are local
   notifications, so no push service or paid account is needed.

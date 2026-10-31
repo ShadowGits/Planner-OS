@@ -3,13 +3,12 @@ package dev.planneros.android
 import android.text.format.DateFormat
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -33,10 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -49,12 +48,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -62,10 +65,12 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
-// The day laid out like Structured: a spine of coloured capsules sized by
-// duration, free time between them, untimed tasks as round chips on top. The
-// same rules as the Apple app's TimelinePolicy.swift.
+// The day laid out as Structured lays it out (docs/structured-ux.md): time runs
+// down the page at 1.6 dp a minute, each task a capsule on a spine, free time
+// between them, untimed tasks as round chips on top. The Apple app follows the
+// same rules in TimelinePolicy.swift.
 
 internal sealed interface DayEntry { val key:String }
 internal data class TaskEntry(val task:Task,val showsStart:Boolean):DayEntry { override val key get()=task.id }
@@ -85,20 +90,113 @@ internal fun dayEntries(tasks:List<Task>):List<DayEntry> {
     return entries
 }
 
-internal const val ROW_PADDING_DP=5f
-/** A 15-minute task is a circle; longer ones stretch, up to a limit. */
-internal fun pillHeightDp(minutes:Int)=(minutes*2.4f).coerceIn(52f,216f)
-/** Free time takes less room than work does. */
-internal fun gapHeightDp(minutes:Int)=(minutes*0.6f).coerceIn(34f,96f)
+/** Structured's scale: two hours is about 190 dp. */
+internal const val MINUTE_DP=1.6f
+/** Capsule width, and the height of the shortest task (a circle). */
+internal const val PILL_DP=48f
+internal const val ROW_PADDING_DP=4f
+internal const val TIME_COLUMN_DP=44f
+private const val LAST_START=1675 // 27:55, the end of a day that runs past midnight
+
+internal fun pillHeightDp(minutes:Int)=(minutes*MINUTE_DP).coerceIn(PILL_DP,640f)
+/** A few minutes is a short piece of spine; free time keeps the scale; a long window is capped. */
+internal fun gapHeightDp(minutes:Int)=when{minutes<30->16f;minutes<180->maxOf(minutes*MINUTE_DP,64f);else->104f}
 internal fun entryHeightDp(entry:DayEntry)=when(entry){is TaskEntry->pillHeightDp(entry.task.minutes)+2*ROW_PADDING_DP;is GapEntry->gapHeightDp(entry.minutes)}
-/** How far down the list a task sits, for scrolling to it. */
+/** How far down the list an item starts, for scrolling to it and for drags. */
 internal fun entryOffsetDp(entries:List<DayEntry>,key:String):Float? {
     var y=0f
     for(entry in entries){if(entry.key==key)return y;y+=entryHeightDp(entry)}
     return null
 }
+
+private fun snapFive(minute:Float)=((minute/5f).roundToInt()*5).coerceIn(0,LAST_START)
+private fun firstStart(entries:List<DayEntry>)=entries.firstNotNullOfOrNull{(it as? TaskEntry)?.task?.clockMinutes}
+
+/** The time at a point of the list, y in dp from its top, snapped to five minutes. Inside a
+ *  capsule time runs over its duration, inside free time over the gap, beyond the ends at scale. */
+internal fun minuteAtDp(y:Float,entries:List<DayEntry>):Int {
+    if(y<0f)return snapFive((firstStart(entries)?:9*60)+y/MINUTE_DP)
+    var top=0f;var end:Int?=null
+    for(entry in entries){
+        val height=entryHeightDp(entry)
+        when(entry){
+            is TaskEntry->{
+                val task=entry.task
+                if(y<top+height){
+                    val inside=((y-top-ROW_PADDING_DP)/pillHeightDp(task.minutes)).coerceIn(0f,1f)
+                    return snapFive(task.clockMinutes+inside*task.minutes)
+                }
+                end=maxOf(end?:0,task.clockMinutes+task.minutes)
+            }
+            is GapEntry->{
+                if(y<top+height)return snapFive(entry.start+(y-top)/height*entry.minutes)
+                end=entry.start+entry.minutes
+            }
+        }
+        top+=height
+    }
+    return snapFive((end?:9*60)+(y-top)/MINUTE_DP)
+}
+
+/** Where a time sits in the list: the inverse of minuteAtDp. */
+internal fun offsetForDp(minute:Int,entries:List<DayEntry>):Float {
+    val first=firstStart(entries)
+    if(first!=null&&minute<first)return (minute-first)*MINUTE_DP
+    var top=0f;var end:Int?=null
+    for(entry in entries){
+        val height=entryHeightDp(entry)
+        when(entry){
+            is TaskEntry->{
+                val task=entry.task
+                if(minute<task.clockMinutes)return top
+                if(minute<task.clockMinutes+task.minutes)
+                    return top+ROW_PADDING_DP+(minute-task.clockMinutes).toFloat()/task.minutes.coerceAtLeast(1)*pillHeightDp(task.minutes)
+                end=maxOf(end?:0,task.clockMinutes+task.minutes)
+            }
+            is GapEntry->{
+                if(minute<entry.start+entry.minutes)return top+(minute-entry.start).toFloat()/entry.minutes.coerceAtLeast(1)*height
+                end=entry.start+entry.minutes
+            }
+        }
+        top+=height
+    }
+    return top+(minute-(end?:9*60))*MINUTE_DP
+}
+
+/** Where a task stands against the clock, which decides how its capsule is filled. */
+internal enum class Phase{UPCOMING,UNDERWAY,PAST,DONE}
+/** `now` is minutes into the day shown: Int.MAX_VALUE on an earlier day, -1 on a later one. */
+internal fun phaseOf(task:Task,now:Int)=when{
+    task.done->Phase.DONE
+    now>=task.clockMinutes+task.minutes->Phase.PAST
+    now>=task.clockMinutes->Phase.UNDERWAY
+    else->Phase.UPCOMING
+}
+internal fun progressOf(task:Task,now:Int)=((now-task.clockMinutes).toFloat()/task.minutes.coerceAtLeast(1)).coerceIn(0f,1f)
+internal fun nowOnDay(day:LocalDate,today:LocalDate,nowMinute:Int)=when{day<today->Int.MAX_VALUE;day>today-> -1;else->nowMinute}
+
 /** "15m", "1h", "1h 30m" */
 internal fun shortDuration(minutes:Int)=when{minutes<60->"${minutes}m";minutes%60==0->"${minutes/60}h";else->"${minutes/60}h ${minutes%60}m"}
+/** "15 min", "1 hr", "1 hr, 30 min", as in the subtitle. */
+internal fun durationWords(minutes:Int)=when{minutes<60->"$minutes min";minutes%60==0->"${minutes/60} hr";else->"${minutes/60} hr, ${minutes%60} min"}
+internal fun remainingText(task:Task,now:Int)="${shortDuration((task.clockMinutes+task.minutes-now).coerceAtLeast(1))} remaining"
+/** "7:00" on a 12-hour phone, "07:00" on a 24-hour one, as in the left column. */
+internal fun columnClock(minute:Int,twelve:Boolean):String {
+    val m=Math.floorMod(minute,1440);val hour=m/60
+    return if(twelve)"${if(hour%12==0)12 else hour%12}:%02d".format(m%60) else "%02d:%02d".format(hour,m%60)
+}
+private fun half(minute:Int)=if(Math.floorMod(minute,1440)<720)"AM" else "PM"
+/** "7:00 PM", used while dragging. */
+internal fun fullClock(minute:Int,twelve:Boolean)=if(twelve)"${columnClock(minute,true)} ${half(minute)}" else columnClock(minute,false)
+/** "7:00–7:15 AM", or "11:30 AM–12:15 PM" across noon, or "07:00–07:15". */
+internal fun rangeText(start:Int,end:Int,twelve:Boolean)=when{
+    !twelve->"${columnClock(start,false)}–${columnClock(end,false)}"
+    half(start)==half(end)->"${columnClock(start,true)}–${columnClock(end,true)} ${half(end)}"
+    else->"${fullClock(start,true)}–${fullClock(end,true)}"
+}
+/** Whole hours inside a long task, for the left column. */
+internal fun hourMarks(task:Task)=((task.clockMinutes/60+1)..((task.clockMinutes+task.minutes-1)/60)).map{it*60}
+    .filter{it-task.clockMinutes>=25&&task.clockMinutes+task.minutes-it>=25}
 
 /** A colour slot that stays the same for a title on every device (the Apple app uses the same hash). */
 internal fun paletteIndex(title:String,count:Int):Int {
@@ -107,10 +205,14 @@ internal fun paletteIndex(title:String,count:Int):Int {
     return (hash%count.coerceAtLeast(1).toULong()).toInt()
 }
 
-/** Coral, slate, navy, sage, wine, amber, teal, lavender. */
-private val blockColors=listOf(Color(0xFFF2948F),Color(0xFF6685B0),Color(0xFF2B4A6E),Color(0xFF8CC266),
-    Color(0xFF8F3D57),Color(0xFFF0AD4D),Color(0xFF3D999E),Color(0xFF9480CC))
+/** Structured's accent. */
+internal val Accent=Color(0xFFF19E98)
+/** Structured's preset task colours: coral, orange, amber, green, blue, dark green, wine, navy. */
+private val blockColors=listOf(Color(0xFFF19E98),Color(0xFFF19C74),Color(0xFFEAA93B),Color(0xFF91BE6C),
+    Color(0xFF6085A8),Color(0xFF3A8564),Color(0xFF974667),Color(0xFF2B5073))
 internal fun blockColor(task:Task)=blockColors[paletteIndex(task.title,blockColors.size)]
+/** The capsule and spine colour of anything still ahead of now. */
+@Composable private fun pale()=if(MaterialTheme.colorScheme.background.luminance()<.5f)Color(0xFF2C2C2E) else Color(0xFFEBEBEB)
 
 /** Words in a title that pick its icon, first match wins; the Apple app uses the same list. */
 private val iconRules:List<Pair<List<String>,ImageVector>> = listOf(
@@ -150,20 +252,22 @@ internal fun taskIcon(task:Task):ImageVector {
     return iconRules.firstOrNull{(words,_)->words.any{title.contains(it)}}?.second?:if(task.habit)Icons.Rounded.Repeat else Icons.Rounded.TaskAlt
 }
 
-/** "May 2026", the year in the accent colour. */
+/** "16. October 2025 ›", the year and chevron in the accent colour. */
 @Composable internal fun MonthTitle(date:LocalDate){
     Row(verticalAlignment=Alignment.Bottom){
-        Text(date.format(DateTimeFormatter.ofPattern("MMMM")),fontSize=26.sp,fontWeight=FontWeight.Bold,maxLines=1)
-        Text(" ${date.year}",fontSize=26.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary,maxLines=1)
+        Text("${date.dayOfMonth}. ${date.format(DateTimeFormatter.ofPattern("MMMM"))}",fontSize=26.sp,fontWeight=FontWeight.Bold,maxLines=1)
+        Text(" ${date.year} ›",fontSize=26.sp,fontWeight=FontWeight.Bold,color=Accent,maxLines=1)
     }
 }
 
-/** Mon to Sun with the selected day in a filled circle. Swipe for other weeks. */
-@Composable internal fun StructuredWeekStrip(selected:LocalDate,today:LocalDate,hasTasks:(LocalDate)->Boolean,onSelect:(LocalDate)->Unit){
+/** Mon to Sun. The selected day sits in a filled circle (accent when it is today), today
+ *  otherwise in accent; under each day, small circles in the colours of its tasks. Swipe for weeks. */
+@Composable internal fun StructuredWeekStrip(selected:LocalDate,today:LocalDate,dayColors:(LocalDate)->List<Color>,onSelect:(LocalDate)->Unit){
     val density=LocalDensity.current.density
     val start=selected.minusDays((selected.dayOfWeek.value-1).toLong())
     var dragX by remember{mutableFloatStateOf(0f)}
     val latestSelect by rememberUpdatedState(onSelect)
+    val background=MaterialTheme.colorScheme.background
     Row(Modifier.fillMaxWidth().padding(horizontal=8.dp).padding(bottom=10.dp).pointerInput(selected){
         detectHorizontalDragGestures(onDragStart={dragX=0f},onDragEnd={
             if(abs(dragX)>60*density)latestSelect(selected.plusDays(if(dragX<0)7 else -7))
@@ -171,35 +275,41 @@ internal fun taskIcon(task:Task):ImageVector {
         }){change,amount->change.consume();dragX+=amount}
     }){
         for(index in 0..6){
-            val day=start.plusDays(index.toLong());val isSelected=day==selected
+            val day=start.plusDays(index.toLong());val isSelected=day==selected;val isToday=day==today
             Column(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable{onSelect(day)}.padding(vertical=4.dp)
                 .semantics{contentDescription=day.format(DateTimeFormatter.ofPattern("EEEE, MMMM d"))+if(isSelected)", selected" else ""},
                 horizontalAlignment=Alignment.CenterHorizontally){
                 Text(day.format(DateTimeFormatter.ofPattern("EEE")),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                Box(Modifier.size(34.dp).background(if(isSelected)MaterialTheme.colorScheme.primary else Color.Transparent,CircleShape),contentAlignment=Alignment.Center){
+                val fill=when{isSelected&&isToday->Accent;isSelected->MaterialTheme.colorScheme.onSurface;else->Color.Transparent}
+                Box(Modifier.size(32.dp).background(fill,CircleShape),contentAlignment=Alignment.Center){
                     Text(day.dayOfMonth.toString(),fontSize=16.sp,fontWeight=FontWeight.SemiBold,
-                        color=if(isSelected)MaterialTheme.colorScheme.onPrimary else if(day==today)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        color=when{isSelected->MaterialTheme.colorScheme.surface;isToday->Accent;else->MaterialTheme.colorScheme.onSurface})
                 }
-                Box(Modifier.padding(top=3.dp).size(4.dp).background(if(!isSelected&&hasTasks(day))MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.6f) else Color.Transparent,CircleShape))
+                Spacer(Modifier.height(5.dp))
+                val colors=dayColors(day).take(4)
+                Row(Modifier.height(11.dp),horizontalArrangement=Arrangement.spacedBy((-4).dp)){
+                    colors.forEach{Box(Modifier.size(11.dp).background(background,CircleShape).padding(1.dp).background(it,CircleShape))}
+                }
             }
         }
     }
 }
 
-/** Tasks with no time, as round chips like all-day events. Hold one to tick it off. */
+/** Tasks with no time, as round chips. Open: pale circle, icon in the task colour. Done: solid
+ *  colour, white icon, label struck through. Hold one to tick it off. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable private fun AllDayChips(tasks:List<Task>,enabled:(Task)->Boolean,open:(Task)->Unit,done:(Task)->Unit){
+    val pale=pale()
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=4.dp,vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(14.dp)){
         tasks.forEach{task->
             val color=blockColor(task);val interactive=enabled(task)
-            Column(Modifier.width(76.dp).clip(RoundedCornerShape(12.dp))
+            Column(Modifier.width(72.dp).clip(RoundedCornerShape(12.dp))
                 .combinedClickable(enabled=interactive,onClick={open(task)},onLongClick={done(task)})
                 .semantics{contentDescription="${task.title}, any time${if(task.done)", done" else ""}. Hold to ${if(task.done)"reopen" else "complete"}"},
                 horizontalAlignment=Alignment.CenterHorizontally){
-                Box(Modifier.size(58.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha=.07f),CircleShape),contentAlignment=Alignment.Center){
-                    Icon(taskIcon(task),null,tint=color,modifier=Modifier.size(26.dp))
-                    if(task.done)Icon(Icons.Rounded.CheckCircle,null,tint=color,modifier=Modifier.align(Alignment.BottomEnd).size(18.dp).background(MaterialTheme.colorScheme.background,CircleShape))
+                Box(Modifier.size(46.dp).background(if(task.done)color else pale,CircleShape),contentAlignment=Alignment.Center){
+                    Icon(taskIcon(task),null,tint=if(task.done)Color.White else color,modifier=Modifier.size(22.dp))
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(task.title,fontSize=12.sp,fontWeight=FontWeight.SemiBold,textAlign=TextAlign.Center,maxLines=2,overflow=TextOverflow.Ellipsis,lineHeight=15.sp,
@@ -211,44 +321,216 @@ internal fun taskIcon(task:Task):ImageVector {
 }
 
 /**
- * The day's timeline. Dragging is driven by MainActivity (DragState and
- * DragPreview, with edge auto-scroll); this draws it: the held task tracks the
- * finger exactly, ticks at each five-minute step, and on release it, and any
- * task it displaced, glide into their new places.
+ * The day's timeline. MainActivity drives a drag (DragState and DragPreview, with
+ * edge auto-scroll); this draws it as Structured does: the held task leaves an
+ * empty place, a compact chip follows the finger, and an outlined capsule shows
+ * where it will land, with the new start and end in bold on the left. Nothing
+ * else moves until it is dropped.
  */
-@Composable internal fun StructuredTimeline(tasks:List<Task>,allDay:List<Task>,date:LocalDate,isToday:Boolean,nowMinute:Int,timerId:String?,
+@Composable internal fun StructuredTimeline(tasks:List<Task>,allDay:List<Task>,date:LocalDate,now:Int,timerId:String?,
     enabled:Boolean,scroll:ScrollState,preview:DragPreview?,modifier:Modifier=Modifier,
     edit:(Task)->Unit,done:(Task)->Unit,focus:(Task)->Unit,gap:(Int)->Unit,
-    dragStart:(Task)->Unit,dragMove:(Task,Offset,Float)->Unit,dragEnd:(Task)->Unit,dragCancel:()->Unit,
+    dragStart:(Task)->Unit,dragMove:(Task,Offset,Offset)->Unit,dragEnd:(Task)->Unit,dragCancel:()->Unit,
     viewport:(Float,Float)->Unit){
     val entries=remember(tasks){dayEntries(tasks)}
     val config=LocalViewConfiguration.current
-    val holdConfig=remember(config){object:ViewConfiguration by config{override val longPressTimeoutMillis=230L}}
+    val holdConfig=remember(config){object:ViewConfiguration by config{override val longPressTimeoutMillis=300L}}
     val twelve=!DateFormat.is24HourFormat(LocalContext.current)
-    val now=if(isToday)nowMinute else null
+    val tasksById=entries.mapNotNull{(it as? TaskEntry)?.task}.associateBy{it.id}
     CompositionLocalProvider(LocalViewConfiguration provides holdConfig){
         Column(modifier.onGloballyPositioned{val y=it.positionInWindow().y;viewport(y,y+it.size.height)}
-            .verticalScroll(scroll).padding(start=12.dp,end=8.dp,top=6.dp,bottom=96.dp)){
+            .verticalScroll(scroll).padding(start=12.dp,end=8.dp,top=6.dp,bottom=110.dp)){
             if(allDay.isNotEmpty()){
                 AllDayChips(allDay,{enabled&&!it.id.startsWith("pending:")},edit,done)
                 Spacer(Modifier.height(10.dp))
             }
             if(entries.isEmpty())Text(if(allDay.isEmpty())"Nothing planned. Tap + to add a task." else "Nothing at a set time. Tap + to add one.",
                 color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(top=48.dp),textAlign=TextAlign.Center)
-            entries.forEach{entry->
-                key(entry.key){
-                    when(entry){
-                        is TaskEntry->{
-                            val dragging=preview?.taskId==entry.task.id
-                            TimelineTaskRow(entry.task,entry.showsStart,entry.key==entries.first().key,entry.key==entries.last().key,
-                                now,twelve,enabled&&!entry.task.id.startsWith("pending:"),timerId==entry.task.id,
-                                lifted=dragging,liftDp=if(dragging)preview!!.deltaDp else 0f,
-                                target=if(dragging)preview!!.target else null,viewDate=date,
-                                edit={edit(entry.task)},done={done(entry.task)},focus={focus(entry.task)},
-                                dragStart={dragStart(entry.task)},dragMove={delta,y->dragMove(entry.task,delta,y)},
-                                dragEnd={dragEnd(entry.task)},dragCancel=dragCancel)
+            Box{
+                Column{
+                    entries.forEachIndexed{index,entry->
+                        key(entry.key){
+                            when(entry){
+                                is TaskEntry->TaskRow(entry.task,entry.showsStart,index==0,index==entries.lastIndex,now,twelve,
+                                    enabled&&!entry.task.id.startsWith("pending:"),timerId==entry.task.id,hidden=preview?.taskId==entry.task.id,
+                                    edit={edit(entry.task)},done={done(entry.task)},focus={focus(entry.task)},
+                                    dragStart={dragStart(entry.task)},dragMove={delta,pointer->dragMove(entry.task,delta,pointer)},
+                                    dragEnd={dragEnd(entry.task)},dragCancel=dragCancel)
+                                is GapEntry->GapRow(entry,
+                                    (entries.getOrNull(index-1) as? TaskEntry)?.task?.let(::blockColor),
+                                    (entries.getOrNull(index+1) as? TaskEntry)?.task?.let(::blockColor),now,twelve){gap(((entry.start+4)/5)*5)}
+                            }
                         }
-                        is GapEntry->GapRow(entry,now,{gap(((entry.start+4)/5)*5)})
+                    }
+                }
+                preview?.let{drag->tasksById[drag.taskId]?.let{task->DragOverlay(task,drag,entries,date,twelve)}}
+            }
+        }
+    }
+}
+
+/** The landing outline with its bold times, and the chip that follows the finger. */
+@Composable private fun DragOverlay(task:Task,drag:DragPreview,entries:List<DayEntry>,date:LocalDate,twelve:Boolean){
+    val sameDay=drag.target.date==date
+    val start=drag.target.clockMinute+if(drag.target.date>date)1440 else 0
+    val pill=pillHeightDp(task.minutes)
+    val white=if(MaterialTheme.colorScheme.background.luminance()<.5f)Color(0xFF2C2C2E) else Color.White
+    if(sameDay){
+        val top=offsetForDp(start,entries)
+        Box(Modifier.offset(y=top.dp).fillMaxWidth().height(pill.dp).zIndex(5f).clearAndSetSemantics{}){
+            Text(fullClock(start,twelve),fontSize=10.sp,fontWeight=FontWeight.Bold,maxLines=1,modifier=Modifier.offset(y=(-6).dp))
+            Text(fullClock(start+task.minutes,twelve),fontSize=10.sp,fontWeight=FontWeight.Bold,maxLines=1,modifier=Modifier.align(Alignment.BottomStart).offset(y=6.dp))
+            Box(Modifier.padding(start=(TIME_COLUMN_DP+4).dp).size(PILL_DP.dp,pill.dp).background(white,RoundedCornerShape(50))
+                .border(1.5.dp,Color(0xFFB8B8BD),RoundedCornerShape(50)))
+        }
+    }
+    val rowTop=(entryOffsetDp(entries,task.id)?:0f)+ROW_PADDING_DP
+    val color=blockColor(task)
+    // White, and beside the outline rather than over it, as in Structured.
+    Surface(shape=RoundedCornerShape(28.dp),shadowElevation=10.dp,color=white,
+        // Drawn only: the row itself already tells a screen reader about the task.
+        modifier=Modifier.offset(x=(TIME_COLUMN_DP+4+PILL_DP+16).dp,y=(rowTop+drag.deltaDp).dp).zIndex(10f).clearAndSetSemantics{}){
+        Row(Modifier.padding(start=6.dp,end=14.dp,top=6.dp,bottom=6.dp),verticalAlignment=Alignment.CenterVertically){
+            Box(Modifier.size(36.dp).background(color,CircleShape),contentAlignment=Alignment.Center){Icon(taskIcon(task),null,tint=Color.White,modifier=Modifier.size(18.dp))}
+            Spacer(Modifier.width(8.dp))
+            Column{
+                val day=if(sameDay)"" else drag.target.date.format(DateTimeFormatter.ofPattern("EEE d MMM"))+" · "
+                Text(day+rangeText(start,start+task.minutes,twelve)+" (${durationWords(task.minutes)})",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+                Text(task.title,fontSize=13.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.widthIn(max=180.dp))
+            }
+        }
+    }
+}
+
+/** The left column: start and end, whole hours inside long tasks, and the current time in bold. */
+@Composable private fun TimeColumn(height:Float,labels:List<Pair<Float,String>>,nowLabel:Pair<Float,String>?){
+    Box(Modifier.width(TIME_COLUMN_DP.dp).height(height.dp)){
+        labels.filter{label->nowLabel==null||abs(label.first-nowLabel.first)>14f}.forEach{(y,text)->
+            Text(text,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,modifier=Modifier.offset(y=(y-7f).dp))
+        }
+        nowLabel?.let{(y,text)->Text(text,fontSize=11.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurface,maxLines=1,modifier=Modifier.offset(y=(y-7f).dp))}
+    }
+}
+
+@Composable private fun TaskRow(task:Task,showsStart:Boolean,first:Boolean,last:Boolean,now:Int,twelve:Boolean,
+    interactive:Boolean,timing:Boolean,hidden:Boolean,
+    edit:()->Unit,done:()->Unit,focus:()->Unit,dragStart:()->Unit,dragMove:(Offset,Offset)->Unit,dragEnd:()->Unit,dragCancel:()->Unit){
+    val haptic=LocalHapticFeedback.current
+    val scope=rememberCoroutineScope()
+    var windowPosition by remember{mutableStateOf(Offset.Zero)}
+    val latestStart by rememberUpdatedState(dragStart);val latestMove by rememberUpdatedState(dragMove)
+    val latestEnd by rememberUpdatedState(dragEnd);val latestCancel by rememberUpdatedState(dragCancel)
+    val pill=pillHeightDp(task.minutes);val rowHeight=pill+2*ROW_PADDING_DP
+    val color=blockColor(task);val pale=pale()
+    val phase=phaseOf(task,now);val progress=progressOf(task,now)
+    val start=task.clockMinutes;val end=start+task.minutes
+    val solid=phase==Phase.PAST||phase==Phase.DONE
+    // When the list reorders the row starts from where it was drawn and slides to its place.
+    val settle=remember{Animatable(0f)}
+    var placedTop by remember{mutableStateOf<Float?>(null)}
+    val labels=buildList{
+        if(showsStart)add(ROW_PADDING_DP+6f to columnClock(start,twelve))
+        hourMarks(task).forEach{add(ROW_PADDING_DP+(it-start).toFloat()/task.minutes*pill to columnClock(it,twelve))}
+        add(ROW_PADDING_DP+pill-6f to columnClock(end,twelve))
+    }
+    val nowLabel=if(phase==Phase.UNDERWAY||(phase==Phase.DONE&&now in start until end))(ROW_PADDING_DP+progress*pill) to columnClock(now,twelve) else null
+    Row(Modifier.fillMaxWidth().height(rowHeight.dp)
+        .onPlaced{coords->
+            val top=coords.positionInParent().y;val previous=placedTop;placedTop=top
+            if(previous!=null&&previous!=top)scope.launch{settle.snapTo(settle.value+previous-top);settle.animateTo(0f,spring(dampingRatio=.85f,stiffness=Spring.StiffnessMediumLow))}
+        }
+        // The drag is read on the row's fixed place, before the layer that moves it.
+        .onGloballyPositioned{windowPosition=it.positionInWindow()}
+        .pointerInput(task.id,interactive){if(interactive)detectDragGesturesAfterLongPress(
+            onDragStart={haptic.performHapticFeedback(HapticFeedbackType.LongPress);latestStart()},
+            onDrag={change,amount->change.consume();latestMove(amount,windowPosition+change.position)},
+            onDragEnd={latestEnd()},onDragCancel={latestCancel()})}
+        .graphicsLayer{translationY=settle.value}
+        .clickable(enabled=interactive,onClick=edit)
+        .semantics{contentDescription="${task.title}, ${fullClock(start,twelve)} to ${fullClock(end,twelve)}, ${durationWords(task.minutes)}${if(task.done)", done" else ""}. Hold and drag to reschedule"},
+        verticalAlignment=Alignment.CenterVertically){
+        TimeColumn(rowHeight,if(hidden)emptyList() else labels,if(hidden)null else nowLabel)
+        Spacer(Modifier.width(4.dp))
+        Box(Modifier.width(PILL_DP.dp).fillMaxHeight(),contentAlignment=Alignment.Center){
+            Canvas(Modifier.fillMaxSize()){
+                val x=size.width/2;val stroke=3.dp.toPx()
+                val top=if(first)size.height/2 else 0f;val bottom=if(last)size.height/2 else size.height
+                if(bottom>top){
+                    drawLine(pale,Offset(x,top),Offset(x,bottom),strokeWidth=stroke)
+                    val reached=when{now>=end->bottom;now<=start->top;else->(ROW_PADDING_DP+progress*pill).dp.toPx().coerceIn(top,bottom)}
+                    if(reached>top)drawLine(color,Offset(x,top),Offset(x,reached),strokeWidth=stroke)
+                }
+            }
+            Box(Modifier.alpha(if(hidden)0f else 1f).size(PILL_DP.dp,pill.dp).clip(RoundedCornerShape(50)).background(if(solid)color else pale)){
+                if(phase==Phase.UNDERWAY)Box(Modifier.fillMaxWidth().fillMaxHeight(progress.coerceAtLeast(.02f))
+                    .background(Brush.verticalGradient(0f to color,.8f to color,1f to color.copy(alpha=.4f))))
+                Icon(taskIcon(task),null,tint=if(solid||(phase==Phase.UNDERWAY&&progress>.5f))Color.White else color,
+                    modifier=Modifier.align(Alignment.Center).size(22.dp))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f).alpha(if(hidden)0f else 1f)){
+            Row(verticalAlignment=Alignment.CenterVertically){
+                Text(if(phase==Phase.UNDERWAY)remainingText(task,now) else "${rangeText(start,end,twelve)} (${durationWords(task.minutes)})",
+                    fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f,fill=false))
+                if(task.recurrenceKey!=null||task.habit)Icon(Icons.Rounded.Repeat,"Repeats",tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(start=3.dp).size(12.dp))
+            }
+            Text(task.title,fontSize=17.sp,fontWeight=FontWeight.SemiBold,maxLines=if(pill>60)2 else 1,overflow=TextOverflow.Ellipsis,lineHeight=21.sp,
+                textDecoration=if(task.done)TextDecoration.LineThrough else null,
+                color=if(task.done)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+        }
+        if(TimerPreferences.enabled(LocalContext.current)&&!task.done&&!hidden)IconButton(onClick=focus,enabled=interactive,modifier=Modifier.size(36.dp)){
+            Icon(if(timing)Icons.Rounded.HourglassBottom else Icons.Rounded.PlayArrow,"Start focus timer for ${task.title}",tint=color,modifier=Modifier.size(20.dp))
+        }
+        IconButton(onClick=done,enabled=interactive,modifier=Modifier.size(44.dp).alpha(if(hidden)0f else 1f)
+            .semantics{contentDescription="${if(task.done)"Reopen" else "Complete"} ${task.title}"}){
+            Box(Modifier.size(24.dp).then(if(task.done)Modifier.background(color,CircleShape) else Modifier.border(2.dp,color,CircleShape)),contentAlignment=Alignment.Center){
+                if(task.done)Icon(Icons.Rounded.Check,null,tint=Color.White,modifier=Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+/** Free time: the spine (coloured up to now, blending from one task's colour to the next), the
+ *  current time in bold if now falls here, and Structured's wording. Tap to add a task here. */
+@Composable private fun GapRow(entry:GapEntry,previous:Color?,next:Color?,now:Int,twelve:Boolean,add:()->Unit){
+    val height=gapHeightDp(entry.minutes)
+    val end=entry.start+entry.minutes
+    val nowY=if(now>=entry.start&&now<end)(now-entry.start).toFloat()/entry.minutes*height else null
+    val pale=pale()
+    val from=previous?:next?:pale;val to=next?:previous?:pale
+    Row(Modifier.fillMaxWidth().height(height.dp).clickable(onClick=add),verticalAlignment=Alignment.CenterVertically){
+        TimeColumn(height,emptyList(),nowY?.let{it to columnClock(now,twelve)})
+        Spacer(Modifier.width(4.dp))
+        Canvas(Modifier.width(PILL_DP.dp).fillMaxHeight()){
+            val x=size.width/2;val stroke=3.dp.toPx()
+            drawLine(pale,Offset(x,0f),Offset(x,size.height),strokeWidth=stroke)
+            val reached=when{now>=end->size.height;nowY!=null->nowY.dp.toPx();else->0f}
+            if(reached>0f)drawLine(Brush.verticalGradient(listOf(from,to),0f,size.height),Offset(x,0f),Offset(x,reached),strokeWidth=stroke)
+        }
+        Spacer(Modifier.width(12.dp))
+        val length=shortDuration(entry.minutes)
+        when{
+            entry.minutes<30->{}
+            entry.minutes<180->Row(verticalAlignment=Alignment.CenterVertically){
+                Icon(Icons.Rounded.Schedule,null,tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(buildAnnotatedString{append("You'll have ");withStyle(SpanStyle(color=Accent)){append(length)};append(" free. Anything you'd like to fit in?")},
+                    fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2)
+            }
+            else->Column{
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    Icon(Icons.Rounded.Schedule,null,tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(buildAnnotatedString{append("A window: ");withStyle(SpanStyle(color=Accent)){append(length)};append(" of potential.")},
+                        fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+                }
+                Spacer(Modifier.height(6.dp))
+                Surface(onClick=add,shape=RoundedCornerShape(14.dp),color=Accent.copy(alpha=.14f)){
+                    Row(Modifier.padding(horizontal=10.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
+                        Icon(Icons.Rounded.AddCircle,null,tint=Accent,modifier=Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Add Task",fontSize=12.sp,fontWeight=FontWeight.SemiBold,color=Accent)
                     }
                 }
             }
@@ -256,100 +538,12 @@ internal fun taskIcon(task:Task):ImageVector {
     }
 }
 
-@Composable private fun TimelineTaskRow(task:Task,showsStart:Boolean,first:Boolean,last:Boolean,now:Int?,twelve:Boolean,
-    interactive:Boolean,timing:Boolean,lifted:Boolean,liftDp:Float,target:ScheduleSlot?,viewDate:LocalDate,
-    edit:()->Unit,done:()->Unit,focus:()->Unit,dragStart:()->Unit,dragMove:(Offset,Float)->Unit,dragEnd:()->Unit,dragCancel:()->Unit){
-    val density=LocalDensity.current.density
-    val haptic=LocalHapticFeedback.current
-    val scope=rememberCoroutineScope()
-    var windowY by remember{mutableFloatStateOf(0f)}
-    val latestStart by rememberUpdatedState(dragStart);val latestMove by rememberUpdatedState(dragMove)
-    val latestEnd by rememberUpdatedState(dragEnd);val latestCancel by rememberUpdatedState(dragCancel)
-    val pill=pillHeightDp(task.minutes)
-    val color=blockColor(task)
-    val start=target?.clockMinute?:task.clockMinutes
-    val progress=now?.takeIf{!task.done&&it>=task.clockMinutes&&it<task.clockMinutes+task.minutes}?.let{(it-task.clockMinutes).toFloat()/task.minutes.coerceAtLeast(1)}
-    // While held the task follows the finger with no lag; on release it springs home.
-    val follow by animateFloatAsState(liftDp*density,if(lifted)snap() else spring(dampingRatio=.82f,stiffness=Spring.StiffnessMediumLow),label="follow")
-    val lift by animateFloatAsState(if(lifted)1f else 0f,spring(dampingRatio=.75f,stiffness=Spring.StiffnessMedium),label="lift")
-    // When the list reorders (this task dropped elsewhere, or another one moved
-    // past it) the row starts from where it was drawn and slides to its slot.
-    val settle=remember{Animatable(0f)}
-    var placedTop by remember{mutableStateOf<Float?>(null)}
-    LaunchedEffect(target?.clockMinute,lifted){if(lifted&&target!=null)haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)}
-    val timeColor=if(lifted)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Row(Modifier.fillMaxWidth().height((pill+2*ROW_PADDING_DP).dp).zIndex(if(lifted||lift>0f)10f else 0f)
-        .onPlaced{coords->
-            val top=coords.positionInParent().y;val previous=placedTop;placedTop=top
-            if(previous!=null&&previous!=top)scope.launch{settle.snapTo(settle.value+previous-top);settle.animateTo(0f,spring(dampingRatio=.85f,stiffness=Spring.StiffnessMediumLow))}
-        }
-        // The drag is read here, on the row's fixed place, before the layer that
-        // moves it: read inside the layer, the row following the finger would
-        // cancel out most of the finger's own movement.
-        .onGloballyPositioned{windowY=it.positionInWindow().y}
-        .pointerInput(task.id,interactive){if(interactive)detectDragGesturesAfterLongPress(
-            onDragStart={haptic.performHapticFeedback(HapticFeedbackType.LongPress);latestStart()},
-            onDrag={change,amount->change.consume();latestMove(amount,windowY+change.position.y)},
-            onDragEnd={latestEnd()},onDragCancel={latestCancel()})}
-        .graphicsLayer{
-            translationY=follow+settle.value
-            val scale=1f+.03f*lift;scaleX=scale;scaleY=scale
-            shadowElevation=14.dp.toPx()*lift;shape=RoundedCornerShape(18.dp);clip=false
-        }
-        .clickable(enabled=interactive,onClick=edit)
-        .semantics{contentDescription="${task.title}, ${displayClock(task.clockMinutes,twelve)} to ${displayClock(task.clockMinutes+task.minutes,twelve)}, ${durationLabel(task.minutes)}${if(task.done)", done" else ""}. Hold and drag to reschedule"},
-        verticalAlignment=Alignment.CenterVertically){
-        Column(Modifier.width(62.dp).fillMaxHeight().padding(vertical=ROW_PADDING_DP.dp),horizontalAlignment=Alignment.End,verticalArrangement=Arrangement.SpaceBetween){
-            Text(if(showsStart||lifted)displayClock(start,twelve) else "",fontSize=11.sp,color=timeColor,maxLines=1)
-            Text(displayClock(start+task.minutes,twelve),fontSize=11.sp,color=timeColor,maxLines=1)
-        }
-        Spacer(Modifier.width(12.dp))
-        val spine=MaterialTheme.colorScheme.outlineVariant
-        Box(Modifier.width(52.dp).fillMaxHeight(),contentAlignment=Alignment.Center){
-            Canvas(Modifier.fillMaxSize()){
-                val x=size.width/2;val top=if(first)size.height/2 else 0f;val bottom=if(last)size.height/2 else size.height
-                if(!lifted&&bottom>top)drawLine(spine,Offset(x,top),Offset(x,bottom),strokeWidth=2.dp.toPx())
-            }
-            Box(Modifier.width(52.dp).height(pill.dp).clip(RoundedCornerShape(26.dp))
-                .background(color.copy(alpha=if(task.done).4f else if(progress!=null).38f else 1f))){
-                progress?.let{Box(Modifier.fillMaxWidth().fillMaxHeight(it).background(color))}
-                Icon(taskIcon(task),null,tint=Color.White,modifier=Modifier.align(Alignment.Center).size(22.dp))
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)){
-            val moving=target?.takeIf{it.date!=viewDate}?.date?.format(DateTimeFormatter.ofPattern("EEE d MMM"))?.let{"$it · "}.orEmpty()
-            Text("$moving${displayClock(start,twelve)} – ${displayClock(start+task.minutes,twelve)} (${shortDuration(task.minutes)})",fontSize=12.sp,color=timeColor,maxLines=1,overflow=TextOverflow.Ellipsis)
-            Row(verticalAlignment=Alignment.CenterVertically){
-                Text(task.title,fontSize=17.sp,fontWeight=FontWeight.SemiBold,maxLines=if(pill>64)2 else 1,overflow=TextOverflow.Ellipsis,lineHeight=21.sp,
-                    textDecoration=if(task.done)TextDecoration.LineThrough else null,modifier=Modifier.weight(1f,fill=false),
-                    color=if(task.done)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-                if(task.starred)Icon(Icons.Rounded.Star,"Top Win",tint=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(start=4.dp).size(14.dp))
-            }
-        }
-        if(TimerPreferences.enabled(LocalContext.current)&&!task.done)IconButton(onClick=focus,enabled=interactive,modifier=Modifier.size(36.dp)){
-            Icon(if(timing)Icons.Rounded.HourglassBottom else Icons.Rounded.PlayArrow,"Start focus timer for ${task.title}",tint=color,modifier=Modifier.size(20.dp))
-        }
-        IconButton(onClick=done,enabled=interactive,modifier=Modifier.size(44.dp)){
-            Icon(if(task.done)Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,"${if(task.done)"Reopen" else "Complete"} ${task.title}",tint=color,modifier=Modifier.size(28.dp))
-        }
-    }
-}
-
-/** Free time: a dotted spine and how long it lasts, or how long until the next task. Tap to add a task there. */
-@Composable private fun GapRow(entry:GapEntry,now:Int?,add:()->Unit){
-    val isNow=now!=null&&now>=entry.start&&now<entry.start+entry.minutes
-    val spine=MaterialTheme.colorScheme.outlineVariant
-    Row(Modifier.fillMaxWidth().height(gapHeightDp(entry.minutes).dp).clickable(onClick=add),verticalAlignment=Alignment.CenterVertically){
-        Spacer(Modifier.width(74.dp))
-        Canvas(Modifier.width(52.dp).fillMaxHeight()){
-            val x=size.width/2
-            drawLine(spine,Offset(x,0f),Offset(x,size.height),strokeWidth=2.dp.toPx(),cap=StrokeCap.Round,
-                pathEffect=PathEffect.dashPathEffect(floatArrayOf(1.dp.toPx(),6.dp.toPx())))
-        }
-        Spacer(Modifier.width(12.dp))
-        Text(if(isNow)"Now · ${shortDuration(entry.start+entry.minutes-now!!)} until ${entry.next}" else "${shortDuration(entry.minutes)} free",
-            fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis,
-            color=if(isNow)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+/** A place in the floating bottom pill: icon over label, accent when selected. */
+@Composable internal fun RowScope.BottomTab(label:String,icon:ImageVector,selected:Boolean,onClick:()->Unit){
+    Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(24.dp)).clickable(onClick=onClick)
+        .semantics{contentDescription=label+if(selected)", selected" else ""},
+        horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+        Icon(icon,null,tint=if(selected)Accent else MaterialTheme.colorScheme.onSurface,modifier=Modifier.size(22.dp))
+        Text(label,fontSize=11.sp,fontWeight=if(selected)FontWeight.SemiBold else FontWeight.Medium,color=if(selected)Accent else MaterialTheme.colorScheme.onSurface,maxLines=1)
     }
 }

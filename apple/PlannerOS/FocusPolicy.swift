@@ -203,40 +203,6 @@ func milestoneNotes(_ response: Data) -> [String] {
     }
 }
 
-/// Side-by-side lanes for overlapping timeline blocks: each task's lane and how
-/// many lanes its cluster of overlaps needs.
-func timelineLanes(_ tasks: [PlannerTask], minimumMinutes: Int = 25) -> [String: (index: Int, count: Int)] {
-    var result: [String: (index: Int, count: Int)] = [:]
-    var cluster: [(id: String, lane: Int)] = []
-    var laneEnds: [Int] = []
-    var clusterEnd = Int.min
-    func flush() {
-        for member in cluster { result[member.id] = (index: member.lane, count: laneEnds.count) }
-        cluster = []
-        laneEnds = []
-    }
-    for task in tasks.filter({ $0.time != nil }).sorted(by: { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }) {
-        let start = task.clockMinutes, end = start + max(task.minutes, minimumMinutes)
-        if !cluster.isEmpty && start >= clusterEnd { flush(); clusterEnd = Int.min }
-        if let lane = laneEnds.firstIndex(where: { $0 <= start }) {
-            laneEnds[lane] = end
-            cluster.append((id: task.id, lane: lane))
-        } else {
-            laneEnds.append(end)
-            cluster.append((id: task.id, lane: laneEnds.count - 1))
-        }
-        clusterEnd = max(clusterEnd, end)
-    }
-    flush()
-    return result
-}
-
-/// A dragged block's new start: snapped to five minutes and kept inside the day.
-func snappedStart(_ start: Int, minutes: Int, dragMinutes: Double) -> Int {
-    let snapped = Int(((Double(start) + dragMinutes) / 5).rounded()) * 5
-    return min(max(snapped, 0), 24 * 60 - min(max(minutes, 5), 24 * 60))
-}
-
 struct Reminder: Hashable {
     var id: String
     var title: String

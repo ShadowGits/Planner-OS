@@ -42,14 +42,15 @@ class StructuredTimelineGestureTest {
                 val scroll=rememberScrollState()
                 var drag by remember{mutableStateOf<DragState?>(null)}
                 val density=LocalDensity.current.density
-                val preview=dragPreviewOf(drag,scroll.value,density)
+                val entries=remember{dayEntries(day)}
+                val preview=dragPreviewOf(drag,scroll.value,density,entries)
                 h.scrollValue=scroll.value
                 Box(Modifier.size(400.dp,700.dp)){
-                    StructuredTimeline(day,emptyList(),date,false,0,null,true,scroll,preview,Modifier.fillMaxSize(),
+                    StructuredTimeline(day,emptyList(),date,-1,null,true,scroll,preview,Modifier.fillMaxSize(),
                         edit={h.edited=it.id},done={},focus={},gap={},
                         dragStart={h.started=true;drag=DragState(it,date,scroll.value)},
-                        dragMove={_,offset,y->drag=drag?.let{d->d.copy(deltaX=d.deltaX+offset.x,deltaY=d.deltaY+offset.y,pointerY=y)}},
-                        dragEnd={t->dragPreviewOf(drag,scroll.value,density)?.let{h.dropped=t.id to it.target};drag=null},
+                        dragMove={_,offset,pointer->drag=drag?.let{d->d.copy(deltaX=d.deltaX+offset.x,deltaY=d.deltaY+offset.y,pointerY=pointer.y,pointerX=pointer.x)}},
+                        dragEnd={t->dragPreviewOf(drag,scroll.value,density,entries)?.let{h.dropped=t.id to it.target};drag=null},
                         dragCancel={drag=null},viewport={_,_->})
                 }
             }
@@ -74,7 +75,7 @@ class StructuredTimelineGestureTest {
         node.performTouchInput{up()}
         rule.waitForIdle()
         assertEquals("t9",h.dropped?.first)
-        assertEquals("10:00",h.dropped?.second?.clock)
+        assertEquals("10:15",h.dropped?.second?.clock)
     }
 
     @Test fun swipingOverATaskScrollsInsteadOfDragging(){
@@ -98,7 +99,8 @@ class StructuredTimelineGestureTest {
         node.performTouchInput{
             down(center)
             advanceEventTime(600)
-            // 120dp at 2dp a minute is an hour later, in small steps like a finger.
+            // 120dp down from the 07:00 task is a quarter of the way into the 08:00 one
+            // (rows of 80dp, 16dp of spine between), so the drop lands where it shows: 08:15.
             val step=(120.dp.toPx())/12
             repeat(12){moveBy(androidx.compose.ui.geometry.Offset(0f,step));advanceEventTime(16)}
             up()
@@ -106,6 +108,6 @@ class StructuredTimelineGestureTest {
         rule.waitForIdle()
         assertTrue("long press should start a drag",h.started)
         assertEquals("t7",h.dropped?.first)
-        assertEquals("08:00",h.dropped?.second?.clock)
+        assertEquals("08:15",h.dropped?.second?.clock)
     }
 }

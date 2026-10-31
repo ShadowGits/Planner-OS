@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum Screen: Hashable { case focus, timeline, settings }
 
@@ -10,8 +11,9 @@ struct EditorRequest: Identifiable {
     var time: String?
 }
 
-/// Focus · Timeline · Settings along the bottom, opening on the Timeline, with
-/// a floating + for adding tasks.
+/// As in Structured: the screen above, and along the bottom a floating pill of
+/// places (Inbox · Timeline · Settings) with a round + beside it that turns into
+/// a bin while a task is being dragged. Opens on the Timeline.
 @MainActor
 struct RootView: View {
     @Environment(PlannerStore.self) private var store
@@ -19,30 +21,29 @@ struct RootView: View {
     @State private var screen: Screen = .timeline
     @State private var editor: EditorRequest?
     @State private var showMilestones = false
+    @State private var overBin = false
 
     var body: some View {
         Group {
             if store.connection == nil {
                 NavigationStack { SettingsView(firstRun: true) }
             } else {
-                TabView(selection: $screen) {
-                    NavigationStack {
-                        FocusView(screen: $screen, editor: $editor)
-                            .toolbar { focusToolbar }
-                            .overlay(alignment: .bottomTrailing) {
-                                AddButton { editor = EditorRequest(date: store.logicalToday) }
-                            }
+                ZStack(alignment: .bottom) {
+                    Group {
+                        switch screen {
+                        case .focus:
+                            NavigationStack { FocusView(screen: $screen, editor: $editor).toolbar { focusToolbar } }
+                        case .timeline:
+                            NavigationStack { TodayView(editor: $editor) }
+                        case .settings:
+                            NavigationStack { SettingsView(firstRun: false) }
+                        }
                     }
-                    .tabItem { Label("Focus", systemImage: "tray") }
-                    .tag(Screen.focus)
-
-                    NavigationStack { TodayView(editor: $editor) }
-                        .tabItem { Label("Timeline", systemImage: "list.bullet.below.rectangle") }
-                        .tag(Screen.timeline)
-
-                    NavigationStack { SettingsView(firstRun: false) }
-                        .tabItem { Label("Settings", systemImage: "gearshape") }
-                        .tag(Screen.settings)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 72) }
+                    BottomBar(screen: $screen, dragging: store.draggingID != nil, overBin: $overBin,
+                              onAdd: { editor = EditorRequest(date: screen == .timeline ? store.selectedDate : store.logicalToday) },
+                              onBin: binDrop)
                 }
             }
         }
@@ -55,8 +56,18 @@ struct RootView: View {
             NavigationStack { MilestonesView() }
                 .environment(store)
         }
+        .confirmationDialog("Delete “\(store.confirmingDelete?.title ?? "")”?", isPresented: Binding(
+            get: { store.confirmingDelete != nil }, set: { if !$0 { store.confirmingDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let task = store.confirmingDelete { Task { await store.delete(task) } }
+                store.confirmingDelete = nil
+            }
+        } message: {
+            Text("This removes it for good.")
+        }
         .task { await store.start() }
         .task { await tick() }
+        .task(id: store.draggingID) { await watchDrag() }
         .onChange(of: phase) { _, phase in
             if phase == .active {
                 store.now = Date()
@@ -65,6 +76,21 @@ struct RootView: View {
             #if os(iOS)
             if phase == .background { BackgroundRefresh.schedule() }
             #endif
+        }
+    }
+
+    /// A task dropped on the bin: find it on the day shown, then ask.
+    private func binDrop(_ id: String) {
+        store.endDrag()
+        store.confirmingDelete = store.days.values.lazy.flatMap(\.items).first { $0.id == id }
+    }
+
+    /// The system sends no word when it cancels a drag, so the bin turns back
+    /// into + once the drag has not been seen moving for a few seconds.
+    private func watchDrag() async {
+        while store.draggingID != nil, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if !overBin, Date().timeIntervalSince(store.dragSignal) > 3 { store.endDrag() }
         }
     }
 
@@ -147,5 +173,69 @@ struct MilestonesView: View {
         }
         .task { await store.refreshMilestones() }
         .macSheetSize()
+    }
+}
+
+/// The floating pill of places and the round + beside it, which is a bin while
+/// a task is dragged: drop on it to delete.
+@MainActor
+struct BottomBar: View {
+    @Binding var screen: Screen
+    let dragging: Bool
+    @Binding var overBin: Bool
+    let onAdd: () -> Void
+    let onBin: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 0) {
+                tab("Inbox", "tray.fill", .focus)
+                tab("Timeline", "list.bullet", .timeline)
+                tab("Settings", "gearshape.fill", .settings)
+            }
+            .frame(height: 60)
+            .background(Palette.card, in: Capsule())
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+            Button(action: onAdd) {
+                Image(systemName: dragging ? "trash.fill" : "plus")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 60, height: 60)
+                    .background(Circle().fill(dragging ? Color.red : Palette.accent))
+                    .scaleEffect(overBin ? 1.12 : 1)
+                    .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("n", modifiers: .command)
+            .accessibilityLabel(dragging ? "Drop here to delete" : "Add task")
+            .onDrop(of: [UTType.plainText], isTargeted: $overBin) { providers in
+                guard let provider = providers.first else { return false }
+                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                    guard let text = object as? NSString else { return }
+                    let id = text as String
+                    DispatchQueue.main.async { onBin(id) }
+                }
+                return true
+            }
+            .animation(.snappy, value: dragging)
+            .animation(.snappy, value: overBin)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
+    private func tab(_ label: String, _ icon: String, _ target: Screen) -> some View {
+        Button { screen = target } label: {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 19, weight: .semibold))
+                Text(label).font(.caption2.weight(screen == target ? .semibold : .medium))
+            }
+            .foregroundStyle(screen == target ? Palette.accent : Color.primary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(screen == target ? .isSelected : [])
     }
 }

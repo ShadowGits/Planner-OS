@@ -16,6 +16,7 @@ For Samsung background delivery, Settings → Apps → Planner OS → Battery �
 
 Version 1.0.11 (version code 13) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
+* Version 1.0.26 matches Structured's Timeline as measured in `docs/structured-ux.md`: time runs down the page at 1.6 dp a minute; capsules ahead of now are pale with a coloured icon, the one under way fills with colour down to now ("28m remaining"), passed and done ones are solid; the line is coloured up to now and the current time is bold on the left; free time reads "You'll have 30m free". Dragging shows an outlined capsule where the task will land with its new times in bold, a chip follows the finger, and the + turns into a bin. The bottom is a floating pill (Inbox · Timeline · Settings) beside a round +.
 * Every change shows on screen at once and saves in the background; if the server refuses it, it is undone with a "Changes that couldn't be saved" message. Since 1.0.25 nothing fades while it saves.
 * `e2e/run.sh` at the repo root checks both apps together: backend tests, the Apple app against a fresh local API, and every Android test, including touch tests (scroll, tap, hold-and-drag) and the same end-to-end flows (add, drop, tick, star, edit, move, drop, delete) against that API.
 * Version 1.0.24 lays the day out like Structured and opens on it:
