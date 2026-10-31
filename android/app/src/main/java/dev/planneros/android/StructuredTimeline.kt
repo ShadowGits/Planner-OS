@@ -193,7 +193,7 @@ internal fun taskIcon(task:Task):ImageVector {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=4.dp,vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(14.dp)){
         tasks.forEach{task->
             val color=blockColor(task);val interactive=enabled(task)
-            Column(Modifier.width(76.dp).alpha(if(interactive)1f else .5f).clip(RoundedCornerShape(12.dp))
+            Column(Modifier.width(76.dp).clip(RoundedCornerShape(12.dp))
                 .combinedClickable(enabled=interactive,onClick={open(task)},onLongClick={done(task)})
                 .semantics{contentDescription="${task.title}, any time${if(task.done)", done" else ""}. Hold to ${if(task.done)"reopen" else "complete"}"},
                 horizontalAlignment=Alignment.CenterHorizontally){

@@ -51,7 +51,7 @@ struct TodayView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if !allDay.isEmpty {
-                            AllDayRow(tasks: allDay, busy: store.busy,
+                            AllDayRow(tasks: allDay,
                                       onOpen: { editor = EditorRequest(task: $0) },
                                       onToggle: { task in Task { await store.setDone(task, !task.done) } })
                                 .padding(.bottom, 14)
@@ -69,7 +69,6 @@ struct TodayView: View {
                                         isFirst: entry.id == entries.first?.id,
                                         isLast: entry.id == entries.last?.id,
                                         now: now,
-                                        busy: store.busy.contains(task.id),
                                         twentyFour: twentyFour,
                                         onOpen: { editor = EditorRequest(task: task) },
                                         onToggle: { Task { await store.setDone(task, !task.done) } },
@@ -236,7 +235,6 @@ struct WeekStrip: View {
 @MainActor
 struct AllDayRow: View {
     let tasks: [PlannerTask]
-    let busy: Set<String>
     let onOpen: (PlannerTask) -> Void
     let onToggle: (PlannerTask) -> Void
 
@@ -265,7 +263,6 @@ struct AllDayRow: View {
                             .lineLimit(2)
                             .frame(width: 76)
                     }
-                    .opacity(busy.contains(task.id) ? 0.5 : 1)
                     .contentShape(Rectangle())
                     .onTapGesture { onOpen(task) }
                     .contextMenu {
@@ -287,7 +284,6 @@ struct TimelineRow: View {
     let isFirst: Bool
     let isLast: Bool
     let now: Int?
-    let busy: Bool
     let twentyFour: Bool
     let onOpen: () -> Void
     let onToggle: () -> Void
@@ -321,7 +317,6 @@ struct TimelineRow: View {
         }
         .frame(height: height + Self.rowPadding * 2)
         .contentShape(Rectangle())
-        .opacity(busy ? 0.55 : 1)
         .onTapGesture(perform: onOpen)
         .onDrag {
             onLift()

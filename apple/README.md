@@ -18,6 +18,7 @@ It talks to the same backend as Android, with the same app key.
   * Milestones are in the ⋯ menu.
 * **Settings**: server, app key and reminders.
 * The floating **+** adds a task (⌘N on iPad keyboards and Mac).
+* **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
 * **Reminders** arrive 10 minutes before every timed task. They are local
   notifications, so no push service or paid account is needed.
 

@@ -15,14 +15,13 @@ struct TaskEditor: View {
     @State private var minutes = 30
     @State private var notes = ""
     @State private var starred = false
-    @State private var saving = false
     @State private var confirmingDelete = false
     @State private var loaded = false
 
     private static let durations = [5, 10, 15, 20, 25, 30, 45, 60, 75, 90, 120, 150, 180, 240]
     private var existing: PlannerTask? { request.task }
     private var durationOptions: [Int] { Array(Set(Self.durations + [existing?.minutes ?? 30])).sorted() }
-    private var canSave: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !saving }
+    private var canSave: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         Form {
@@ -54,7 +53,6 @@ struct TaskEditor: View {
             }
         }
         .formStyle(.grouped)
-        .disabled(saving)
         .navigationTitle(existing == nil ? "New task" : "Edit task")
         .inlineTitle()
         .toolbar {
@@ -108,9 +106,10 @@ struct TaskEditor: View {
         let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let day = hasDate ? Civil.iso(date, in: zone) : nil
         let clock = hasDate && hasTime ? Civil.clock(Civil.minutesOfDay(time, in: zone)) : nil
-        saving = true
+        // Close now: the change shows on screen straight away and saves in the
+        // background. If the server refuses it, it is undone with a message.
+        dismiss()
         Task {
-            let saved: Bool
             if let task = existing {
                 var edited = task
                 edited.title = cleanTitle.isEmpty ? task.title : cleanTitle
@@ -120,23 +119,17 @@ struct TaskEditor: View {
                 edited.notes = cleanNotes.isEmpty ? nil : cleanNotes
                 edited.starred = starred
                 if let done { edited.done = done }
-                saved = await store.update(task, to: edited)
+                await store.update(task, to: edited)
             } else {
-                saved = await store.create(title: cleanTitle, date: day, time: clock, minutes: minutes,
-                                           notes: cleanNotes, starred: starred)
+                await store.create(title: cleanTitle, date: day, time: clock, minutes: minutes,
+                                   notes: cleanNotes, starred: starred)
             }
-            saving = false
-            if saved { dismiss() }
         }
     }
 
     private func remove() {
         guard let task = existing else { return }
-        saving = true
-        Task {
-            let removed = await store.delete(task)
-            saving = false
-            if removed { dismiss() }
-        }
+        dismiss()
+        Task { await store.delete(task) }
     }
 }

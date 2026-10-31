@@ -27,5 +27,18 @@ for name in ("MCP_API_KEY", "TELEGRAM_BOT_TOKEN"):
 from planner_api.app import create_app  # noqa: E402
 
 if __name__ == "__main__":
+    import asyncio
+
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    uvicorn.run(create_app(runtime=FakeRuntime(), verifier=FakeVerifier()), host="127.0.0.1", port=port, log_level="warning")
+    app = create_app(runtime=FakeRuntime(), verifier=FakeVerifier())
+    # Every write waits a little, like a phone network, so the tests can see a
+    # change on screen before the server has it. E2E_WRITE_DELAY=0 turns it off.
+    delay = float(os.environ.get("E2E_WRITE_DELAY", "0.4"))
+
+    @app.middleware("http")
+    async def network_delay(request, call_next):
+        if delay and request.method != "GET":
+            await asyncio.sleep(delay)
+        return await call_next(request)
+
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

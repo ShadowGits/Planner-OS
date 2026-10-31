@@ -94,6 +94,37 @@ func run() async {
     await settle()
     check(onScreen("Coffee")?.time ?? "gone", "gone", "a task deleted elsewhere is gone after the failed move")
 
+    // The test server delays every write by 0.4s, like a phone network.
+    func letItStart() async { for _ in 0..<5 { await Task.yield() } }
+
+    print("Instant on screen, saved in the background")
+    let adding = Task { await store.create(title: "Quick", date: today, time: "16:00", minutes: 15, notes: nil, starred: false) }
+    await letItStart()
+    check(onScreen("Quick") != nil, true, "a new task shows before the server answers")
+    check(onScreen("Quick")?.id.hasPrefix("pending:"), true, "under a temporary id")
+    check(await onServer("Quick") == nil, true, "while the server has not saved it yet")
+    _ = await adding.value
+    check(onScreen("Quick")?.id.hasPrefix("pending:"), false, "then it takes the server's id")
+    check(await onServer("Quick") != nil, true, "and the server has it")
+    let ticking = Task { await store.setDone(onScreen("Quick")!) }
+    await letItStart()
+    check(onScreen("Quick")?.done, true, "a tick shows before the server answers")
+    check(await onServer("Quick")?.done, false, "while the server is still saving it")
+    await ticking.value
+    check(await onServer("Quick")?.done, true, "then the server has it")
+
+    print("A refused change is undone, with a message")
+    store.toast = nil
+    var tooLong = onScreen("Quick")!
+    tooLong.minutes = 5000
+    let refusing = Task { await store.update(onScreen("Quick")!, to: tooLong) }
+    await letItStart()
+    check(onScreen("Quick")?.minutes, 5000, "shows at once")
+    _ = await refusing.value
+    check(onScreen("Quick")?.minutes, 15, "undone when the server refuses it")
+    check(store.toast?.hasPrefix("Couldn't save “Quick”") ?? false, true, "with a message saying what could not be saved")
+    print("    message: \(store.toast ?? "none")")
+
     print("Delete")
     check(await store.delete(onScreen("Yoga flow")!), true, "delete")
     check(await onServer("Yoga flow"), nil, "deleted on server")

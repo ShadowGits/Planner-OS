@@ -3,7 +3,7 @@ android {
     namespace = "dev.planneros.android"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
-    defaultConfig { applicationId = "dev.planneros.android"; minSdk = 26; targetSdk = 36; versionCode = 26; versionName = "1.0.24" }
+    defaultConfig { applicationId = "dev.planneros.android"; minSdk = 26; targetSdk = 36; versionCode = 27; versionName = "1.0.25" }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

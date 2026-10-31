@@ -29,6 +29,9 @@ final class PlannerStore {
 
     /// Writes still saving, counting the refresh after each; tests wait for 0.
     private(set) var writesInFlight = 0
+    /// Writes the server has not answered yet. Reads are not applied while any
+    /// are out, so a read that crossed a change on its way cannot undo it on screen.
+    private var unconfirmed = 0
 
     /// `connection` is the saved one in the app; the end-to-end tests pass a local server.
     init(connection saved: Connection? = ConnectionStore.load()) {
@@ -104,7 +107,7 @@ final class PlannerStore {
         let started = revision
         do {
             let view: DayView = try await api.get("/v2/day?date=\(date)")
-            guard started == revision else { return }
+            guard started == revision, unconfirmed == 0 else { return }
             days[date] = view
             adopt(view.timezone)
         } catch { if !quiet { report(error) } }
@@ -115,7 +118,7 @@ final class PlannerStore {
         let started = revision
         do {
             let view: DayView = try await api.get("/v2/day/inbox")
-            if started == revision { inbox = view }
+            if started == revision, unconfirmed == 0 { inbox = view }
         } catch { if !quiet { report(error) } }
     }
 
@@ -124,7 +127,7 @@ final class PlannerStore {
         let started = revision
         do {
             let view: WeekView = try await api.get("/v2/week?date=\(anchor ?? week?.weekStart ?? calendarToday)", cacheAs: "week")
-            if started == revision { week = view }
+            if started == revision, unconfirmed == 0 { week = view }
         } catch { if !quiet { report(error) } }
     }
 
@@ -169,30 +172,38 @@ final class PlannerStore {
 
     /// Applies `change` on screen (nil removes the task), sends `remote`, and
     /// puts everything back if it fails. Returns the response, or nil on failure.
-    private typealias Snapshot = ([String: DayView], DayView?, WeekView?)
-
+    /// Shows a change on screen at once and saves it in the background. If the
+    /// server refuses, only these tasks are put back as they were, and a message
+    /// says what could not be saved and why. `what` reads like "move “Yoga”".
     @discardableResult
-    private func perform(_ tasks: [PlannerTask], local change: (PlannerTask) -> PlannerTask?, restoring earlier: Snapshot? = nil,
+    private func perform(_ tasks: [PlannerTask], _ what: String, local change: (PlannerTask) -> PlannerTask?,
                          remote: (PlannerAPI) async throws -> Data) async -> Data? {
+        if let adding = tasks.first(where: { $0.id.hasPrefix("pending:") }) {
+            show("Still adding “\(adding.title)”. Try again in a moment.")
+            return nil
+        }
         guard let api, !tasks.isEmpty else { return nil }
-        let snapshot = earlier ?? (days, inbox, week)
         let ids = Set(tasks.map(\.id))
         writesInFlight += 1
         defer { writesInFlight -= 1 }
+        unconfirmed += 1
         revision += 1
         busy.formUnion(ids)
         applyLocal(tasks, change)
         do {
             let data = try await remote(api)
+            unconfirmed -= 1
             busy.subtract(ids)
             revision += 1
             await afterWrite()
             return data
         } catch {
+            unconfirmed -= 1
             busy.subtract(ids)
             revision += 1
-            (days, inbox, week) = snapshot
-            report(error)
+            // The tasks as they were passed in are the copies from before this change.
+            applyLocal(tasks) { $0 }
+            failed(what, error)
             // Then read the server again: the failure may mean the task changed
             // or went away elsewhere. Offline, the restored copy stays.
             await afterWrite()
@@ -234,13 +245,13 @@ final class PlannerStore {
     }
 
     func setDone(_ task: PlannerTask, _ done: Bool = true) async {
-        await perform([task], local: { var next = $0; next.done = done; return next }) {
+        await perform([task], "\(done ? "tick off" : "reopen") “\(task.title)”", local: { var next = $0; next.done = done; return next }) {
             try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["done": done])
         }
     }
 
     func toggleStar(_ task: PlannerTask) async {
-        await perform([task], local: { var next = $0; next.starred.toggle(); return next }) {
+        await perform([task], "\(task.starred ? "unstar" : "star") “\(task.title)”", local: { var next = $0; next.starred.toggle(); return next }) {
             try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["starred": !task.starred])
         }
     }
@@ -249,15 +260,14 @@ final class PlannerStore {
     /// caller's animation, then saves it. Waiting for a Task to start would let
     /// the block flash back to its old slot first.
     func rescheduleNow(_ task: PlannerTask, date: String, start: Int) {
-        guard api != nil else { return }
+        guard api != nil, !task.id.hasPrefix("pending:") else { return }
         let time = Civil.clock(start)
         var moved = task
         moved.date = date
         moved.time = time
-        let before: Snapshot = (days, inbox, week)
         applyLocal([task]) { _ in moved }
         Task {
-            await perform([task], local: { _ in moved }, restoring: before) {
+            await perform([task], "move “\(task.title)” to \(Civil.clockText(start, twentyFour: Civil.prefers24Hour))", local: { _ in moved }) {
                 try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["scheduled_date": date, "start_time": time])
             }
         }
@@ -267,7 +277,7 @@ final class PlannerStore {
     /// with them; a milestone the move overruns is pushed out by the server.
     func move(_ tasks: [PlannerTask], to date: String) async {
         let today = calendarToday
-        let response = await perform(tasks, local: { movedForFocus($0, to: date, today: today) }) {
+        let response = await perform(tasks, "move \(plural(tasks.count, "task")) to \(Civil.short(date))", local: { movedForFocus($0, to: date, today: today) }) {
             try await $0.send("POST", "/v2/day/tasks/triage", body: ["task_ids": tasks.map(\.id), "action": "move", "to_date": date])
         }
         guard let response else { return }
@@ -278,13 +288,14 @@ final class PlannerStore {
 
     /// Closes tasks as skipped. Nothing is deleted.
     func drop(_ tasks: [PlannerTask]) async {
-        let response = await perform(tasks, local: { var next = $0; next.done = true; return next }) {
+        let response = await perform(tasks, "drop \(plural(tasks.count, "task"))", local: { var next = $0; next.done = true; return next }) {
             try await $0.send("POST", "/v2/day/tasks/triage", body: ["task_ids": tasks.map(\.id), "action": "drop", "to_date": NSNull()])
         }
         if response != nil { show("Dropped \(plural(tasks.count, "task")) — kept as skipped, not deleted") }
     }
 
     /// Saves an edited task, sending only the fields that changed.
+    @discardableResult
     func update(_ task: PlannerTask, to edited: PlannerTask) async -> Bool {
         var body: [String: Any] = [:]
         if edited.title != task.title { body["title"] = edited.title }
@@ -295,7 +306,7 @@ final class PlannerStore {
         if edited.starred != task.starred { body["starred"] = edited.starred }
         if edited.done != task.done { body["done"] = edited.done }
         if body.isEmpty { return true }
-        let response = await perform([task], local: { _ in edited }) {
+        let response = await perform([task], "save “\(task.title)”", local: { _ in edited }) {
             try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: body)
         }
         guard let response else { return false }
@@ -304,32 +315,45 @@ final class PlannerStore {
         return true
     }
 
+    /// Adds a task. It shows at once under a temporary id, which the server's
+    /// id replaces when it answers; if the server refuses, it is taken off again.
+    @discardableResult
     func create(title: String, date: String?, time: String?, minutes: Int, notes: String?, starred: Bool) async -> Bool {
         guard let api else { return false }
         var body: [String: Any] = ["title": title, "estimated_minutes": minutes]
         if let date { body["date"] = date }
         if let time { body["start_time"] = time }
         if let notes, !notes.isEmpty { body["notes"] = notes }
-        revision += 1
+        let pending = PlannerTask(id: "pending:\(UUID().uuidString)", title: title, time: time, minutes: minutes,
+                                  starred: starred, date: date, notes: notes?.isEmpty == false ? notes : nil)
         writesInFlight += 1
         defer { writesInFlight -= 1 }
+        unconfirmed += 1
+        revision += 1
+        applyLocal([pending]) { $0 }
         do {
             let data = try await api.send("POST", "/v2/day/tasks", body: body)
-            if starred, let id = (try? JSONDecoder().decode(Envelope<MutationResult>.self, from: data))?.data.task?.id {
+            let id = (try? JSONDecoder().decode(Envelope<MutationResult>.self, from: data))?.data.task?.id
+            if starred, let id {
                 _ = try? await api.send("PATCH", PlannerAPI.taskPath(id), body: ["starred": true])
             }
+            unconfirmed -= 1
             revision += 1
+            if let id { applyLocal([pending]) { var saved = $0; saved.id = id; return saved } }
             await afterWrite()
             return true
         } catch {
+            unconfirmed -= 1
             revision += 1
-            report(error)
+            applyLocal([pending]) { _ in nil }
+            failed("add “\(title)”", error)
             return false
         }
     }
 
+    @discardableResult
     func delete(_ task: PlannerTask) async -> Bool {
-        await perform([task], local: { _ in nil }) {
+        await perform([task], "delete “\(task.title)”", local: { _ in nil }) {
             do { try await $0.send("DELETE", PlannerAPI.taskPath(task.id)) }
             catch let error as PlannerError where error.status == 404 { return Data() } // Already gone.
             return Data()
@@ -375,14 +399,22 @@ final class PlannerStore {
 
     // MARK: Messages
 
-    func show(_ message: String) {
+    func show(_ message: String, seconds: Double = 4) {
         toast = message
         toastClear?.cancel()
         toastClear = Task {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
             toast = nil
         }
+    }
+
+    /// "Couldn't move “Yoga” to 10:00: the server's reason. Your change was undone."
+    private func failed(_ what: String, _ error: Error) {
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+        var reason = error.localizedDescription
+        while reason.hasSuffix(".") { reason.removeLast() }
+        show("Couldn't \(what): \(reason). Your change was undone.", seconds: 7)
     }
 
     private func report(_ error: Error) {

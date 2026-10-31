@@ -149,7 +149,6 @@ struct FocusView: View {
             badge: item.reason.map { lateness(task, $0, now) } ?? (task.time ?? "Any time today"),
             context: store.context(task),
             soon: milestoneSoon(task, store.milestones, now),
-            busy: store.busy.contains(task.id),
             selecting: selecting && selectable,
             selected: selected.contains(task.id),
             onTap: {
@@ -215,7 +214,6 @@ struct TaskCard: View {
     let badge: String
     let context: String?
     let soon: String?
-    let busy: Bool
     let selecting: Bool
     let selected: Bool
     let onTap: () -> Void
@@ -263,15 +261,11 @@ struct TaskCard: View {
             }
             Divider()
             HStack(spacing: 2) {
-                if busy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    action("Done", "checkmark", .green, onDone)
-                    action("Tomorrow", "arrow.right", .accentColor, onTomorrow)
-                    action("Date", "calendar", .accentColor, onPickDate)
-                    Spacer(minLength: 0)
-                    action("Drop", "xmark", .secondary, onDrop)
-                }
+                action("Done", "checkmark", .green, onDone)
+                action("Tomorrow", "arrow.right", .accentColor, onTomorrow)
+                action("Date", "calendar", .accentColor, onPickDate)
+                Spacer(minLength: 0)
+                action("Drop", "xmark", .secondary, onDrop)
             }
         }
         .padding(12)
@@ -282,7 +276,6 @@ struct TaskCard: View {
                 .strokeBorder(selected ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: selected ? 2 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
-        .opacity(busy ? 0.55 : 1)
         .onTapGesture(perform: onTap)
         // A long-press gesture here would stop the list scrolling on iOS 18
         // and later; the system's context menu does not.

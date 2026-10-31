@@ -16,6 +16,7 @@ For Samsung background delivery, Settings → Apps → Planner OS → Battery �
 
 Version 1.0.11 (version code 13) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
+* Every change shows on screen at once and saves in the background; if the server refuses it, it is undone with a "Changes that couldn't be saved" message. Since 1.0.25 nothing fades while it saves.
 * `e2e/run.sh` at the repo root checks both apps together: backend tests, the Apple app against a fresh local API, and every Android test, including touch tests (scroll, tap, hold-and-drag) and the same end-to-end flows (add, drop, tick, star, edit, move, drop, delete) against that API.
 * Version 1.0.24 lays the day out like Structured and opens on it:
   * "May 2026" on top, a week strip you can swipe, and untimed tasks as round chips (hold one to tick it off).

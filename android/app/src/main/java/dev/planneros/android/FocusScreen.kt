@@ -106,7 +106,7 @@ private fun hours(minutes:Int)=if(minutes<60)"${minutes}m" else (minutes/60.0).l
             color=if(isSelected)MaterialTheme.colorScheme.primary.copy(alpha=.08f)else MaterialTheme.colorScheme.surface,
             border=androidx.compose.foundation.BorderStroke(if(isSelected)1.5.dp else 1.dp,
                 if(isSelected)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha=.6f)),
-            modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=4.dp).alpha(if(isBusy).5f else 1f)
+            modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=4.dp)
                 .combinedClickable(enabled=!isBusy,
                     onClick={if(selecting&&selectable)toggle(task) else onOpen(task)},
                     onLongClick={if(selectable)toggle(task)},
