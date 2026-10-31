@@ -283,16 +283,19 @@ internal fun taskIcon(task:Task):ImageVector {
             val top=coords.positionInParent().y;val previous=placedTop;placedTop=top
             if(previous!=null&&previous!=top)scope.launch{settle.snapTo(settle.value+previous-top);settle.animateTo(0f,spring(dampingRatio=.85f,stiffness=Spring.StiffnessMediumLow))}
         }
-        .graphicsLayer{
-            translationY=follow+settle.value
-            val scale=1f+.03f*lift;scaleX=scale;scaleY=scale
-            shadowElevation=14.dp.toPx()*lift;shape=RoundedCornerShape(18.dp);clip=false
-        }
+        // The drag is read here, on the row's fixed place, before the layer that
+        // moves it: read inside the layer, the row following the finger would
+        // cancel out most of the finger's own movement.
         .onGloballyPositioned{windowY=it.positionInWindow().y}
         .pointerInput(task.id,interactive){if(interactive)detectDragGesturesAfterLongPress(
             onDragStart={haptic.performHapticFeedback(HapticFeedbackType.LongPress);latestStart()},
             onDrag={change,amount->change.consume();latestMove(amount,windowY+change.position.y)},
             onDragEnd={latestEnd()},onDragCancel={latestCancel()})}
+        .graphicsLayer{
+            translationY=follow+settle.value
+            val scale=1f+.03f*lift;scaleX=scale;scaleY=scale
+            shadowElevation=14.dp.toPx()*lift;shape=RoundedCornerShape(18.dp);clip=false
+        }
         .clickable(enabled=interactive,onClick=edit)
         .semantics{contentDescription="${task.title}, ${displayClock(task.clockMinutes,twelve)} to ${displayClock(task.clockMinutes+task.minutes,twelve)}, ${durationLabel(task.minutes)}${if(task.done)", done" else ""}. Hold and drag to reschedule"},
         verticalAlignment=Alignment.CenterVertically){

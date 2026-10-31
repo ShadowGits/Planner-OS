@@ -35,6 +35,12 @@ internal val Wine = PlannerPalette.Wine
 internal fun taskBlocks(tasks:List<Task>) = tasks.filter { it.time != null }.map { TimeBlock(it.id,it.clockMinutes,it.minutes) }
 internal data class DragPreview(val taskId:String,val deltaDp:Float,val dayShift:Int,val target:ScheduleSlot)
 internal data class DragState(val task:Task,val originDate:LocalDate,val originScroll:Int,val deltaX:Float=0f,val deltaY:Float=0f,val pointerY:Float=0f)
+/** Where a held task would land, from the finger's travel plus any auto-scroll since it was lifted. */
+internal fun dragPreviewOf(drag:DragState?,scrollValue:Int,density:Float):DragPreview? = drag?.let{d->
+    val deltaDp=d.deltaY/density+(scrollValue-d.originScroll)/density
+    val shift=if(d.deltaX>100*density)1 else if(d.deltaX< -100*density)-1 else 0
+    DragPreview(d.task.id,deltaDp,shift,dragSlot(d.originDate,d.task.clockMinutes,deltaDp,shift,0,1675))
+}
 
 @Composable internal fun InboxCard(task:Task,dark:Boolean,enabled:Boolean,edit:()->Unit,done:()->Unit,star:()->Unit,schedule:()->Unit,overdue:Boolean=false){
     val interactive=enabled&&!task.id.startsWith("pending:")

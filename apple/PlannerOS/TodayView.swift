@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 enum Palette {
     #if canImport(UIKit)
@@ -291,13 +294,15 @@ struct TimelineRow: View {
         .offset(y: dragY)
         .zIndex(lifted ? 1 : 0)
         .onTapGesture(perform: onOpen)
-        .gesture(drag)
+        #if os(iOS)
+        .gesture(HoldToDrag(onBegan: lift, onChanged: follow, onEnded: drop, onCancelled: putBack))
+        #else
+        .gesture(mouseDrag)
+        #endif
         .onChange(of: pressing) { _, isPressing in
             // The system can cancel a drag without ending it (a call, a scroll
             // taking over); put the task back where it was.
-            if !isPressing && lifted {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { lifted = false; dragY = 0 }
-            }
+            if !isPressing && lifted { putBack() }
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: lifted) { _, isLifted in isLifted }
         .sensoryFeedback(.selection, trigger: preview) { _, _ in lifted }
@@ -354,32 +359,93 @@ struct TimelineRow: View {
         }
     }
 
-    private var drag: some Gesture {
+    private func lift() {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { lifted = true }
+    }
+
+    /// No animation here: the task tracks the finger exactly.
+    private func follow(_ dy: CGFloat) {
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) { dragY = dy }
+    }
+
+    /// The new time and the release animate together, so the task glides from
+    /// under the finger into its slot.
+    private func drop(_ dy: CGFloat) {
+        let target = snappedStart(task.clockMinutes, minutes: task.minutes, dragMinutes: Double(dy) / timelinePointsPerMinute)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+            lifted = false
+            dragY = 0
+            if target != task.clockMinutes { onMove(target) }
+        }
+    }
+
+    private func putBack() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { lifted = false; dragY = 0 }
+    }
+
+    /// On the Mac the mouse never scrolls the list, so SwiftUI's own gestures work.
+    private var mouseDrag: some Gesture {
         LongPressGesture(minimumDuration: 0.25)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .updating($pressing) { _, state, _ in state = true }
             .onChanged { value in
                 guard case .second(true, let drag) = value else { return }
-                if !lifted { withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { lifted = true } }
-                // No animation here: the task tracks the finger exactly.
-                var still = Transaction()
-                still.disablesAnimations = true
-                withTransaction(still) { dragY = drag?.translation.height ?? 0 }
+                if !lifted { lift() }
+                follow(drag?.translation.height ?? 0)
             }
             .onEnded { value in
                 guard case .second(true, let drag?) = value else { return }
-                let target = snappedStart(task.clockMinutes, minutes: task.minutes,
-                                          dragMinutes: Double(drag.translation.height) / timelinePointsPerMinute)
-                // The new time and the release animate together, so the task
-                // glides from under the finger into its slot.
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                    lifted = false
-                    dragY = 0
-                    if target != task.clockMinutes { onMove(target) }
-                }
+                drop(drag.translation.height)
             }
     }
 }
+
+#if os(iOS)
+/// Hold, then drag, read by UIKit's own long-press recogniser. A SwiftUI drag
+/// or long-press gesture on a row inside a ScrollView takes every touch on
+/// iOS 18 and later, which froze the timeline. UIKit's recogniser lets the
+/// scroll view have any touch that moves before the hold completes, and once
+/// the hold completes it keeps reporting the finger, so the list scrolls
+/// normally and a held task follows the finger.
+struct HoldToDrag: UIGestureRecognizerRepresentable {
+    var onBegan: () -> Void
+    var onChanged: (CGFloat) -> Void
+    var onEnded: (CGFloat) -> Void
+    var onCancelled: () -> Void
+
+    final class Coordinator {
+        var startY: CGFloat = 0
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
+        let recognizer = UILongPressGestureRecognizer()
+        recognizer.minimumPressDuration = 0.25
+        recognizer.allowableMovement = 10
+        return recognizer
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer, context: Context) {
+        let y = context.converter.location(in: .global).y
+        switch recognizer.state {
+        case .began:
+            context.coordinator.startY = y
+            onBegan()
+        case .changed:
+            onChanged(y - context.coordinator.startY)
+        case .ended:
+            onEnded(y - context.coordinator.startY)
+        case .cancelled, .failed:
+            onCancelled()
+        default:
+            break
+        }
+    }
+}
+#endif
 
 /// Free time between two tasks: a dotted spine and how long it lasts, or how
 /// long until the next task when now falls inside it.

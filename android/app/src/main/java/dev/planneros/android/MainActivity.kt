@@ -377,13 +377,11 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         val target=timed.find{!it.done&&nowMinute>=it.clockMinutes&&nowMinute<it.clockMinutes+it.minutes}?:timed.find{it.clockMinutes>=nowMinute}?:timed.lastOrNull()
         target?.let{reveal(it)}
     }
-    val dragPreview=drag?.let{d->
-        val deltaDp=d.deltaY/density+(scroll.value-d.originScroll)/density
-        val shift=if(d.deltaX>100*density)1 else if(d.deltaX< -100*density)-1 else 0
-        DragPreview(d.task.id,deltaDp,shift,dragSlot(d.originDate,d.task.clockMinutes,deltaDp,shift,0,1675))
-    }
+    val dragPreview=dragPreviewOf(drag,scroll.value,density)
     fun finishDrag(task:Task){
-        val preview=dragPreview;val origin=drag?.originDate;drag=null
+        // Read the finger's final position now, not the last frame's preview,
+        // so a quick last movement before letting go still counts.
+        val preview=dragPreviewOf(drag,scroll.value,density);val origin=drag?.originDate;drag=null
         if(preview==null||origin==null||selected!=origin)return
         val previous=normalizeSlot(origin,task.clockMinutes)
         if(preview.target==previous)return

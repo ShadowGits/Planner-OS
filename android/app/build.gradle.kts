@@ -9,6 +9,9 @@ android {
     kotlinOptions { jvmTarget = "17" }
     rootProject.file(".signing/debug.keystore").takeIf { it.exists() }?.let { signingConfigs.getByName("debug").storeFile = it }
     buildTypes { getByName("release") { isMinifyEnabled = false } }
+    // Timeline gestures are tested on the JVM with Robolectric (no emulator needed).
+    testOptions { unitTests { isIncludeAndroidResources = true
+        all { test -> System.getenv("ROBOLECTRIC_REPO")?.let { test.systemProperty("robolectric.dependency.repo.url", it) } } } }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
@@ -22,5 +25,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation("junit:junit:4.13.2")
+    testImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

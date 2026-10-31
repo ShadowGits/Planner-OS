@@ -284,7 +284,15 @@ struct TaskCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .opacity(busy ? 0.55 : 1)
         .onTapGesture(perform: onTap)
-        .onLongPressGesture(perform: onLongPress)
+        // A long-press gesture here would stop the list scrolling on iOS 18
+        // and later; the system's context menu does not.
+        .contextMenu {
+            Button { onLongPress() } label: { Label("Select", systemImage: "checkmark.circle") }
+            Button { onDone() } label: { Label("Done", systemImage: "checkmark") }
+            Button { onTomorrow() } label: { Label("Tomorrow", systemImage: "arrow.right") }
+            Button { onPickDate() } label: { Label("Pick a date", systemImage: "calendar") }
+            Button(role: .destructive) { onDrop() } label: { Label("Drop", systemImage: "xmark") }
+        }
     }
 
     private func action(_ title: String, _ icon: String, _ color: Color, _ perform: @escaping () -> Void) -> some View {
