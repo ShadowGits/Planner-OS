@@ -37,6 +37,10 @@ final class PlannerAPI: Sendable {
     init(connection: Connection) {
         self.connection = connection
         let config = URLSessionConfiguration.ephemeral
+        // Always the server's current answer: a day read after a save must
+        // never come from a cache and put the old name or time back.
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 40
         session = URLSession(configuration: config, delegate: RefuseRedirects(), delegateQueue: nil)

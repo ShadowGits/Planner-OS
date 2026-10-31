@@ -497,6 +497,55 @@ def test_starring_a_habit_day_sticks(client, runtime) -> None:
     assert [i for i in back["items"] if i["title"] == "Gym"][0]["starred"] is False
 
 
+def test_renaming_a_habit_day_renames_the_habit(client, runtime) -> None:
+    """A rename from either app used to be dropped for a habit: the habit
+    branch only understood done, date, time and star, so a rename alone came
+    back "nothing to change" and the app undid it, and a rename with a time
+    change kept the old name."""
+    from planner_api.v2 import build_core
+
+    core = build_core(runtime.service_client, USER_ID)
+    core.habits.add_habit(
+        "Gym", recurrence_key="gym", start_time="07:00", estimated_minutes=45,
+        start_date="2026-07-20",
+    )
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    gym = [i for i in items if i["title"] == "Gym"][0]
+
+    res = client.patch(f"/v2/day/tasks/{gym['id']}", json={"title": "Gym and cardio"}, headers=APP_KEY)
+    assert res.status_code == 200, res.json()
+    for day in ("2026-07-22", "2026-07-23"):
+        titles = [i["title"] for i in client.get(f"/v2/day?date={day}", headers=APP_KEY).json()["data"]["items"]]
+        assert "Gym and cardio" in titles and "Gym" not in titles, (day, titles)
+
+    # As Android saves an edit: the name with the day's date, time and length.
+    res = client.patch(
+        f"/v2/day/tasks/{gym['id']}",
+        json={"title": "Strength", "scheduled_date": "2026-07-22", "start_time": "08:00", "estimated_minutes": 45},
+        headers=APP_KEY,
+    )
+    assert res.status_code == 200, res.json()
+    moved = [i for i in client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"] if i["title"] == "Strength"]
+    assert moved and moved[0]["start_time"].startswith("08:00"), moved
+
+    blank = client.patch(f"/v2/day/tasks/{gym['id']}", json={"title": "  "}, headers=APP_KEY)
+    assert blank.status_code == 400
+
+
+def test_renaming_a_task_alone_sticks(client) -> None:
+    """The iPhone editor sends only what changed, so a rename is a patch of
+    the title and nothing else."""
+    created = client.post(
+        "/v2/day/tasks", json={"title": "Draft SOP", "date": "2026-07-22", "start_time": "10:00"}, headers=APP_KEY
+    ).json()["data"]["task"]
+    res = client.patch(f"/v2/day/tasks/{created['id']}", json={"title": "Draft SOP for TUM"}, headers=APP_KEY)
+    assert res.status_code == 200, res.json()
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    renamed = [i for i in items if i["id"] == created["id"]][0]
+    assert renamed["title"] == "Draft SOP for TUM" and renamed["start_time"].startswith("10:00")
+    assert client.patch(f"/v2/day/tasks/{created['id']}", json={"title": " "}, headers=APP_KEY).status_code == 400
+
+
 def test_push_test_requires_auth_and_forwards_selected_device(client, monkeypatch):
     calls = []
     def send(*args, **kwargs):

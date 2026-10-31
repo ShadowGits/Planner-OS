@@ -70,7 +70,9 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
             if(choices.isNotEmpty())PlanningProjectSelector(choices,resolvedProjectId,{projectId=it;projectExplicit=true},enabled=!busy&&task?.habit!=true)
             else Text("Projects are not saved on this device yet. Connect once to load them.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(resolvedProjectId!=null&&choices.none{it.id==resolvedProjectId})Text("Keeping the task's current project",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(title,{title=it},label={Text("Task name")},readOnly=task?.habit==true,modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp),maxLines=4)
+            // Editable for habits too: the server renames the habit (on every day) from here.
+            OutlinedTextField(title,{title=it},label={Text("Task name")},modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp),maxLines=4,
+                supportingText=if(task?.habit==true){{Text("This is a habit: a new name renames it on every day.")}} else null)
             if(matches.isNotEmpty()){
                 Text("Existing unscheduled tasks · ${matches.size}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp,bottom=3.dp))
                 LazyColumn(Modifier.fillMaxWidth().height((minOf(matches.size,PlanningCachePolicy.VISIBLE_SUGGESTIONS)*48).dp),state=suggestionScroll){
@@ -91,7 +93,8 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
                 listOf(15,30,45,60,90,120).forEach{value->FilterChip(selected=minutes.toIntOrNull()==value,onClick={minutes=value.toString()},label={Text(durationLabel(value))})}
             }
             OutlinedTextField(minutes,{minutes=it.filter(Char::isDigit)},label={Text("Custom minutes")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp))
-            OutlinedTextField(notes,{notes=it},label={Text("Notes (optional)")},modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp))
+            // A habit keeps no notes (the server has nowhere to put them), so it does not offer them.
+            if(task?.habit!=true)OutlinedTextField(notes,{notes=it},label={Text("Notes (optional)")},modifier=Modifier.fillMaxWidth().padding(top=10.dp),shape=RoundedCornerShape(14.dp))
             validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp,modifier=Modifier.padding(top=7.dp))}
             Button(enabled=!busy,onClick={
                 val parsed=runCatching{LocalDate.parse(date)}.getOrNull();val duration=minutes.toIntOrNull();val startTime=normalizeTaskTime(time)

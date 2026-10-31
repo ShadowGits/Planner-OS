@@ -309,6 +309,15 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                     result = core.habits.star_occurrence(
                         habit_id, rule_day, bool(body.starred)
                     )
+                # Renaming a habit's day renames the habit: an occurrence has no
+                # row of its own to hold a name. Without this the new name was
+                # dropped, and a rename alone came back "nothing to change" and
+                # was undone on screen.
+                if "title" in body.model_fields_set and body.title is not None:
+                    title = body.title.strip()
+                    if not title:
+                        raise PlannerCoreError("A habit needs a name")
+                    result = core.habits.update_habit(habit_id, {"title": title})
                 if result is None:
                     raise HTTPException(
                         status_code=400,
@@ -320,6 +329,10 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 ) from error
             return _envelope(True, result["message"], result["data"])
 
+        if "title" in body.model_fields_set and body.title is not None and not body.title.strip():
+            raise HTTPException(
+                status_code=400, detail={"code": "TASK_UPDATE_INVALID", "message": "A task needs a name"}
+            )
         try:
             if body.done is True:
                 result = core.tasks.complete_task(task_id, source="dashboard")

@@ -17,6 +17,8 @@ struct TaskEditor: View {
     @State private var starred = false
     @State private var confirmingDelete = false
     @State private var loaded = false
+    /// The fields as they opened, so saving sends only what was changed.
+    @State private var opened: EditorFields?
 
     private static let durations = [5, 10, 15, 20, 25, 30, 45, 60, 75, 90, 120, 150, 180, 240]
     private var existing: PlannerTask? { request.task }
@@ -28,6 +30,8 @@ struct TaskEditor: View {
             Section {
                 TextField("What needs doing?", text: $title)
                 Toggle(isOn: $starred) { Label("Top win", systemImage: "star") }
+            } footer: {
+                if existing?.habit == true { Text("This is a habit: a new name renames it on every day.") }
             }
             Section("When") {
                 Toggle("On a day", isOn: $hasDate.animation())
@@ -42,13 +46,16 @@ struct TaskEditor: View {
                     ForEach(durationOptions, id: \.self) { Text(Self.durationLabel($0)).tag($0) }
                 }
             }
-            Section("Notes") {
-                TextField("Notes", text: $notes, axis: .vertical).lineLimit(3...10)
+            // A habit keeps no notes (the server has nowhere to put them), so it does not offer them.
+            if existing?.habit != true {
+                Section("Notes") {
+                    TextField("Notes", text: $notes, axis: .vertical).lineLimit(3...10)
+                }
             }
             if let task = existing {
                 Section {
                     Button(task.done ? "Reopen" : "Mark done") { save(done: !task.done) }
-                    Button("Delete", role: .destructive) { confirmingDelete = true }
+                    Button(task.habit ? "Skip this day" : "Delete", role: .destructive) { confirmingDelete = true }
                 }
             }
         }
@@ -61,10 +68,12 @@ struct TaskEditor: View {
                 Button(existing == nil ? "Add" : "Save") { save(done: nil) }.disabled(!canSave)
             }
         }
-        .confirmationDialog("Delete this task?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { remove() }
+        .confirmationDialog(existing?.habit == true ? "Skip this day of the habit?" : "Delete this task?",
+                            isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button(existing?.habit == true ? "Skip" : "Delete", role: .destructive) { remove() }
         } message: {
-            Text("This removes it for good. Drop it from Focus instead to keep it as skipped.")
+            Text(existing?.habit == true ? "Only this day goes; the habit carries on every other day."
+                 : "This removes it for good. Drop it from Focus instead to keep it as skipped.")
         }
         .environment(\.timeZone, store.timeZone)
         .onAppear(perform: load)
@@ -91,6 +100,8 @@ struct TaskEditor: View {
             minutes = task.minutes
             notes = task.notes ?? ""
             starred = task.starred
+            opened = fields(title: title, hasDate: hasDate, date: date, hasTime: hasTime, time: time,
+                            minutes: minutes, notes: notes, starred: starred)
         } else {
             let day = request.date ?? store.logicalToday
             let nextHalfHour = Civil.clock((store.moment.minutes / 30 + 1) * 30)
@@ -101,24 +112,32 @@ struct TaskEditor: View {
         }
     }
 
+    /// The editor's fields as plain values, read the same way when it opens and when it saves.
+    private func fields(title: String, hasDate: Bool, date: Date, hasTime: Bool, time: Date,
+                        minutes: Int, notes: String, starred: Bool) -> EditorFields {
+        let zone = store.timeZone
+        return EditorFields(title: title,
+                            date: hasDate ? Civil.iso(date, in: zone) : nil,
+                            time: hasDate && hasTime ? Civil.clock(Civil.minutesOfDay(time, in: zone)) : nil,
+                            minutes: minutes, notes: notes, starred: starred)
+    }
+
     private func save(done: Bool?) {
         let zone = store.timeZone
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let day = hasDate ? Civil.iso(date, in: zone) : nil
         let clock = hasDate && hasTime ? Civil.clock(Civil.minutesOfDay(time, in: zone)) : nil
+        let now = fields(title: title, hasDate: hasDate, date: date, hasTime: hasTime, time: time,
+                         minutes: minutes, notes: notes, starred: starred)
+        let start = opened
         // Close now: the change shows on screen straight away and saves in the
         // background. If the server refuses it, it is undone with a message.
         dismiss()
         Task {
             if let task = existing {
-                var edited = task
-                edited.title = cleanTitle.isEmpty ? task.title : cleanTitle
-                edited.date = day
-                edited.time = clock
-                edited.minutes = minutes
-                edited.notes = cleanNotes.isEmpty ? nil : cleanNotes
-                edited.starred = starred
+                // Only what was changed: a rename saves the name and nothing else.
+                var edited = editedTask(task, from: start ?? now, to: now)
                 if let done { edited.done = done }
                 await store.update(task, to: edited)
             } else {

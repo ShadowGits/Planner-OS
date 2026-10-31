@@ -343,3 +343,38 @@ func timelineAnchor(_ items: [TimelineItem], now: Int?) -> String? {
     if let now, let current = tasks.first(where: { $0.clockMinutes + $0.minutes > now }) { return current.id }
     return tasks.first?.id
 }
+
+// MARK: Editing
+
+/// What the task editor's fields hold, as plain values.
+struct EditorFields: Equatable {
+    var title: String
+    /// yyyy-MM-dd, nil when "On a day" is off.
+    var date: String?
+    /// "HH:mm", nil when "At a time" is off.
+    var time: String?
+    var minutes: Int
+    var notes: String
+    var starred: Bool
+}
+
+/// The task as the editor saves it. Only fields the person changed in the
+/// editor move away from the task; anything left alone keeps the task's own
+/// value, so a rename saves the name and nothing else, whatever the date and
+/// time pickers did with the time zone or a 25:30 slot.
+func editedTask(_ task: PlannerTask, from start: EditorFields, to end: EditorFields) -> PlannerTask {
+    var edited = task
+    let title = end.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    if end.title != start.title, !title.isEmpty { edited.title = title }
+    if end.date != start.date || end.time != start.time {
+        edited.date = end.date
+        edited.time = end.date == nil ? nil : end.time
+    }
+    if end.minutes != start.minutes { edited.minutes = end.minutes }
+    if end.notes != start.notes {
+        let notes = end.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        edited.notes = notes.isEmpty ? nil : notes
+    }
+    if end.starred != start.starred { edited.starred = end.starred }
+    return edited
+}

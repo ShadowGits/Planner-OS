@@ -86,6 +86,19 @@ func run() async {
     check(await store.update(onScreen("Yoga flow")!, to: unscheduled), true, "clear the time")
     check(await onServer("Yoga flow")?.time, nil, "time cleared on server")
 
+    print("Rename from the editor")
+    check(await store.create(title: "Draft SOP", date: today, time: "11:00", minutes: 45, notes: nil, starred: false), true, "add a task to rename")
+    await store.loadDay(today)
+    let sopTask = onScreen("Draft SOP")!
+    let sopOpened = EditorFields(title: "Draft SOP", date: today, time: "11:00", minutes: 45, notes: "", starred: false)
+    var sopRenamed = sopOpened; sopRenamed.title = "Draft SOP for TUM"
+    check(await store.update(sopTask, to: editedTask(sopTask, from: sopOpened, to: sopRenamed)), true, "save the new name")
+    check(onScreen("Draft SOP for TUM")?.time, "11:00", "renamed on screen, same time")
+    await settle()
+    check(onScreen("Draft SOP for TUM") != nil, true, "still renamed after saving and refreshing")
+    check(await onServer("Draft SOP for TUM")?.time, "11:00", "server has the new name at the same time")
+    check(await onServer("Draft SOP") == nil, true, "and not the old one")
+
     print("Focus: move and drop")
     await store.move([onScreen("Read")!], to: tomorrow)
     check(onScreen("Read"), nil, "moved task leaves today")

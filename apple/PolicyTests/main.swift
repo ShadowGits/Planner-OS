@@ -195,6 +195,28 @@ check(winsTitle([winA, winB]), "Top Wins · 1 of 2", "Top Wins count")
 var wonA = winA; wonA.done = true
 check(winsTitle([wonA, winB]), "Day won", "every win done")
 
+// The editor saves only what was changed.
+let sop = PlannerTask(id: "sop", title: "Draft SOP", time: "25:30", minutes: 45, date: "2026-05-14", notes: " old ")
+let openedFields = EditorFields(title: "Draft SOP", date: "2026-05-14", time: "01:30", minutes: 45, notes: " old ", starred: false)
+var renamedFields = openedFields; renamedFields.title = "  Draft SOP for TUM "
+let renamedTask = editedTask(sop, from: openedFields, to: renamedFields)
+check(renamedTask.title, "Draft SOP for TUM", "a rename saves the trimmed name")
+check(renamedTask.time, "25:30", "and leaves the time as the task had it")
+check(renamedTask.date, "2026-05-14", "and the date")
+check(renamedTask.notes, " old ", "and the notes")
+check(renamedTask.minutes, 45, "and the length")
+var blankFields = openedFields; blankFields.title = "   "
+check(editedTask(sop, from: openedFields, to: blankFields).title, "Draft SOP", "a blank name keeps the old one")
+var movedFields = openedFields; movedFields.time = "02:00"
+let movedTask = editedTask(sop, from: openedFields, to: movedFields)
+check(movedTask.time, "02:00", "a new time is saved"); check(movedTask.date, "2026-05-14", "with the day shown")
+var untimedFields = openedFields; untimedFields.date = nil
+check(editedTask(sop, from: openedFields, to: untimedFields).time, nil, "no day means no time")
+var notedFields = openedFields; notedFields.notes = "  bring CV  "; notedFields.minutes = 60; notedFields.starred = true
+let notedTask = editedTask(sop, from: openedFields, to: notedFields)
+check(notedTask.notes, "bring CV", "notes trimmed"); check(notedTask.minutes, 60, "length"); check(notedTask.starred, true, "star")
+check(notedTask.time, "25:30", "time untouched when only other fields change")
+
 // Capsules fill by time; words match Structured.
 let emails = task("Emails", time: "16:00", minutes: 30)
 check(taskPhase(emails, now: 15 * 60), .upcoming, "ahead of now")
