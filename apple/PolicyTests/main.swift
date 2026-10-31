@@ -122,5 +122,19 @@ check(Civil.clockText(7 * 60, twentyFour: false), "07:00 AM", "12h"); check(Civi
 check(Civil.clockText(1440, twentyFour: true), "00:00", "midnight"); check(Civil.monthName("2026-05-13"), "May", "month")
 check(Civil.weekdayShort("2026-05-13"), "Wed", "weekday")
 
+// Drop maths: a point in the list to a time and back.
+let dropDay = timelineItems([task("wake", time: "07:00", minutes: 15), task("yoga", time: "07:15"), task("coffee", time: "08:45", minutes: 15)])
+// Rows: wake 0-62, yoga 62-144 (pill 72), gap 144-180 (60m at 0.6 = 36), coffee 180-242.
+check(minuteAt(0, in: dropDay), 420, "top of the list is the first start")
+check(minuteAt(62 + 5 + 36, in: dropDay), 450, "halfway down a 30-minute capsule is 15 minutes in")
+check(minuteAt(144 + 18, in: dropDay), 495, "halfway through an hour of free time")
+check(minuteAt(242 + 24, in: dropDay), 550, "below the last task at 2.4 points a minute")
+check(minuteAt(-50, in: dropDay), 420, "above the top is the first start")
+for minute in stride(from: 420, through: 600, by: 5) {
+    check(minuteAt(offsetFor(minute, in: dropDay), in: dropDay), minute, "round trip \(Civil.clock(minute))")
+}
+check(minuteAt(30, in: []), 555, "an empty day starts from 09:00")
+check(dropStart(1430, duration: 60), 1380, "a drop keeps the task inside the day")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

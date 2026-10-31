@@ -50,9 +50,13 @@ data class Day(val date: String, val timezone: String, val tasks: List<Task>, va
 
 /** No secrets in source, backups, plaintext preferences, logs, or HTTP URLs. */
 class SecureConfig(private val context: Context) {
-    companion object { private val connectionLock = Any() }
+    companion object {
+        private val connectionLock = Any()
+        /** End-to-end tests point the app at a local server (e2e/run.sh). The app never sets it. */
+        @Volatile internal var testConnection: Pair<String,String>? = null
+    }
     private val prefs=context.getSharedPreferences("connection",Context.MODE_PRIVATE)
-    val baseUrl get()=prefs.getString("url","").orEmpty()
+    val baseUrl get()=testConnection?.first?:prefs.getString("url","").orEmpty()
     val configured get()=baseUrl.isNotEmpty() && key().isNotEmpty()
     val generation: Long get() = prefs.getLong("generation", 0L)
     fun connection(): Pair<String,String> = synchronized(connectionLock) { baseUrl to key() }
@@ -65,7 +69,7 @@ class SecureConfig(private val context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
-    fun key(): String { return try {
+    fun key(): String { testConnection?.let{return it.second}; return try {
         val raw=prefs.getString("secret",null) ?: return ""
         val parts=raw.split(":")
         val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply{init(Cipher.DECRYPT_MODE,secret(),GCMParameterSpec(128,Base64.decode(parts[0],Base64.NO_WRAP)))}

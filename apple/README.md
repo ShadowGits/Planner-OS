@@ -10,11 +10,11 @@ It talks to the same backend as Android, with the same app key.
   * Times are on the left, "start – end (duration)" and the title on the right, and a circle to tick it off at the far edge.
   * Free time between tasks is shown, with "Now · 25m until …" when you are in a gap.
   * The task under way fills up as time passes.
-  * **Hold a task, then drag it**: it follows your finger, the time ticks in 5-minute steps with a haptic each step, and it glides into its new place when you let go.
+  * **Hold a task to lift it, then drag it**: a line under your finger shows the start time it will get, ticking in 5-minute steps with a haptic each step, and it moves there when you let go. This uses the system's drag and drop, so scrolling still works everywhere.
   * Tap a task to edit it.
 * **Focus**: overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
-  * Long-press or **Select** to move or drop several.
+  * Hold a card for its menu (Select, Done, Tomorrow, Pick a date, Drop), or tap **Select** to move or drop several.
   * Milestones are in the ⋯ menu.
 * **Settings**: server, app key and reminders.
 * The floating **+** adds a task (⌘N on iPad keyboards and Mac).
@@ -68,3 +68,10 @@ From `apple/` on a Mac (or any machine with Swift):
 ```sh
 swiftc PlannerOS/Models.swift PlannerOS/FocusPolicy.swift PlannerOS/PlannerAPI.swift PolicyTests/main.swift -o /tmp/policy && /tmp/policy
 ```
+
+## Checking both apps together
+
+`e2e/run.sh` at the repo root runs every backend test, these rules, this app's
+store against a fresh local Planner OS API (add, drag, tick, star, edit, move,
+drop, delete, and a failed save), and every Android test including its touch
+tests and the same end-to-end flows. Run it before shipping either app.

@@ -27,11 +27,15 @@ final class PlannerStore {
     private var reminderSync: Task<Void, Never>?
     private var toastClear: Task<Void, Never>?
 
-    init() {
+    /// Writes still saving, counting the refresh after each; tests wait for 0.
+    private(set) var writesInFlight = 0
+
+    /// `connection` is the saved one in the app; the end-to-end tests pass a local server.
+    init(connection saved: Connection? = ConnectionStore.load()) {
         let zone = TimeZone(identifier: UserDefaults.standard.string(forKey: "timezone") ?? "Asia/Kolkata") ?? .current
         timeZone = zone
         selectedDate = Civil.logicalToday(in: zone)
-        connection = ConnectionStore.load()
+        connection = saved
         api = connection.map { PlannerAPI(connection: $0) }
         paintCached()
     }
@@ -173,6 +177,8 @@ final class PlannerStore {
         guard let api, !tasks.isEmpty else { return nil }
         let snapshot = earlier ?? (days, inbox, week)
         let ids = Set(tasks.map(\.id))
+        writesInFlight += 1
+        defer { writesInFlight -= 1 }
         revision += 1
         busy.formUnion(ids)
         applyLocal(tasks, change)
@@ -187,6 +193,9 @@ final class PlannerStore {
             revision += 1
             (days, inbox, week) = snapshot
             report(error)
+            // Then read the server again: the failure may mean the task changed
+            // or went away elsewhere. Offline, the restored copy stays.
+            await afterWrite()
             return nil
         }
     }
@@ -302,6 +311,8 @@ final class PlannerStore {
         if let time { body["start_time"] = time }
         if let notes, !notes.isEmpty { body["notes"] = notes }
         revision += 1
+        writesInFlight += 1
+        defer { writesInFlight -= 1 }
         do {
             let data = try await api.send("POST", "/v2/day/tasks", body: body)
             if starred, let id = (try? JSONDecoder().decode(Envelope<MutationResult>.self, from: data))?.data.task?.id {

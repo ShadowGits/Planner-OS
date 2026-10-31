@@ -107,3 +107,67 @@ func timelineAnchor(_ items: [TimelineItem], now: Int?) -> String? {
     if let now, let current = tasks.first(where: { $0.clockMinutes + $0.minutes > now }) { return current.id }
     return tasks.first?.id
 }
+
+/// Space above and below each capsule inside its row.
+let timelineRowPadding = 5.0
+
+/// How tall an item is in the list.
+func itemHeight(_ item: TimelineItem) -> Double {
+    switch item {
+    case .task(let task, _): return pillHeight(task.minutes) + 2 * timelineRowPadding
+    case .gap(_, let minutes, _): return gapHeight(minutes)
+    }
+}
+
+private func snapToFive(_ minute: Double) -> Int { min(max(Int((minute / 5).rounded()) * 5, 0), 24 * 60 - 5) }
+
+/// The time a point in the list stands for, y in points from the list's top,
+/// snapped to five minutes. Inside a capsule time runs top to bottom across its
+/// duration; inside free time across the gap; past the end at capsule scale.
+func minuteAt(_ y: Double, in items: [TimelineItem]) -> Int {
+    var top = 0.0
+    var end: Int?
+    for item in items {
+        let height = itemHeight(item)
+        switch item {
+        case .task(let task, _):
+            if y < top + height {
+                let inside = min(max((y - top - timelineRowPadding) / pillHeight(task.minutes), 0), 1)
+                return snapToFive(Double(task.clockMinutes) + inside * Double(task.minutes))
+            }
+            end = max(end ?? 0, task.clockMinutes + task.minutes)
+        case .gap(let start, let minutes, _):
+            if y < top + height { return snapToFive(Double(start) + (y - top) / height * Double(minutes)) }
+            end = start + minutes
+        }
+        top += height
+    }
+    return snapToFive(Double(end ?? 9 * 60) + (y - top) / timelinePointsPerMinute)
+}
+
+/// Where a time sits in the list: the inverse of minuteAt, for the line that
+/// shows where a dragged task will land.
+func offsetFor(_ minute: Int, in items: [TimelineItem]) -> Double {
+    var top = 0.0
+    var end: Int?
+    for item in items {
+        let height = itemHeight(item)
+        switch item {
+        case .task(let task, _):
+            if minute < task.clockMinutes { return top }
+            if minute < task.clockMinutes + task.minutes {
+                return top + timelineRowPadding
+                    + Double(minute - task.clockMinutes) / Double(max(task.minutes, 1)) * pillHeight(task.minutes)
+            }
+            end = max(end ?? 0, task.clockMinutes + task.minutes)
+        case .gap(let start, let minutes, _):
+            if minute < start + minutes { return top + Double(minute - start) / Double(max(minutes, 1)) * height }
+            end = start + minutes
+        }
+        top += height
+    }
+    return top + Double(minute - (end ?? 9 * 60)) * timelinePointsPerMinute
+}
+
+/// Where a dropped task starts: at the time under the finger, kept inside the day.
+func dropStart(_ minute: Int, duration: Int) -> Int { min(max(minute, 0), 24 * 60 - min(max(duration, 5), 24 * 60)) }
