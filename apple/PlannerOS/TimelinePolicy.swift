@@ -128,6 +128,14 @@ func offsetFor(_ minute: Int, in items: [TimelineItem]) -> Double {
 /// Where a dropped task starts: at the time shown, kept inside the day.
 func dropStart(_ minute: Int, duration: Int) -> Int { min(max(minute, 0), 24 * 60 - min(max(duration, 5), 24 * 60)) }
 
+/// The now bar's height in the list: at the current time's place in the layout, and when now
+/// is before the first task or after the last, just above or below them. Nil on other days.
+func nowBarOffset(_ now: Int, in items: [TimelineItem]) -> Double? {
+    guard !items.isEmpty, now >= 0, now <= 24 * 60 + 240 else { return nil }
+    let bottom = items.reduce(0) { $0 + itemHeight($1) }
+    return min(max(offsetFor(now, in: items), -12), bottom + 20)
+}
+
 /// Where a task stands against the clock, which decides how its capsule is filled.
 enum TaskPhase { case upcoming, underway, past, done }
 

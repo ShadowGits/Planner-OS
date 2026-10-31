@@ -131,6 +131,15 @@ for minute in stride(from: 420, through: 600, by: 5) {
 check(minuteAt(30, in: []), 560, "an empty day starts from 09:00")
 check(dropStart(1430, duration: 60), 1380, "a drop keeps the task inside the day")
 
+// The now bar shows wherever now falls.
+let barDay = timelineItems([task("Coffee", time: "15:45", minutes: 15), task("Emails", time: "16:00"), task("Home", time: "17:00")])
+check(nowBarOffset(16 * 60 + 10, in: barDay), offsetFor(16 * 60 + 10, in: barDay), "now bar inside a task")
+check(nowBarOffset(16 * 60 + 40, in: barDay), offsetFor(16 * 60 + 40, in: barDay), "now bar in free time")
+check(nowBarOffset(6 * 60, in: barDay), -12, "now bar before the first task, just above it")
+check(nowBarOffset(23 * 60, in: barDay), barDay.reduce(0) { $0 + itemHeight($1) } + 20, "now bar after the last task, just below it")
+check(nowBarOffset(-1, in: barDay), nil, "no now bar on a later day")
+check(nowBarOffset(Int.max, in: barDay), nil, "no now bar on an earlier day")
+
 // Capsules fill by time; words match Structured.
 let emails = task("Emails", time: "16:00", minutes: 30)
 check(taskPhase(emails, now: 15 * 60), .upcoming, "ahead of now")

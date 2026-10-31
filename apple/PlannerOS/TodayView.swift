@@ -95,6 +95,10 @@ struct TodayView: View {
                                     }
                                 }
                             }
+                            if let barY = nowBarOffset(now, in: entries) {
+                                NowBar(label: columnClock(now, twentyFour: twentyFour))
+                                    .offset(y: CGFloat(barY) - 8)
+                            }
                             if let hover, let dragged {
                                 LandingOutline(task: dragged, start: dropStart(hover, duration: dragged.minutes),
                                                entries: entries, twentyFour: twentyFour)
@@ -282,8 +286,8 @@ private struct TimeLabel: Identifiable {
     var id: String { "\(Int(y))-\(text)" }
 }
 
-/// The left column: start and end, whole hours inside long tasks, and the
-/// current time in bold.
+/// The left column: start and end, and whole hours inside long tasks. Labels
+/// next to the now bar give way to its bold time.
 private struct TimeColumn: View {
     let height: CGFloat
     let labels: [TimeLabel]
@@ -296,12 +300,32 @@ private struct TimeColumn: View {
                 Text(label.text).font(.caption2.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
                     .offset(y: label.y - 7)
             }
-            if let now {
-                Text(now.text).font(.caption2.monospacedDigit().weight(.bold)).foregroundStyle(.primary).lineLimit(1)
-                    .offset(y: now.y - 7)
-            }
         }
         .frame(width: TimelineRow.timeColumn, height: height, alignment: .topLeading)
+    }
+}
+
+/// The now bar: the current time in bold, a small dot on the spine and a very
+/// subtle line across the timeline.
+private struct NowBar: View {
+    let label: String
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Canvas { context, size in
+                let x = TimelineRow.timeColumn + 4 + TimelineRow.pillWidth / 2, mid = size.height / 2
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: mid))
+                line.addLine(to: CGPoint(x: size.width, y: mid))
+                context.stroke(line, with: .color(Palette.accent.opacity(0.35)), lineWidth: 1)
+                context.fill(Path(ellipseIn: CGRect(x: x - 3, y: mid - 3, width: 6, height: 6)), with: .color(Palette.accent))
+            }
+            Text(label).font(.caption2.monospacedDigit().weight(.bold)).foregroundStyle(.primary).lineLimit(1)
+        }
+        .frame(height: 16)
+        .frame(maxWidth: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityLabel("Now, \(label)")
     }
 }
 

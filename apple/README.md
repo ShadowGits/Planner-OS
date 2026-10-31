@@ -5,7 +5,7 @@ It talks to the same backend as Android, with the same app key.
 
 * **Timeline** (opens first), matching Structured as measured in `docs/structured-ux.md`:
   * "16. October 2025 ›" on top, the week strip with each day's task colours under it, untimed tasks as round chips.
-  * Time runs down the page at 1.6 pt a minute. Capsules ahead of now are pale with a coloured icon; the one under way fills with colour down to now and says "28m remaining"; passed and done ones are solid. The line is coloured up to now and the current time is bold on the left.
+  * Time runs down the page at 1.6 pt a minute. Capsules ahead of now are pale with a coloured icon; the one under way fills with colour down to now and says "28m remaining"; passed and done ones are solid. The line is coloured up to now, and a very subtle now bar runs across the timeline with the current time in bold on the left.
   * Free time reads "You'll have 30m free. Anything you'd like to fit in?"; a long stretch offers "Add Task".
   * **Hold a task and drag it**: an outlined capsule shows where it will land with the new times in bold, a chip follows your finger, and the + turns into a bin to delete. Scrolling still works everywhere.
   * Tap a task to edit it.

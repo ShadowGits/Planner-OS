@@ -48,6 +48,17 @@ class StructuredTimelineTest {
         assertEquals("a later day is all ahead",Phase.UPCOMING,phaseOf(emails,nowOnDay(java.time.LocalDate.parse("2026-05-14"),java.time.LocalDate.parse("2026-05-13"),600)))
     }
 
+    @Test fun theNowBarShowsWhereverNowFalls(){
+        val entries=dayEntries(listOf(task("Coffee","15:45",15),task("Emails","16:00",30),task("Home","17:00",30)))
+        assertEquals("inside a task, at its place",offsetForDp(16*60+10,entries),nowBarDp(16*60+10,entries)!!,.01f)
+        assertEquals("in free time",offsetForDp(16*60+40,entries),nowBarDp(16*60+40,entries)!!,.01f)
+        assertEquals("before the first task, just above it",-12f,nowBarDp(6*60,entries)!!,.01f)
+        val bottom=entries.sumOf{entryHeightDp(it).toDouble()}.toFloat()
+        assertEquals("after the last task, just below it",bottom+20f,nowBarDp(23*60,entries)!!,.01f)
+        assertNull("not on another day",nowBarDp(-1,entries))
+        assertNull(nowBarDp(Int.MAX_VALUE,entries))
+    }
+
     @Test fun wordsMatchStructured(){
         assertEquals("7:00–7:15 AM",rangeText(420,435,true))
         assertEquals("11:30 AM–12:15 PM",rangeText(690,735,true))

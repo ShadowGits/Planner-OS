@@ -163,6 +163,14 @@ internal fun offsetForDp(minute:Int,entries:List<DayEntry>):Float {
     return top+(minute-(end?:9*60))*MINUTE_DP
 }
 
+/** The now bar's height in the list: at the current time's place in the layout, and when now
+ *  is before the first task or after the last, just above or below them. Null on other days. */
+internal fun nowBarDp(now:Int,entries:List<DayEntry>):Float? {
+    if(entries.isEmpty()||now<0||now>LAST_START+120)return null
+    val bottom=entries.sumOf{entryHeightDp(it).toDouble()}.toFloat()
+    return offsetForDp(now,entries).coerceIn(-12f,bottom+20f)
+}
+
 /** Where a task stands against the clock, which decides how its capsule is filled. */
 internal enum class Phase{UPCOMING,UNDERWAY,PAST,DONE}
 /** `now` is minutes into the day shown: Int.MAX_VALUE on an earlier day, -1 on a later one. */
@@ -363,8 +371,24 @@ internal fun taskIcon(task:Task):ImageVector {
                         }
                     }
                 }
+                nowBarDp(now,entries)?.let{NowBar(it,columnClock(now,twelve))}
                 preview?.let{drag->tasksById[drag.taskId]?.let{task->DragOverlay(task,drag,entries,date,twelve)}}
             }
+        }
+    }
+}
+
+/** The now bar: the current time in bold, a small dot on the spine and a very subtle line across. */
+@Composable private fun NowBar(y:Float,label:String){
+    Box(Modifier.offset(y=(y-8f).dp).fillMaxWidth().height(16.dp).zIndex(4f)
+        .semantics{contentDescription="Now, $label"}){
+        Text(label,fontSize=11.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurface,maxLines=1,
+            modifier=Modifier.align(Alignment.CenterStart))
+        Canvas(Modifier.fillMaxSize()){
+            val x=(TIME_COLUMN_DP+4+PILL_DP/2).dp.toPx();val mid=size.height/2
+            // Very subtle: a hairline, faint, with a small dot on the spine.
+            drawLine(Accent.copy(alpha=.35f),Offset(x,mid),Offset(size.width,mid),strokeWidth=1.dp.toPx())
+            drawCircle(Accent,radius=3.dp.toPx(),center=Offset(x,mid))
         }
     }
 }
@@ -402,13 +426,13 @@ internal fun taskIcon(task:Task):ImageVector {
     }
 }
 
-/** The left column: start and end, whole hours inside long tasks, and the current time in bold. */
+/** The left column: start and end, and whole hours inside long tasks. Labels next to the now
+ *  bar give way to its bold time. */
 @Composable private fun TimeColumn(height:Float,labels:List<Pair<Float,String>>,nowLabel:Pair<Float,String>?){
     Box(Modifier.width(TIME_COLUMN_DP.dp).height(height.dp)){
         labels.filter{label->nowLabel==null||abs(label.first-nowLabel.first)>14f}.forEach{(y,text)->
             Text(text,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,modifier=Modifier.offset(y=(y-7f).dp))
         }
-        nowLabel?.let{(y,text)->Text(text,fontSize=11.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurface,maxLines=1,modifier=Modifier.offset(y=(y-7f).dp))}
     }
 }
 
