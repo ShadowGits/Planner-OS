@@ -52,6 +52,13 @@ class EndToEndTest {
         repo.patch(yoga,JSONObject().put("scheduled_date",slot.date.toString()).put("start_time",slot.clock))
         assertEquals("a dragged task stays where it was dropped","10:00",on(today,"Yoga")?.time?.take(5))
 
+        // Dragged past midnight in the same day, as finishDrag saves it: 25:30 is 01:30 the next date.
+        repo.create("Night owl $run",today,"22:00",30)
+        val late=normalizeSlot(today,25*60+30)
+        repo.patch(on(today,"Night owl")!!,JSONObject().put("scheduled_date",late.date.toString()).put("start_time",late.clock))
+        assertEquals("it is saved at 01:30 the next date","01:30",on(tomorrow,"Night owl")?.time?.take(5))
+        assertEquals("and stays at the end of the evening's day, as 25:30","25:30",on(today,"Night owl")?.time?.take(5))
+
         // Tick, untick and star, as toggleDone and toggleStar do.
         val coffee=on(today,"Coffee")!!
         repo.patch(coffee,JSONObject().put("done",true))

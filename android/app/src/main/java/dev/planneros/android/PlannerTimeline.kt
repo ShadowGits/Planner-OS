@@ -33,6 +33,29 @@ import java.time.format.DateTimeFormatter
 
 internal val Wine = PlannerPalette.Wine
 internal fun taskBlocks(tasks:List<Task>) = tasks.filter { it.time != null }.map { TimeBlock(it.id,it.clockMinutes,it.minutes) }
+/** Top Wins, as on the old timeline: once something is starred, the day's starred tasks as chips
+ *  (tap one to scroll to it), "Top Wins · 1 of 3", and "Day won" when they are all done. */
+@Composable internal fun WinsPanel(tasks:List<Task>,onJump:(Task)->Unit){
+    val wins=tasks.filter{it.starred};if(wins.isEmpty())return
+    val hit=wins.count{it.done}
+    Surface(color=Accent.copy(alpha=.10f),shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp)){
+        Column(Modifier.padding(horizontal=12.dp,vertical=8.dp)){
+            Row(verticalAlignment=Alignment.CenterVertically){
+                Icon(Icons.Rounded.Star,null,tint=Accent,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp))
+                Text(winsTitle(wins),fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+            }
+            Row(Modifier.padding(top=4.dp).horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                wins.forEach{task->AssistChip(onClick={onJump(task)},
+                    label={Text(task.title,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.widthIn(max=195.dp),textDecoration=if(task.done)TextDecoration.LineThrough else null)},
+                    leadingIcon={Icon(if(task.done)Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,null,tint=Accent,modifier=Modifier.size(15.dp))},
+                    modifier=Modifier.semantics{contentDescription="Top Win ${task.title}, ${if(task.done)"complete" else "incomplete"}. Reveal task"})}
+            }
+        }
+    }
+}
+/** "Top Wins · 1 of 3", or "Day won" once every starred task is done. */
+internal fun winsTitle(wins:List<Task>):String = if(wins.isNotEmpty()&&wins.all{it.done})"Day won" else "Top Wins · ${wins.count{it.done}} of ${wins.size}"
+
 internal data class DragPreview(val taskId:String,val deltaDp:Float,val dayShift:Int,val target:ScheduleSlot)
 internal data class DragState(val task:Task,val originDate:LocalDate,val originScroll:Int,val deltaX:Float=0f,val deltaY:Float=0f,val pointerY:Float=0f,val pointerX:Float=0f)
 /**
@@ -47,7 +70,7 @@ internal fun dragPreviewOf(drag:DragState?,scrollValue:Int,density:Float,entries
     val shift=if(d.deltaX>100*density)1 else if(d.deltaX< -100*density)-1 else 0
     val top=(entryOffsetDp(entries,d.task.id)?:0f)+ROW_PADDING_DP
     val minute=if(shift==0)minuteAtDp(top+deltaDp,entries) else d.task.clockMinutes
-    DragPreview(d.task.id,deltaDp,shift,normalizeSlot(d.originDate.plusDays(shift.toLong()),minute.coerceIn(0,1675)))
+    DragPreview(d.task.id,deltaDp,shift,normalizeSlot(d.originDate.plusDays(shift.toLong()),minute.coerceIn(0,LAST_START)))
 }
 
 @Composable internal fun InboxCard(task:Task,dark:Boolean,enabled:Boolean,edit:()->Unit,done:()->Unit,star:()->Unit,schedule:()->Unit,overdue:Boolean=false){

@@ -225,7 +225,8 @@ final class PlannerStore {
         let now = moment
         for (date, view) in days {
             var items = view.items.filter { !ids.contains($0.id) }
-            items += updated.values.filter { ($0.date ?? "") == date }
+            // A task after midnight stays on the evening's day too, as the server lists it.
+            items += updated.values.compactMap { shown($0, on: date) }
             days[date]?.items = items
         }
         if var box = inbox {
@@ -272,16 +273,19 @@ final class PlannerStore {
     /// A timeline drop: moves the task on screen in this same frame, inside the
     /// caller's animation, then saves it. Waiting for a Task to start would let
     /// the block flash back to its old slot first.
+    /// `start` can run past 24:00 to 04:00 the next morning (the planner's day
+    /// ends then): 25:30 saves as 01:30 on the next date.
     func rescheduleNow(_ task: PlannerTask, date: String, start: Int) {
         guard api != nil, !task.id.hasPrefix("pending:") else { return }
-        let time = Civil.clock(start)
+        let target = dropTarget(date, start)
         var moved = task
-        moved.date = date
-        moved.time = time
+        moved.date = target.date
+        moved.time = target.time
         applyLocal([task]) { _ in moved }
+        let when = Civil.clockText(start, twentyFour: Civil.prefers24Hour) + (target.date == date ? "" : " on \(Civil.short(target.date))")
         Task {
-            await perform([task], "move “\(task.title)” to \(Civil.clockText(start, twentyFour: Civil.prefers24Hour))", local: { _ in moved }) {
-                try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["scheduled_date": date, "start_time": time])
+            await perform([task], "move “\(task.title)” to \(when)", local: { _ in moved }) {
+                try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["scheduled_date": target.date, "start_time": target.time])
             }
         }
     }

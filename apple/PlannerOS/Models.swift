@@ -18,20 +18,34 @@ struct PlannerTask: Identifiable, Hashable, Decodable {
     var dueDate: String?
     var milestoneId: String?
     var priority: String?
+    /// Set on every copy of a repeating task.
+    var recurrenceKey: String?
+    /// For a piece of a split task: the whole task's title, and which piece of how many.
+    var parentTitle: String?
+    var partIndex: Int?
+    var partCount: Int?
+    /// Focus time logged against it, and what was planned (the estimate when unset).
+    var workedSeconds: Int
+    var plannedSeconds: Int?
 
     init(id: String, title: String, time: String? = nil, minutes: Int = 30, done: Bool = false, starred: Bool = false,
          habit: Bool = false, parent: String? = nil, date: String? = nil, notes: String? = nil, projectId: String? = nil,
-         dueDate: String? = nil, milestoneId: String? = nil, priority: String? = "medium") {
+         dueDate: String? = nil, milestoneId: String? = nil, priority: String? = "medium", recurrenceKey: String? = nil,
+         parentTitle: String? = nil, partIndex: Int? = nil, partCount: Int? = nil, workedSeconds: Int = 0, plannedSeconds: Int? = nil) {
         self.id = id; self.title = title; self.time = time.map { String($0.prefix(5)) }; self.minutes = max(1, minutes)
         self.done = done; self.starred = starred; self.habit = habit; self.parent = parent; self.date = date
         self.notes = notes; self.projectId = projectId; self.dueDate = dueDate; self.milestoneId = milestoneId
-        self.priority = priority
+        self.priority = priority; self.recurrenceKey = recurrenceKey
+        self.parentTitle = parentTitle; self.partIndex = partIndex; self.partCount = partCount
+        self.workedSeconds = max(0, workedSeconds); self.plannedSeconds = plannedSeconds
     }
 
     enum CodingKeys: String, CodingKey {
         case id, title, done, starred, notes, priority, status
         case time = "start_time", minutes = "estimated_minutes", habit = "is_habit", parent = "parent_task_id"
         case date = "scheduled_date", projectId = "project_id", dueDate = "due_date", milestoneId = "milestone_id"
+        case recurrenceKey = "recurrence_key", parentTitle = "parent_title", partIndex = "part_index", partCount = "part_total"
+        case workedSeconds = "worked_seconds", plannedSeconds = "planned_seconds"
     }
 
     init(from decoder: Decoder) throws {
@@ -51,9 +65,18 @@ struct PlannerTask: Identifiable, Hashable, Decodable {
             projectId: c.text(.projectId),
             dueDate: c.text(.dueDate),
             milestoneId: c.text(.milestoneId),
-            priority: c.text(.priority)
+            priority: c.text(.priority),
+            recurrenceKey: c.text(.recurrenceKey),
+            parentTitle: c.text(.parentTitle),
+            partIndex: try? c.decodeIfPresent(Int.self, forKey: .partIndex),
+            partCount: try? c.decodeIfPresent(Int.self, forKey: .partCount),
+            workedSeconds: (try? c.decodeIfPresent(Int.self, forKey: .workedSeconds)) ?? 0,
+            plannedSeconds: try? c.decodeIfPresent(Int.self, forKey: .plannedSeconds)
         )
     }
+
+    /// Planned time not yet worked.
+    var remainingSeconds: Int { max((plannedSeconds ?? minutes * 60) - workedSeconds, 0) }
 
     /// Minutes after midnight, or Int.max for untimed work so it sorts last.
     var clockMinutes: Int {

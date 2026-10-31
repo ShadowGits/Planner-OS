@@ -52,6 +52,19 @@ func run() async {
     check(await onServer("Yoga")?.time, "10:00", "server has the new time")
     check(timelineItems(store.days[today]?.items ?? []).map(\.id).last, yoga.id, "timeline order follows the new time")
 
+    print("Drag past midnight, in the same day")
+    check(await store.create(title: "Night owl", date: today, time: "22:00", minutes: 30, notes: nil, starred: false), true, "add a late task")
+    await store.loadDay(today)
+    store.rescheduleNow(onScreen("Night owl")!, date: today, start: 25 * 60 + 30)
+    check(onScreen("Night owl")?.time, "25:30", "stays in the evening's list at once, after midnight")
+    await settle()
+    check(onScreen("Night owl")?.time, "25:30", "and after saving and refreshing")
+    check(await onServer("Night owl", tomorrow)?.time, "01:30", "saved at 01:30")
+    check(await onServer("Night owl", tomorrow)?.date, tomorrow, "on the next date")
+    check(await onServer("Night owl")?.time, "25:30", "which the server lists on the evening as 25:30")
+    await store.toggleStar(onScreen("Night owl")!)
+    check(onScreen("Night owl")?.time, "25:30", "starring it keeps it on the evening")
+
     print("Tick, untick, star")
     let coffee = onScreen("Coffee")!
     await store.setDone(coffee)
@@ -133,7 +146,11 @@ func run() async {
     check(await store.create(title: "Call", date: tomorrow, time: "09:00", minutes: 15, notes: nil, starred: false), true, "add tomorrow's call")
     let zone = TimeZone(identifier: "Asia/Kolkata")!
     let plan = planReminders([DayView(date: tomorrow, items: await serverDay(tomorrow))], now: Date(), timeZone: zone)
-    check(plan.first?.fire, Civil.instant(tomorrow, "08:50", in: zone), "reminder 10 minutes before, from server data")
+    check(plan.first { $0.title == "Call" }?.fire, Civil.instant(tomorrow, "08:50", in: zone), "reminder 10 minutes before, from server data")
+    // From noon of the evening's day, so the check does not depend on when it runs.
+    let both = planReminders([DayView(date: today, items: await serverDay(today)), DayView(date: tomorrow, items: await serverDay(tomorrow))],
+                             now: Civil.instant(today, "12:00", in: zone)!, timeZone: zone)
+    check(both.filter { $0.title == "Night owl" }.map(\.fire), [Civil.instant(tomorrow, "01:20", in: zone)!], "one reminder after midnight, at its real time")
 
     print(failures == 0 ? "iPhone app store: all end-to-end checks passed" : "iPhone app store: \(failures) checks failed")
 }

@@ -41,7 +41,13 @@ let timelinePointsPerMinute = 1.6
 let timelinePillWidth = 48.0
 /// Space above and below each capsule inside its row.
 let timelineRowPadding = 4.0
-private let lastStart = 24 * 60 - 5
+/// The planner's day runs to 04:00: the next date's tasks before then belong to
+/// the evening, and the server lists them on its day as 24:00 and later (25:30).
+let logicalDayCutoff = 4 * 60
+
+/// The latest start a drag can reach: 27:55, as on the old timeline, which let a
+/// task go that far without leaving the day.
+let timelineLastStart = 27 * 60 + 55
 
 func pillHeight(_ minutes: Int) -> Double { min(max(Double(minutes) * timelinePointsPerMinute, timelinePillWidth), 640) }
 
@@ -69,7 +75,7 @@ func itemOffset(_ id: String, in items: [TimelineItem]) -> Double? {
     return nil
 }
 
-private func snapToFive(_ minute: Double) -> Int { min(max(Int((minute / 5).rounded()) * 5, 0), lastStart) }
+private func snapToFive(_ minute: Double) -> Int { min(max(Int((minute / 5).rounded()) * 5, 0), timelineLastStart) }
 
 private func firstStart(_ items: [TimelineItem]) -> Int? {
     for item in items { if case .task(let task, _) = item { return task.clockMinutes } }
@@ -125,8 +131,85 @@ func offsetFor(_ minute: Int, in items: [TimelineItem]) -> Double {
     return top + Double(minute - (end ?? 9 * 60)) * timelinePointsPerMinute
 }
 
-/// Where a dropped task starts: at the time shown, kept inside the day.
-func dropStart(_ minute: Int, duration: Int) -> Int { min(max(minute, 0), 24 * 60 - min(max(duration, 5), 24 * 60)) }
+/// Where a dropped task starts: at the time shown, from midnight to 27:55.
+func dropStart(_ minute: Int) -> Int { min(max(minute, 0), timelineLastStart) }
+
+/// The date and "HH:mm" a drop saves: past 24:00 is the next date.
+func dropTarget(_ date: String, _ start: Int) -> (date: String, time: String) {
+    let start = dropStart(start)
+    return (start >= 24 * 60 ? Civil.add(date, days: 1) : date, Civil.clock(start % (24 * 60)))
+}
+
+/// Where the day's tasks finish, for the room below them.
+func timelineLastEnd(_ items: [TimelineItem]) -> Int? {
+    items.compactMap { item -> Int? in
+        if case .task(let task, _) = item { return task.clockMinutes + task.minutes }
+        return nil
+    }.max()
+}
+
+/// While a task is held the timeline carries on below the last task at scale to
+/// the end of the day at 04:00, with room for the held capsule, so it can land there.
+func nightRoom(_ items: [TimelineItem], heldMinutes: Int) -> Double {
+    guard let end = timelineLastEnd(items) else { return 0 }
+    return Double(max(timelineLastStart - end, 0)) * timelinePointsPerMinute + pillHeight(heldMinutes)
+}
+
+/// The whole hours shown in that room, after the last task up to 04:00, where the day ends.
+func nightHours(_ items: [TimelineItem]) -> [Int] {
+    guard let end = timelineLastEnd(items) else { return [] }
+    let first = (end + 59) / 60 * 60, last = 24 * 60 + logicalDayCutoff
+    guard first <= last else { return [] }
+    return stride(from: first, through: last, by: 60).filter { $0 - end >= 15 }
+}
+
+/// A task as a day's view shows it, as the server lists it: on its own date at
+/// its time, or, before 04:00 on the next date, on this day at 24:00 and later
+/// ("01:30" becomes "25:30"). Nil when it is on neither.
+func shown(_ task: PlannerTask, on day: String) -> PlannerTask? {
+    guard let date = task.date else { return nil }
+    guard task.time != nil else { return date == day ? task : nil }
+    let clock = task.clockMinutes % (24 * 60)
+    var copy = task
+    if date == day {
+        copy.time = Civil.clock(clock)
+        return copy
+    }
+    if date == Civil.add(day, days: 1), clock < logicalDayCutoff {
+        copy.time = String(format: "%02d:%02d", (clock + 24 * 60) / 60, clock % 60)
+        return copy
+    }
+    return nil
+}
+
+/// Minutes into the planner's day, which runs to 04:00: 01:30 is 25:30.
+func logicalMinutes(_ moment: Moment) -> Int { moment.minutes < 4 * 60 ? moment.minutes + 24 * 60 : moment.minutes }
+
+/// "Part 2/3" for a piece of a split task.
+func partText(_ task: PlannerTask) -> String? {
+    guard task.parent != nil else { return nil }
+    return "Part \(task.partIndex.map(String.init) ?? "?")/\(task.partCount.map(String.init) ?? "?")"
+}
+
+/// "1h 5m", "25m", "30s", as Android writes time worked.
+func workDuration(_ seconds: Int) -> String {
+    let n = max(seconds, 0)
+    var parts: [String] = []
+    if n / 3600 > 0 { parts.append("\(n / 3600)h") }
+    if n / 60 % 60 > 0 { parts.append("\(n / 60 % 60)m") }
+    if n % 60 > 0 { parts.append("\(n % 60)s") }
+    return parts.isEmpty ? "0m" : parts.joined(separator: " ")
+}
+
+/// "25m worked · 35m left", or just "1h worked" once it is done.
+func workedText(_ task: PlannerTask) -> String {
+    "\(workDuration(task.workedSeconds)) worked" + (task.done ? "" : " · \(workDuration(task.remainingSeconds)) left")
+}
+
+/// "Top Wins · 1 of 3", or "Day won" once every starred task is done.
+func winsTitle(_ wins: [PlannerTask]) -> String {
+    !wins.isEmpty && wins.allSatisfy(\.done) ? "Day won" : "Top Wins · \(wins.filter(\.done).count) of \(wins.count)"
+}
 
 /// The now bar's height in the list: at the current time's place in the layout, and when now
 /// is before the first task or after the last, just above or below them. Nil on other days.

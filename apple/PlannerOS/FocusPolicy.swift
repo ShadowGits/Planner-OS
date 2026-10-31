@@ -43,7 +43,7 @@ func isOverdue(_ task: PlannerTask, _ now: Moment) -> Bool {
     if let due = task.dueDate, due < now.today { return true }
     guard let date = task.date else { return false } // An undated idea has no missed deadline.
     if date < now.today { return true }
-    if date == now.today, task.time != nil { return task.clockMinutes + task.minutes <= now.minutes }
+    if date == now.today, task.time != nil { return task.clockMinutes % (24 * 60) + task.minutes <= now.minutes }
     return false
 }
 
@@ -222,7 +222,10 @@ func planReminders(_ days: [DayView], now: Date, timeZone: TimeZone) -> [Reminde
     var reminders: [Reminder] = []
     for view in days {
         for task in view.items where !task.done {
-            guard let time = task.time, let start = Civil.instant(task.date ?? view.date, time, in: timeZone) else { continue }
+            // An evening's view lists a task after midnight as 25:30 on its real date.
+            guard task.time != nil else { continue }
+            let time = Civil.clock(task.clockMinutes)
+            guard let start = Civil.instant(task.date ?? view.date, time, in: timeZone) else { continue }
             let fire = start.addingTimeInterval(TimeInterval(-reminderLeadMinutes * 60))
             let id = "task-\(task.id)-\(task.date ?? view.date)-\(time)"
             guard fire > now, seen.insert(id).inserted else { continue }

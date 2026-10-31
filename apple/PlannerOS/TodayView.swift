@@ -50,15 +50,19 @@ struct TodayView: View {
         let allDay = items.filter { $0.time == nil }
         let entries = timelineItems(items)
         let placed = entries.enumerated().map { PlacedItem(index: $0.offset, item: $0.element) }
-        let now = nowOnDay(date, today: store.calendarToday, minutes: store.moment.minutes)
+        // The planner's day runs to 04:00, so at 01:30 it is 25:30 on the evening's day.
+        let now = nowOnDay(date, today: store.logicalToday, minutes: logicalMinutes(store.moment))
         let twentyFour = Civil.prefers24Hour
         let dragged = items.first { $0.id == store.draggingID }
+        ScrollViewReader { proxy in
         VStack(spacing: 0) {
-            header(date)
-            WeekStrip(selected: date, today: store.logicalToday, colors: dayColors) { day in
+            header(date, entries: entries, now: now, proxy: proxy)
+            WeekStrip(selected: date, today: store.logicalToday, colors: dayColors, onSelect: { day in
                 withAnimation(.snappy) { store.selectedDate = day }
+            }, onDropTask: dropOnDay)
+            WinsStrip(tasks: items) { task in
+                withAnimation(.snappy) { proxy.scrollTo(task.id, anchor: .center) }
             }
-            ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 36, height: 5)
@@ -82,6 +86,7 @@ struct TodayView: View {
                                             hidden: hover != nil && store.draggingID == task.id,
                                             onOpen: { editor = EditorRequest(task: task) },
                                             onToggle: { Task { await store.setDone(task, !task.done) } },
+                                            onStar: { Task { await store.toggleStar(task) } },
                                             onLift: { store.beginDrag(task.id) }
                                         )
                                         .id(task.id)
@@ -94,13 +99,18 @@ struct TodayView: View {
                                         }
                                     }
                                 }
+                                // While a task is held: the night, down to 04:00 the next morning.
+                                if let dragged {
+                                    NightRoom(entries: entries, heldMinutes: dragged.minutes, date: date, twentyFour: twentyFour,
+                                              bold: hover.map { [dropStart($0), dropStart($0) + dragged.minutes] } ?? [])
+                                }
                             }
                             if let barY = nowBarOffset(now, in: entries) {
                                 NowBar(label: columnClock(now, twentyFour: twentyFour))
                                     .offset(y: CGFloat(barY) - 8)
                             }
                             if let hover, let dragged {
-                                LandingOutline(task: dragged, start: dropStart(hover, duration: dragged.minutes),
+                                LandingOutline(task: dragged, start: dropStart(hover),
                                                entries: entries, twentyFour: twentyFour)
                             }
                         }
@@ -110,7 +120,7 @@ struct TodayView: View {
                         .onDrop(of: [UTType.plainText], delegate: TimelineDrop(entries: entries, hover: $hover, signal: { store.dragSignal = Date() }) { id, minute in
                             store.endDrag()
                             guard let task = items.first(where: { $0.id == id }) else { return }
-                            let start = dropStart(minute, duration: task.minutes)
+                            let start = dropStart(minute)
                             guard start != task.clockMinutes || task.time == nil else { return }
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                                 store.rescheduleNow(task, date: date, start: start)
@@ -128,11 +138,11 @@ struct TodayView: View {
                 .task(id: date) {
                     await store.loadDay(date)
                     let loaded = timelineItems(store.days[date]?.items ?? [])
-                    let anchor = timelineAnchor(loaded, now: date == store.calendarToday ? store.moment.minutes : nil)
+                    let anchor = timelineAnchor(loaded, now: date == store.logicalToday ? logicalMinutes(store.moment) : nil)
                     if let anchor { proxy.scrollTo(anchor, anchor: .center) }
                 }
                 .refreshable { await store.refreshAll() }
-            }
+        }
         }
         .background(Palette.header)
         .hiddenNavigationBar()
@@ -152,8 +162,20 @@ struct TodayView: View {
         return tasks.filter { !$0.habit }.sorted { $0.clockMinutes < $1.clockMinutes }.map(Palette.block)
     }
 
-    /// "16. October" bold, "2025 ›" in the accent colour.
-    private func header(_ date: String) -> some View {
+    /// A task dropped on a day of the week strip moves to that day at the same time.
+    private func dropOnDay(_ id: String, _ day: String) {
+        store.endDrag()
+        guard let task = store.days.values.lazy.flatMap(\.items).first(where: { $0.id == id }),
+              task.date != day else { return }
+        withAnimation(.snappy) {
+            if task.time == nil { Task { await store.move([task], to: day) } }
+            else { store.rescheduleNow(task, date: day, start: task.clockMinutes) }
+        }
+    }
+
+    /// "16. October" bold, "2025 ›" in the accent colour; Today on another day,
+    /// Now on today, which scrolls to the task under way or next.
+    private func header(_ date: String, entries: [TimelineItem], now: Int, proxy: ScrollViewProxy) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Button { pickingDate = true } label: {
                 (Text("\(Int(date.suffix(2)) ?? 0). \(Civil.monthName(date))").foregroundStyle(Color.primary)
@@ -165,6 +187,11 @@ struct TodayView: View {
             Spacer()
             if date != store.logicalToday {
                 Button("Today") { withAnimation(.snappy) { store.selectedDate = store.logicalToday } }
+                    .font(.subheadline.weight(.semibold))
+                    .tint(Palette.accent)
+                    .buttonStyle(.borderless)
+            } else if let anchor = timelineAnchor(entries, now: now) {
+                Button("Now") { withAnimation(.snappy) { proxy.scrollTo(anchor, anchor: .center) } }
                     .font(.subheadline.weight(.semibold))
                     .tint(Palette.accent)
                     .buttonStyle(.borderless)
@@ -195,6 +222,9 @@ struct WeekStrip: View {
     let today: String
     let colors: (String) -> [Color]
     let onSelect: (String) -> Void
+    /// A task's id dropped on a day.
+    var onDropTask: (String, String) -> Void = { _, _ in }
+    @State private var targeted: String?
 
     var body: some View {
         let start = Civil.weekStart(selected)
@@ -220,10 +250,24 @@ struct WeekStrip: View {
                         .frame(height: 11)
                     }
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Palette.accent.opacity(targeted == day ? 0.22 : 0)))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Civil.short(day))
+                // Drag a task here to move it to this day, keeping its time.
+                .onDrop(of: [UTType.plainText], isTargeted: Binding(
+                    get: { targeted == day },
+                    set: { inside in if inside { targeted = day } else if targeted == day { targeted = nil } })) { providers in
+                    guard let provider = providers.first else { return false }
+                    _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                        guard let text = object as? NSString else { return }
+                        let id = text as String
+                        DispatchQueue.main.async { onDropTask(id, day) }
+                    }
+                    return true
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -343,6 +387,7 @@ struct TimelineRow: View {
     let hidden: Bool
     let onOpen: () -> Void
     let onToggle: () -> Void
+    let onStar: () -> Void
     let onLift: () -> Void
 
     static let timeColumn: CGFloat = 44
@@ -395,15 +440,31 @@ struct TimelineRow: View {
                     if task.recurrenceKey != nil || task.habit {
                         Image(systemName: "repeat").font(.caption2).foregroundStyle(.secondary)
                     }
+                    if let part = partText(task) {
+                        Text("· \(part)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
                 Text(task.title)
                     .strikethrough(task.done)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(task.done ? .secondary : .primary)
                     .lineLimit(pill > 60 ? 2 : 1)
+                if task.workedSeconds > 0 {
+                    Text(workedText(task)).font(.caption2.weight(.medium)).foregroundStyle(color).lineLimit(1)
+                }
             }
             .opacity(hidden ? 0 : 1)
             Spacer(minLength: 8)
+            // Top Win: tap the star, as on the old timeline.
+            Button(action: onStar) {
+                Image(systemName: task.starred ? "star.fill" : "star")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(task.starred ? Palette.accent : Color.secondary.opacity(0.55))
+                    .frame(width: 32, height: 44)
+            }
+            .buttonStyle(.plain)
+            .opacity(hidden ? 0 : 1)
+            .accessibilityLabel("\(task.starred ? "Remove" : "Choose") \(task.title) as Top Win")
             Button(action: onToggle) {
                 ZStack {
                     Circle().stroke(color, lineWidth: 2)
@@ -476,6 +537,101 @@ private struct Spine: View {
                 passed.addLine(to: CGPoint(x: x, y: end))
                 context.stroke(passed, with: .color(color), lineWidth: 3)
             }
+        }
+    }
+}
+
+/// Below the last task while one is held: time carries on at scale to 04:00 the
+/// next morning, with faint hours and the next day named at midnight.
+private struct NightRoom: View {
+    let entries: [TimelineItem]
+    let heldMinutes: Int
+    let date: String
+    let twentyFour: Bool
+    /// The landing's bold start and end: hours next to them give way.
+    let bold: [Int]
+
+    var body: some View {
+        let end = timelineLastEnd(entries) ?? 0
+        let line = CGFloat(max(timelineLastStart - end, 0)) * CGFloat(timelinePointsPerMinute)
+        ZStack(alignment: .topLeading) {
+            Canvas { context, _ in
+                let x = TimelineRow.timeColumn + 4 + TimelineRow.pillWidth / 2
+                var path = Path()
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: line))
+                context.stroke(path, with: .color(Palette.pale), style: StrokeStyle(lineWidth: 3, dash: [4, 6]))
+            }
+            ForEach(nightHours(entries).filter { hour in bold.allSatisfy { Double(abs($0 - hour)) * timelinePointsPerMinute >= 14 } },
+                    id: \.self) { hour in
+                HStack(spacing: 0) {
+                    Text(columnClock(hour, twentyFour: twentyFour)).font(.caption2.monospacedDigit())
+                        .frame(width: TimelineRow.timeColumn, alignment: .leading)
+                    if hour == 24 * 60 {
+                        Text(Civil.short(Civil.add(date, days: 1))).font(.caption2.weight(.semibold))
+                            .padding(.leading, 4 + TimelineRow.pillWidth + 12)
+                    }
+                }
+                .foregroundStyle(Color.secondary.opacity(0.7))
+                .offset(y: CGFloat(hour - end) * CGFloat(timelinePointsPerMinute) - 7)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: CGFloat(nightRoom(entries, heldMinutes: heldMinutes)), alignment: .topLeading)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Top Wins, as on the old timeline: once something is starred, the day's
+/// starred tasks as chips (tap one to scroll to it), "Top Wins · 1 of 3", and
+/// "Day won" when they are all done.
+@MainActor
+struct WinsStrip: View {
+    let tasks: [PlannerTask]
+    let onJump: (PlannerTask) -> Void
+
+    var body: some View {
+        let wins = tasks.filter(\.starred)
+        if !wins.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(winsTitle(wins), systemImage: "star.fill")
+                    .font(.footnote.weight(.semibold))
+                    .labelStyle(WinsLabel())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        ForEach(wins) { task in
+                            Button { onJump(task) } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: task.done ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(Palette.accent)
+                                    Text(task.title).strikethrough(task.done).lineLimit(1).frame(maxWidth: 195, alignment: .leading)
+                                }
+                                .font(.footnote)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Palette.card, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Top Win \(task.title), \(task.done ? "complete" : "incomplete"). Reveal task")
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Palette.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+        }
+    }
+}
+
+private struct WinsLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 7) {
+            configuration.icon.foregroundStyle(Palette.accent)
+            configuration.title
         }
     }
 }

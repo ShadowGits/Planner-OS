@@ -59,6 +59,38 @@ class StructuredTimelineTest {
         assertNull(nowBarDp(Int.MAX_VALUE,entries))
     }
 
+    @Test fun aHeldTaskCanGoUntilFourInTheMorning(){
+        val entries=dayEntries(listOf(task("Dinner","20:00",60),task("Read","21:30",45)))
+        val bottom=entries.sumOf{entryHeightDp(it).toDouble()}.toFloat()
+        assertEquals("the end of the day's tasks",22*60+15,lastEnd(entries))
+        assertEquals("as on the old timeline, the latest start is 27:55",27*60+55,LAST_START)
+        assertEquals("room to then at scale, plus the held capsule",(LAST_START-(22*60+15))*1.6f+pillHeightDp(60),nightRoomDp(entries,60),.01f)
+        assertEquals("faint hours from the next whole hour to 04:00",listOf(23*60,24*60,25*60,26*60,27*60,28*60),nightHours(entries))
+        assertEquals("01:30 the next morning is reachable",25*60+30,minuteAtDp(bottom+(25*60+30-(22*60+15))*1.6f,entries))
+        assertEquals("27:55 is the latest start",LAST_START,minuteAtDp(bottom+5000f,entries))
+        assertEquals("an hour too close to the last task is left out",listOf(24*60,25*60,26*60,27*60,28*60),nightHours(dayEntries(listOf(task("Late","22:50",15)))))
+        assertEquals(0f,nightRoomDp(emptyList(),30),0f)
+        val day=java.time.LocalDate.parse("2026-05-13")
+        assertEquals("a drop at 25:30 is 01:30 the next date",ScheduleSlot(day.plusDays(1),90),normalizeSlot(day,25*60+30))
+        assertEquals("and the landing outline still shows on this day",25*60+30,visibleMinute(day,normalizeSlot(day,25*60+30)))
+        val held=task("Read","21:30",45)
+        val after=replaceTask(Day(day.toString(),"Asia/Kolkata",listOf(held)),held.copy(time="01:30",date=day.plusDays(1).toString()))
+        val shown=projectChanges(Day(day.toString(),"Asia/Kolkata",listOf(held)),Day(day.toString(),"Asia/Kolkata",listOf(held)),after).tasks.single()
+        assertEquals("on screen it stays at the end of this day, as the server lists it","25:30",shown.time)
+    }
+
+    @Test fun oldTimelineDetailsAreKept(){
+        val part=Task("p","Essay","10:00",60,false,false,false,"parent","2026-05-13",null,null,parentTitle="Essay",partIndex=2,partCount=3)
+        assertEquals("Part 2/3",partText(part))
+        assertNull(partText(task("Solo","10:00")))
+        val worked=Task("w","Study","10:00",60,false,false,false,null,"2026-05-13",null,null,workedSeconds=25*60)
+        assertEquals("${workDuration(25*60)} worked · ${workDuration(35*60)} left",workedText(worked))
+        assertEquals("${workDuration(25*60)} worked",workedText(worked.copy(done=true)))
+        val a=task("a","09:00").copy(starred=true);val b=task("b","10:00").copy(starred=true,done=true)
+        assertEquals("Top Wins · 1 of 2",winsTitle(listOf(a,b)))
+        assertEquals("Day won",winsTitle(listOf(a.copy(done=true),b)))
+    }
+
     @Test fun wordsMatchStructured(){
         assertEquals("7:00–7:15 AM",rangeText(420,435,true))
         assertEquals("11:30 AM–12:15 PM",rangeText(690,735,true))

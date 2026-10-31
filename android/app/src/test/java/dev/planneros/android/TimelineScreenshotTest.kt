@@ -43,14 +43,17 @@ class TimelineScreenshotTest {
     )
     private val allDay=listOf(task("Water plants",null,15),task("Take out trash",null,15,done=true))
 
-    @Composable private fun Screen(now:Int,preview:DragPreview?=null){
+    @Composable private fun Screen(now:Int,preview:DragPreview?=null,tasks:List<Task> =day,toBottom:Boolean=false){
         MaterialTheme{
             Column(Modifier.fillMaxSize().background(Color(0xFFF2F2F7))){
                 Box(Modifier.padding(start=16.dp,top=12.dp,bottom=6.dp)){MonthTitle(date)}
-                StructuredWeekStrip(date,date,{d->if(d==date)day.map(::blockColor) else listOf(Color(0xFF6085A8),Color(0xFF91BE6C))}){}
+                StructuredWeekStrip(date,date,{d->if(d==date)tasks.map(::blockColor) else listOf(Color(0xFF6085A8),Color(0xFF91BE6C))}){}
+                WinsPanel(tasks){}
+                val scroll=rememberScrollState()
+                if(toBottom)androidx.compose.runtime.LaunchedEffect(scroll.maxValue){scroll.scrollTo(scroll.maxValue)}
                 Box(Modifier.fillMaxSize().background(Color.White,RoundedCornerShape(topStart=28.dp,topEnd=28.dp)).padding(top=10.dp)){
-                    StructuredTimeline(day,allDay,date,now,null,true,rememberScrollState(),preview,Modifier.fillMaxSize(),
-                        {},{},{},{},{},{_,_,_->},{},{}){_,_->}
+                    StructuredTimeline(tasks,allDay,date,now,null,true,scroll,preview,Modifier.fillMaxSize(),
+                        {},{},{},{},{},{},{_,_,_->},{},{}){_,_->}
                 }
             }
         }
@@ -68,6 +71,16 @@ class TimelineScreenshotTest {
         assumeTrue("Set SCREENSHOT_DIR to write screenshots",dir!=null)
         rule.setContent{Screen(now=14*60+1)}
         save("timeline-1401")
+    }
+
+    @Test fun draggingDinnerPastMidnight(){
+        assumeTrue("Set SCREENSHOT_DIR to write screenshots",dir!=null)
+        val starred=day.map{if(it.title=="Dinner"||it.title=="Lunch break")it.copy(starred=true) else it}
+        val entries=dayEntries(starred)
+        // Dinner (19:00, 30 min) held and carried to 01:30: 52 dp to its row's end, then 6 hours at 1.6 dp.
+        val drag=DragState(starred.last(),date,0,deltaY=(52f+360*1.6f)*3f,pointerY=0f)
+        rule.setContent{Screen(now=-1,preview=dragPreviewOf(drag,0,3f,entries),tasks=starred,toBottom=true)}
+        save("timeline-past-midnight")
     }
 
     @Test fun draggingCheckEmails(){

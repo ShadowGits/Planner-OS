@@ -91,6 +91,12 @@ check(plan.first?.fire, Civil.instant("2026-10-31", "17:50", in: kolkata), "ten 
 let json = #"{"success":true,"data":{"date":"2026-10-31","timezone":"Asia/Kolkata","items":[{"id":"t1","title":"CV","start_time":"18:30:00","estimated_minutes":null,"done":false,"is_habit":false,"scheduled_date":"2026-10-31","due_date":null,"notes":""}]}}"#
 let decoded = try! JSONDecoder().decode(Envelope<DayView>.self, from: Data(json.utf8)).data
 check(decoded.items[0].time, "18:30", "seconds dropped"); check(decoded.items[0].minutes, 30, "null minutes"); check(decoded.items[0].notes, nil, "blank notes")
+let rich = #"{"id":"t2","title":"Essay","start_time":"10:00","estimated_minutes":60,"recurrence_key":"weekly-essay","parent_task_id":"whole","parent_title":"Essay","part_index":2,"part_total":3,"worked_seconds":1500,"planned_seconds":3000}"#
+let richTask = try! JSONDecoder().decode(PlannerTask.self, from: Data(rich.utf8))
+check(richTask.recurrenceKey, "weekly-essay", "repeat key decoded")
+check(partText(richTask), "Part 2/3", "parts decoded")
+check(richTask.workedSeconds, 1500, "time worked decoded"); check(richTask.remainingSeconds, 1500, "left of the planned time")
+check(decoded.items[0].recurrenceKey, nil, "no repeat key"); check(decoded.items[0].workedSeconds, 0, "nothing worked")
 let triage = #"{"success":true,"data":{"moved":2,"milestones_extended":[{"id":"m","name":"Shortlist","from":"2026-11-02","to":"2026-11-09"}]}}"#
 check(milestoneNotes(Data(triage.utf8)), ["\"Shortlist\" now due 9 Nov (was 2 Nov)"], "milestone notes")
 check((try? Connection.origin("https://planner.example.com/"))?.absoluteString, "https://planner.example.com", "origin")
@@ -129,7 +135,13 @@ for minute in stride(from: 420, through: 600, by: 5) {
     check(minuteAt(offsetFor(minute, in: dropDay), in: dropDay), minute, "round trip \(Civil.clock(minute))")
 }
 check(minuteAt(30, in: []), 560, "an empty day starts from 09:00")
-check(dropStart(1430, duration: 60), 1380, "a drop keeps the task inside the day")
+check(dropStart(1430), 1430, "a drop near midnight stays where it is shown")
+check(dropStart(5000), 27 * 60 + 55, "27:55 is the latest start, as on the old timeline")
+check(dropStart(-30), 0, "nothing before midnight")
+check(dropTarget("2026-05-13", 25 * 60 + 30).date, "2026-05-14", "a drop at 25:30 is on the next date")
+check(dropTarget("2026-05-13", 25 * 60 + 30).time, "01:30", "at 01:30")
+check(dropTarget("2026-05-13", 22 * 60).date, "2026-05-13", "before midnight it stays on the day")
+check(dropTarget("2026-05-13", 22 * 60).time, "22:00", "at the time shown")
 
 // The now bar shows wherever now falls.
 let barDay = timelineItems([task("Coffee", time: "15:45", minutes: 15), task("Emails", time: "16:00"), task("Home", time: "17:00")])
@@ -139,6 +151,49 @@ check(nowBarOffset(6 * 60, in: barDay), -12, "now bar before the first task, jus
 check(nowBarOffset(23 * 60, in: barDay), barDay.reduce(0) { $0 + itemHeight($1) } + 20, "now bar after the last task, just below it")
 check(nowBarOffset(-1, in: barDay), nil, "no now bar on a later day")
 check(nowBarOffset(Int.max, in: barDay), nil, "no now bar on an earlier day")
+
+// A held task can go until 04:00 the next morning, in the same day.
+let night = timelineItems([task("Dinner", time: "20:00", minutes: 60), task("Read", time: "21:30", minutes: 45)])
+let nightBottom: Double = night.reduce(0) { $0 + itemHeight($1) }
+check(timelineLastEnd(night), 22 * 60 + 15, "the end of the day's tasks")
+let nightExpected: Double = Double(timelineLastStart - (22 * 60 + 15)) * 1.6 + pillHeight(60)
+check(nightRoom(night, heldMinutes: 60), nightExpected, "room to the latest start at scale, plus the held capsule")
+check(nightHours(night), [23 * 60, 24 * 60, 25 * 60, 26 * 60, 27 * 60, 28 * 60], "faint hours from the next whole hour to 04:00")
+let halfPastOne: Int = 25 * 60 + 30
+let pastEnd: Double = Double(halfPastOne - (22 * 60 + 15)) * 1.6
+check(minuteAt(nightBottom + pastEnd, in: night), halfPastOne, "01:30 the next morning is reachable")
+check(minuteAt(nightBottom + 5000, in: night), 27 * 60 + 55, "27:55 is the latest start")
+check(nightHours(timelineItems([task("Late", time: "22:50", minutes: 15)])), [24 * 60, 25 * 60, 26 * 60, 27 * 60, 28 * 60], "an hour too close to the last task is left out")
+check(nightRoom([], heldMinutes: 30), 0, "no room on an empty day")
+check(logicalMinutes(Moment(today: "2026-05-14", minutes: 90)), 25 * 60 + 30, "01:30 is 25:30 of the evening's day")
+let owl = PlannerTask(id: "owl", title: "Night owl", time: "01:30", minutes: 30, date: "2026-05-14")
+check(shown(owl, on: "2026-05-13")?.time, "25:30", "after midnight it stays at the end of the evening's day")
+check(shown(owl, on: "2026-05-14")?.time, "01:30", "and is at 01:30 on its own date")
+check(shown(owl, on: "2026-05-15") == nil, true, "and on no other day")
+var owlListed = owl; owlListed.time = "25:30"
+check(shown(owlListed, on: "2026-05-14")?.time, "01:30", "the evening's 25:30 copy is 01:30 on its date")
+check(shown(owlListed, on: "2026-05-13")?.time, "25:30", "and stays 25:30 on the evening")
+let breakfast = PlannerTask(id: "b", title: "Breakfast", time: "08:00", minutes: 30, date: "2026-05-14")
+check(shown(breakfast, on: "2026-05-13") == nil, true, "a morning task is not the evening's")
+let listed = DayView(date: "2026-05-13", items: [owlListed]), own = DayView(date: "2026-05-14", items: [owl])
+let owlReminders = planReminders([listed, own], now: Civil.instant("2026-05-13", "12:00", in: kolkata)!, timeZone: kolkata)
+check(owlReminders.count, 1, "one reminder for a task after midnight, though both days list it")
+check(owlReminders.first?.fire, Civil.instant("2026-05-14", "01:20", in: kolkata), "ten minutes before 01:30 on its date")
+check(logicalMinutes(Moment(today: "2026-05-14", minutes: 9 * 60)), 9 * 60, "09:00 is 09:00")
+
+// What the old timeline showed on each task, kept.
+let piece = PlannerTask(id: "p", title: "Essay", time: "10:00", minutes: 60, parent: "whole", parentTitle: "Essay", partIndex: 2, partCount: 3)
+check(partText(piece), "Part 2/3", "a piece of a split task")
+check(partText(task("Solo", time: "10:00")), nil, "a whole task has no part")
+let studied = PlannerTask(id: "w", title: "Study", time: "10:00", minutes: 60, workedSeconds: 25 * 60)
+check(workedText(studied), "25m worked · 35m left", "time worked and left")
+var finished = studied; finished.done = true
+check(workedText(finished), "25m worked", "just time worked once done")
+check(workDuration(3900), "1h 5m", "as Android writes it"); check(workDuration(0), "0m", "nothing yet")
+let winA = task("a", time: "09:00", starred: true), winB = task("b", time: "10:00", starred: true, done: true)
+check(winsTitle([winA, winB]), "Top Wins · 1 of 2", "Top Wins count")
+var wonA = winA; wonA.done = true
+check(winsTitle([wonA, winB]), "Day won", "every win done")
 
 // Capsules fill by time; words match Structured.
 let emails = task("Emails", time: "16:00", minutes: 30)

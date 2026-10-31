@@ -86,7 +86,8 @@ struct TaskEditor: View {
             hasDate = task.date != nil
             date = Civil.pickerDate(day, in: zone)
             hasTime = task.time != nil
-            time = Civil.instant(day, task.time ?? "09:00", in: zone) ?? Date()
+            // An evening's 25:30 is 01:30 on the task's own (next) date.
+            time = Civil.instant(day, task.time == nil ? "09:00" : Civil.clock(task.clockMinutes), in: zone) ?? Date()
             minutes = task.minutes
             notes = task.notes ?? ""
             starred = task.starred

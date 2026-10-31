@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -96,7 +97,10 @@ internal const val MINUTE_DP=1.6f
 internal const val PILL_DP=48f
 internal const val ROW_PADDING_DP=4f
 internal const val TIME_COLUMN_DP=44f
-private const val LAST_START=1675 // 27:55, the end of a day that runs past midnight
+/** The latest start a drag can reach: 27:55, five to four the next morning. The planner's day
+ *  runs to 04:00 (LOGICAL_DAY_CUTOFF), and the old timeline let a task go that far without
+ *  leaving the day; the server lists such a task on this day as 25:30 and so on. */
+internal const val LAST_START=27*60+55
 
 internal fun pillHeightDp(minutes:Int)=(minutes*MINUTE_DP).coerceIn(PILL_DP,640f)
 /** A few minutes is a short piece of spine; free time keeps the scale; a long window is capped. */
@@ -165,6 +169,23 @@ internal fun offsetForDp(minute:Int,entries:List<DayEntry>):Float {
 
 /** The now bar's height in the list: at the current time's place in the layout, and when now
  *  is before the first task or after the last, just above or below them. Null on other days. */
+/** Where the day's tasks finish, for the room below them. */
+internal fun lastEnd(entries:List<DayEntry>):Int? = entries.mapNotNull{(it as? TaskEntry)?.task}.maxOfOrNull{it.clockMinutes+it.minutes}
+
+/** While a task is held, the timeline carries on below the last task at scale to the end of the
+ *  day at 04:00, with room for the held task's capsule, so it can be dropped anywhere until then. */
+internal fun nightRoomDp(entries:List<DayEntry>,heldMinutes:Int):Float {
+    val end=lastEnd(entries)?:return 0f
+    return (LAST_START-end).coerceAtLeast(0)*MINUTE_DP+pillHeightDp(heldMinutes)
+}
+
+/** The whole hours shown in that room, after the last task up to 04:00, where the day ends. */
+internal fun nightHours(entries:List<DayEntry>):List<Int> {
+    val end=lastEnd(entries)?:return emptyList()
+    val first=(end+59)/60*60
+    return (first..LOGICAL_DAY_CUTOFF+1440 step 60).filter{it-end>=15}
+}
+
 internal fun nowBarDp(now:Int,entries:List<DayEntry>):Float? {
     if(entries.isEmpty()||now<0||now>LAST_START+120)return null
     val bottom=entries.sumOf{entryHeightDp(it).toDouble()}.toFloat()
@@ -189,6 +210,12 @@ internal fun shortDuration(minutes:Int)=when{minutes<60->"${minutes}m";minutes%6
 internal fun durationWords(minutes:Int)=when{minutes<60->"$minutes min";minutes%60==0->"${minutes/60} hr";else->"${minutes/60} hr, ${minutes%60} min"}
 internal fun remainingText(task:Task,now:Int)="${shortDuration((task.clockMinutes+task.minutes-now).coerceAtLeast(1))} remaining"
 /** "7:00" on a 12-hour phone, "07:00" on a 24-hour one, as in the left column. */
+/** "Part 2/3" for a piece of a split task. */
+internal fun partText(task:Task):String? = if(task.parent==null)null else "Part ${task.partIndex?:"?"}/${task.partCount?:"?"}"
+
+/** "25m worked · 35m left", or just "1h worked" once it is done. */
+internal fun workedText(task:Task):String = "${workDuration(task.workedSeconds)} worked"+if(task.done)"" else " · ${workDuration(task.remainingSeconds)} left"
+
 internal fun columnClock(minute:Int,twelve:Boolean):String {
     val m=Math.floorMod(minute,1440);val hour=m/60
     return if(twelve)"${if(hour%12==0)12 else hour%12}:%02d".format(m%60) else "%02d:%02d".format(hour,m%60)
@@ -337,7 +364,7 @@ internal fun taskIcon(task:Task):ImageVector {
  */
 @Composable internal fun StructuredTimeline(tasks:List<Task>,allDay:List<Task>,date:LocalDate,now:Int,timerId:String?,
     enabled:Boolean,scroll:ScrollState,preview:DragPreview?,modifier:Modifier=Modifier,
-    edit:(Task)->Unit,done:(Task)->Unit,focus:(Task)->Unit,gap:(Int)->Unit,
+    edit:(Task)->Unit,done:(Task)->Unit,star:(Task)->Unit,focus:(Task)->Unit,gap:(Int)->Unit,
     dragStart:(Task)->Unit,dragMove:(Task,Offset,Offset)->Unit,dragEnd:(Task)->Unit,dragCancel:()->Unit,
     viewport:(Float,Float)->Unit){
     val entries=remember(tasks){dayEntries(tasks)}
@@ -361,7 +388,7 @@ internal fun taskIcon(task:Task):ImageVector {
                             when(entry){
                                 is TaskEntry->TaskRow(entry.task,entry.showsStart,index==0,index==entries.lastIndex,now,twelve,
                                     enabled&&!entry.task.id.startsWith("pending:"),timerId==entry.task.id,hidden=preview?.taskId==entry.task.id,
-                                    edit={edit(entry.task)},done={done(entry.task)},focus={focus(entry.task)},
+                                    edit={edit(entry.task)},done={done(entry.task)},star={star(entry.task)},focus={focus(entry.task)},
                                     dragStart={dragStart(entry.task)},dragMove={delta,pointer->dragMove(entry.task,delta,pointer)},
                                     dragEnd={dragEnd(entry.task)},dragCancel=dragCancel)
                                 is GapEntry->GapRow(entry,
@@ -370,9 +397,37 @@ internal fun taskIcon(task:Task):ImageVector {
                             }
                         }
                     }
+                    // While a task is held: the night, down to 04:00 the next morning.
+                    preview?.let{drag->tasksById[drag.taskId]?.let{held->
+                        val landing=visibleMinute(date,drag.target)
+                        NightRoom(entries,held.minutes,date,twelve,listOfNotNull(landing,landing?.plus(held.minutes)))
+                    }}
                 }
                 nowBarDp(now,entries)?.let{NowBar(it,columnClock(now,twelve))}
                 preview?.let{drag->tasksById[drag.taskId]?.let{task->DragOverlay(task,drag,entries,date,twelve)}}
+            }
+        }
+    }
+}
+
+/** Below the last task while one is held: time carries on at scale to 04:00 the next morning,
+ *  with faint hours and the next day named at midnight, so a task can be dropped there. */
+@Composable private fun NightRoom(entries:List<DayEntry>,heldMinutes:Int,date:LocalDate,twelve:Boolean,bold:List<Int>){
+    val end=lastEnd(entries)?:return
+    val faint=MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.6f)
+    val spine=pale()
+    Box(Modifier.fillMaxWidth().height(nightRoomDp(entries,heldMinutes).dp).clearAndSetSemantics{}){
+        Canvas(Modifier.fillMaxSize()){
+            val x=(TIME_COLUMN_DP+4+PILL_DP/2).dp.toPx()
+            drawLine(spine,Offset(x,0f),Offset(x,((LAST_START-end).coerceAtLeast(0)*MINUTE_DP).dp.toPx()),strokeWidth=3.dp.toPx(),
+                pathEffect=PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(),6.dp.toPx())))
+        }
+        // An hour next to the landing's bold times gives way to them.
+        nightHours(entries).filter{hour->bold.none{abs(it-hour)*MINUTE_DP<14f}}.forEach{hour->
+            Row(Modifier.offset(y=((hour-end)*MINUTE_DP-7f).dp),verticalAlignment=Alignment.CenterVertically){
+                Text(columnClock(hour,twelve),fontSize=11.sp,color=faint,maxLines=1,modifier=Modifier.width(TIME_COLUMN_DP.dp))
+                if(hour==1440)Text(date.plusDays(1).format(DateTimeFormatter.ofPattern("EEE d MMM")),fontSize=11.sp,fontWeight=FontWeight.SemiBold,
+                    color=faint,maxLines=1,modifier=Modifier.padding(start=(4+PILL_DP+12).dp))
             }
         }
     }
@@ -395,11 +450,13 @@ internal fun taskIcon(task:Task):ImageVector {
 
 /** The landing outline with its bold times, and the chip that follows the finger. */
 @Composable private fun DragOverlay(task:Task,drag:DragPreview,entries:List<DayEntry>,date:LocalDate,twelve:Boolean){
+    // After midnight up to 04:00 still lands in this day's view, as minutes past 24:00.
+    val onDay=visibleMinute(date,drag.target)
     val sameDay=drag.target.date==date
-    val start=drag.target.clockMinute+if(drag.target.date>date)1440 else 0
+    val start=onDay?:drag.target.clockMinute
     val pill=pillHeightDp(task.minutes)
     val white=if(MaterialTheme.colorScheme.background.luminance()<.5f)Color(0xFF2C2C2E) else Color.White
-    if(sameDay){
+    if(onDay!=null){
         val top=offsetForDp(start,entries)
         Box(Modifier.offset(y=top.dp).fillMaxWidth().height(pill.dp).zIndex(5f).clearAndSetSemantics{}){
             Text(fullClock(start,twelve),fontSize=10.sp,fontWeight=FontWeight.Bold,maxLines=1,modifier=Modifier.offset(y=(-6).dp))
@@ -438,7 +495,7 @@ internal fun taskIcon(task:Task):ImageVector {
 
 @Composable private fun TaskRow(task:Task,showsStart:Boolean,first:Boolean,last:Boolean,now:Int,twelve:Boolean,
     interactive:Boolean,timing:Boolean,hidden:Boolean,
-    edit:()->Unit,done:()->Unit,focus:()->Unit,dragStart:()->Unit,dragMove:(Offset,Offset)->Unit,dragEnd:()->Unit,dragCancel:()->Unit){
+    edit:()->Unit,done:()->Unit,star:()->Unit,focus:()->Unit,dragStart:()->Unit,dragMove:(Offset,Offset)->Unit,dragEnd:()->Unit,dragCancel:()->Unit){
     val haptic=LocalHapticFeedback.current
     val scope=rememberCoroutineScope()
     var windowPosition by remember{mutableStateOf(Offset.Zero)}
@@ -471,7 +528,7 @@ internal fun taskIcon(task:Task):ImageVector {
             onDragEnd={latestEnd()},onDragCancel={latestCancel()})}
         .graphicsLayer{translationY=settle.value}
         .clickable(enabled=interactive,onClick=edit)
-        .semantics{contentDescription="${task.title}, ${fullClock(start,twelve)} to ${fullClock(end,twelve)}, ${durationWords(task.minutes)}${if(task.done)", done" else ""}. Hold and drag to reschedule"},
+        .semantics{contentDescription="${task.title}, ${fullClock(start,twelve)} to ${fullClock(end,twelve)}, ${durationWords(task.minutes)}${if(task.starred)", Top Win" else ""}${if(task.done)", done" else ""}. Hold and drag to reschedule"},
         verticalAlignment=Alignment.CenterVertically){
         TimeColumn(rowHeight,if(hidden)emptyList() else labels,if(hidden)null else nowLabel)
         Spacer(Modifier.width(4.dp))
@@ -498,13 +555,22 @@ internal fun taskIcon(task:Task):ImageVector {
                 Text(if(phase==Phase.UNDERWAY)remainingText(task,now) else "${rangeText(start,end,twelve)} (${durationWords(task.minutes)})",
                     fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f,fill=false))
                 if(task.recurrenceKey!=null||task.habit)Icon(Icons.Rounded.Repeat,"Repeats",tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(start=3.dp).size(12.dp))
+                partText(task)?.let{Text(" · $it",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)}
             }
             Text(task.title,fontSize=17.sp,fontWeight=FontWeight.SemiBold,maxLines=if(pill>60)2 else 1,overflow=TextOverflow.Ellipsis,lineHeight=21.sp,
                 textDecoration=if(task.done)TextDecoration.LineThrough else null,
                 color=if(task.done)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+            if(TimerPreferences.enabled(LocalContext.current)&&task.workedSeconds>0)
+                Text(workedText(task),fontSize=11.sp,fontWeight=FontWeight.Medium,color=color,maxLines=1,overflow=TextOverflow.Ellipsis)
         }
+        // Next to the tick, the star keeps the same place on every row.
         if(TimerPreferences.enabled(LocalContext.current)&&!task.done&&!hidden)IconButton(onClick=focus,enabled=interactive,modifier=Modifier.size(36.dp)){
             Icon(if(timing)Icons.Rounded.HourglassBottom else Icons.Rounded.PlayArrow,"Start focus timer for ${task.title}",tint=color,modifier=Modifier.size(20.dp))
+        }
+        // Top Win: tap the star, as on the old timeline.
+        IconButton(onClick=star,enabled=interactive,modifier=Modifier.size(32.dp).alpha(if(hidden)0f else 1f)){
+            Icon(if(task.starred)Icons.Rounded.Star else Icons.Rounded.StarBorder,"${if(task.starred)"Remove" else "Choose"} ${task.title} as Top Win",
+                tint=if(task.starred)Accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.55f),modifier=Modifier.size(18.dp))
         }
         IconButton(onClick=done,enabled=interactive,modifier=Modifier.size(44.dp).alpha(if(hidden)0f else 1f)
             .semantics{contentDescription="${if(task.done)"Reopen" else "Complete"} ${task.title}"}){

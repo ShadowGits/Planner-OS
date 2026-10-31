@@ -8,6 +8,11 @@ It talks to the same backend as Android, with the same app key.
   * Time runs down the page at 1.6 pt a minute. Capsules ahead of now are pale with a coloured icon; the one under way fills with colour down to now and says "28m remaining"; passed and done ones are solid. The line is coloured up to now, and a very subtle now bar runs across the timeline with the current time in bold on the left.
   * Free time reads "You'll have 30m free. Anything you'd like to fit in?"; a long stretch offers "Add Task".
   * **Hold a task and drag it**: an outlined capsule shows where it will land with the new times in bold, a chip follows your finger, and the + turns into a bin to delete. Scrolling still works everywhere.
+    * Drag past the last task, through midnight, to as late as 3:55 the next morning without leaving the day, as the old timeline did: the night's hours show faintly while you drag, and a drop after midnight saves on the next date and stays at the end of this day.
+    * Drop it on a day in the week strip to move it to that day at the same time.
+  * Tap the ☆ on a task to make it a Top Win. Once something is starred, the Top Wins row shows under the week ("Top Wins · 1 of 3", "Day won"); tap a chip to jump to it.
+  * Split tasks show "Part 2/3", and logged focus time shows as "25m worked · 35m left".
+  * **Now** (on today) scrolls to the task under way or next; **Today** (on another day) goes back.
   * Tap a task to edit it.
 * **Inbox** (the Focus board): overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.

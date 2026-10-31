@@ -512,6 +512,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                 }
             }
             if(onDay)StructuredWeekStrip(selected,today,{d->(if(d==selected)currentTasks else repo.cached(d)?.tasks.orEmpty()).filterNot{it.habit}.sortedBy{it.clockMinutes}.map(::blockColor)}){selectDate(it.toString())}
+            if(onDay)WinsPanel(currentTasks){reveal(it)}
             if(inbox)InboxOverview(filteredInbox,projectDayTasks,if(selected==today)"Today" else selected.format(DateTimeFormatter.ofPattern("MMM d")),filteredInbox.count{isOverdue(it,clock)},inboxFilter,{inboxFilter=it},pickerProjects(planningProjects,resolvedInboxProjectId),resolvedInboxProjectId,{inboxProjectId=it})
             if(pendingSnapshotCount>0)Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
                 Icon(Icons.Rounded.CloudUpload,null,Modifier.size(15.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -584,7 +585,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }else{
                 StructuredTimeline(timed,currentTasks.filter{it.time==null},selected,nowOnDay(selected,today,nowMinute),timer?.taskId,true,scroll,dragPreview,
                     Modifier.weight(1f).fillMaxWidth().then(swipe),
-                    {openEditor(it)},{toggleDone(it)},{startTimer(it)},
+                    {openEditor(it)},{toggleDone(it)},{toggleStar(it)},{startTimer(it)},
                     {minute->closeEditor();adding=true;val slot=normalizeSlot(selected,minute);suggestedDate=slot.date.toString();suggestedTime=slot.clock},
                     {task->requestSerial++;loading=false;drag=DragState(task,selected,scroll.value)},
                     {_,offset,pointer->drag=drag?.let{it.copy(deltaX=it.deltaX+offset.x,deltaY=it.deltaY+offset.y,pointerY=pointer.y,pointerX=pointer.x)}},

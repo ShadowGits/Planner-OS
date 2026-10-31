@@ -33,7 +33,7 @@ class StructuredTimelineGestureTest {
     private val day=(6..22).map{task("t$it",it)}
 
     private class Harness{
-        var scrollValue=0;var edited:String?=null;var dropped:Pair<String,ScheduleSlot>?=null;var started=false
+        var scrollValue=0;var maxScroll=0;var edited:String?=null;var starred:String?=null;var dropped:Pair<String,ScheduleSlot>?=null;var started=false
     }
 
     private fun show(h:Harness){
@@ -44,10 +44,10 @@ class StructuredTimelineGestureTest {
                 val density=LocalDensity.current.density
                 val entries=remember{dayEntries(day)}
                 val preview=dragPreviewOf(drag,scroll.value,density,entries)
-                h.scrollValue=scroll.value
+                h.scrollValue=scroll.value;h.maxScroll=scroll.maxValue
                 Box(Modifier.size(400.dp,700.dp)){
                     StructuredTimeline(day,emptyList(),date,-1,null,true,scroll,preview,Modifier.fillMaxSize(),
-                        edit={h.edited=it.id},done={},focus={},gap={},
+                        edit={h.edited=it.id},done={},star={h.starred=it.id},focus={},gap={},
                         dragStart={h.started=true;drag=DragState(it,date,scroll.value)},
                         dragMove={_,offset,pointer->drag=drag?.let{d->d.copy(deltaX=d.deltaX+offset.x,deltaY=d.deltaY+offset.y,pointerY=pointer.y,pointerX=pointer.x)}},
                         dragEnd={t->dragPreviewOf(drag,scroll.value,density,entries)?.let{h.dropped=t.id to it.target};drag=null},
@@ -91,6 +91,35 @@ class StructuredTimelineGestureTest {
         rule.onNodeWithText("Task t7").performClick()
         rule.waitForIdle()
         assertEquals("t7",h.edited)
+    }
+
+    @Test fun theLastTaskCanBeDraggedPastMidnightInTheSameDay(){
+        val h=Harness();show(h)
+        val node=rule.onNodeWithText("Task t22")
+        node.performScrollTo();rule.waitForIdle()
+        val before=h.maxScroll
+        node.performTouchInput{
+            down(center)
+            advanceEventTime(600)
+            // The 22:00 task is 72 dp tall plus 8 dp of padding, so it ends 76 dp below its
+            // capsule's top; 01:30 is 165 minutes after its 22:45 end at 1.6 dp a minute.
+            val travel=(76f+165*1.6f).dp.toPx()
+            repeat(20){moveBy(androidx.compose.ui.geometry.Offset(0f,travel/20));advanceEventTime(16)}
+        }
+        rule.waitForIdle()
+        assertTrue("while held, the day runs on to 04:00 (scroll room ${h.maxScroll} was $before)",h.maxScroll>before+(5*60*1.6f*rule.density.density))
+        node.performTouchInput{up()}
+        rule.waitForIdle()
+        assertEquals("t22",h.dropped?.first)
+        assertEquals("dropped after midnight, it moves to the next date",date.plusDays(1),h.dropped?.second?.date)
+        assertEquals("01:30",h.dropped?.second?.clock)
+    }
+
+    @Test fun theStarOnATaskMakesItATopWin(){
+        val h=Harness();show(h)
+        rule.onNodeWithContentDescription("Choose Task t7 as Top Win").performClick()
+        rule.waitForIdle()
+        assertEquals("t7",h.starred)
     }
 
     @Test fun holdAndDragMovesTheTask(){
