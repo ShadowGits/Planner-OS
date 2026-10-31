@@ -68,6 +68,15 @@ extension View {
         #endif
     }
 
+    /// The Timeline draws its own header, as Structured does.
+    func hiddenNavigationBar() -> some View {
+        #if os(iOS)
+        toolbar(.hidden, for: .navigationBar)
+        #else
+        self
+        #endif
+    }
+
     func urlEntry() -> some View {
         #if os(iOS)
         textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()

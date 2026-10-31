@@ -165,11 +165,13 @@ final class PlannerStore {
 
     /// Applies `change` on screen (nil removes the task), sends `remote`, and
     /// puts everything back if it fails. Returns the response, or nil on failure.
+    private typealias Snapshot = ([String: DayView], DayView?, WeekView?)
+
     @discardableResult
-    private func perform(_ tasks: [PlannerTask], local change: (PlannerTask) -> PlannerTask?,
+    private func perform(_ tasks: [PlannerTask], local change: (PlannerTask) -> PlannerTask?, restoring earlier: Snapshot? = nil,
                          remote: (PlannerAPI) async throws -> Data) async -> Data? {
         guard let api, !tasks.isEmpty else { return nil }
-        let snapshot = (days, inbox, week)
+        let snapshot = earlier ?? (days, inbox, week)
         let ids = Set(tasks.map(\.id))
         revision += 1
         busy.formUnion(ids)
@@ -234,11 +236,21 @@ final class PlannerStore {
         }
     }
 
-    /// A timeline drag: same day or another, at a new start.
-    func reschedule(_ task: PlannerTask, date: String, start: Int) async {
+    /// A timeline drop: moves the task on screen in this same frame, inside the
+    /// caller's animation, then saves it. Waiting for a Task to start would let
+    /// the block flash back to its old slot first.
+    func rescheduleNow(_ task: PlannerTask, date: String, start: Int) {
+        guard api != nil else { return }
         let time = Civil.clock(start)
-        await perform([task], local: { var next = $0; next.date = date; next.time = time; return next }) {
-            try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["scheduled_date": date, "start_time": time])
+        var moved = task
+        moved.date = date
+        moved.time = time
+        let before: Snapshot = (days, inbox, week)
+        applyLocal([task]) { _ in moved }
+        Task {
+            await perform([task], local: { _ in moved }, restoring: before) {
+                try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["scheduled_date": date, "start_time": time])
+            }
         }
     }
 

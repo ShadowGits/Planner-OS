@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum Screen: Hashable { case today, focus }
+enum Screen: Hashable { case focus, timeline, settings }
 
 /// What the task editor opens for: an existing task, or a new one with a suggested day and time.
 struct EditorRequest: Identifiable {
@@ -10,14 +10,14 @@ struct EditorRequest: Identifiable {
     var time: String?
 }
 
-/// Today · (+) · Focus, as on Android. Milestones and Settings sit in the ⋯ menu.
+/// Focus · Timeline · Settings along the bottom, opening on the Timeline, with
+/// a floating + for adding tasks.
 @MainActor
 struct RootView: View {
     @Environment(PlannerStore.self) private var store
     @Environment(\.scenePhase) private var phase
-    @State private var screen: Screen = .focus
+    @State private var screen: Screen = .timeline
     @State private var editor: EditorRequest?
-    @State private var showSettings = false
     @State private var showMilestones = false
 
     var body: some View {
@@ -27,28 +27,28 @@ struct RootView: View {
             } else {
                 TabView(selection: $screen) {
                     NavigationStack {
-                        TodayView(editor: $editor)
-                            .toolbar { toolbar }
-                    }
-                    .tabItem { Label("Today", systemImage: "calendar.day.timeline.left") }
-                    .tag(Screen.today)
-
-                    NavigationStack {
                         FocusView(screen: $screen, editor: $editor)
-                            .toolbar { toolbar }
+                            .toolbar { focusToolbar }
+                            .overlay(alignment: .bottomTrailing) {
+                                AddButton { editor = EditorRequest(date: store.logicalToday) }
+                            }
                     }
-                    .tabItem { Label("Focus", systemImage: "scope") }
+                    .tabItem { Label("Focus", systemImage: "tray") }
                     .tag(Screen.focus)
+
+                    NavigationStack { TodayView(editor: $editor) }
+                        .tabItem { Label("Timeline", systemImage: "list.bullet.below.rectangle") }
+                        .tag(Screen.timeline)
+
+                    NavigationStack { SettingsView(firstRun: false) }
+                        .tabItem { Label("Settings", systemImage: "gearshape") }
+                        .tag(Screen.settings)
                 }
             }
         }
         .overlay(alignment: .bottom) { ToastView() }
         .sheet(item: $editor) { request in
             NavigationStack { TaskEditor(request: request) }
-                .environment(store)
-        }
-        .sheet(isPresented: $showSettings) {
-            NavigationStack { SettingsView(firstRun: false) }
                 .environment(store)
         }
         .sheet(isPresented: $showMilestones) {
@@ -69,20 +69,11 @@ struct RootView: View {
     }
 
     @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
+    private var focusToolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Button {
-                editor = EditorRequest(date: screen == .today ? store.selectedDate : store.logicalToday)
-            } label: {
-                Label("Add task", systemImage: "plus")
-            }
-            .keyboardShortcut("n", modifiers: .command)
-        }
-        ToolbarItem(placement: .automatic) {
             Menu {
                 Button { showMilestones = true } label: { Label("Milestones", systemImage: "flag") }
                 Button { Task { await store.refreshAll() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
-                Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }

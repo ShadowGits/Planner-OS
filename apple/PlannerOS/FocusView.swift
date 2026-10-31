@@ -43,7 +43,7 @@ struct FocusView: View {
                 }
                 WeekMatrix(rows: store.weekRows, weekStart: store.week?.weekStart, today: store.calendarToday,
                            onWeek: { anchor in Task { await store.refreshWeek(anchor: anchor) } },
-                           onDay: { day in store.selectedDate = day; screen = .today })
+                           onDay: { day in store.selectedDate = day; screen = .timeline })
             }
             .padding()
             .frame(maxWidth: 1200, alignment: .leading)

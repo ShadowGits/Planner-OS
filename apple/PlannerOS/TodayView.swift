@@ -1,227 +1,476 @@
 import SwiftUI
 
-/// One day: untimed work on top, then the timeline. Hold a block, then drag
-/// it to a new time on a five-minute grid; tap an empty hour to add a task there.
+enum Palette {
+    #if canImport(UIKit)
+    static let header = Color(uiColor: .secondarySystemBackground)
+    static let card = Color(uiColor: .systemBackground)
+    #else
+    static let header = Color(nsColor: .windowBackgroundColor)
+    static let card = Color(nsColor: .textBackgroundColor)
+    #endif
+
+    /// Capsule colours: coral, slate, navy, sage, wine, amber, teal, lavender.
+    static let blocks: [Color] = [
+        Color(red: 0.95, green: 0.58, blue: 0.56), Color(red: 0.40, green: 0.52, blue: 0.69),
+        Color(red: 0.17, green: 0.29, blue: 0.43), Color(red: 0.55, green: 0.76, blue: 0.40),
+        Color(red: 0.56, green: 0.24, blue: 0.34), Color(red: 0.94, green: 0.68, blue: 0.30),
+        Color(red: 0.24, green: 0.60, blue: 0.62), Color(red: 0.58, green: 0.50, blue: 0.80),
+    ]
+
+    static func block(_ task: PlannerTask) -> Color { blocks[paletteIndex(task, count: blocks.count)] }
+}
+
+/// The day as a timeline: month and week on top, all-day tasks as round chips,
+/// then each timed task as a capsule on a spine, sized by its duration, with
+/// free time between. Hold a task and drag it to a new time.
 @MainActor
 struct TodayView: View {
     @Environment(PlannerStore.self) private var store
     @Binding var editor: EditorRequest?
-
-    static let hourHeight: CGFloat = 64
-    static let gutter: CGFloat = 48
+    @State private var pickingDate = false
 
     var body: some View {
         let date = store.selectedDate
         let items = store.days[date]?.items ?? []
-        let timed = items.filter { $0.time != nil }
-        let untimed = items.filter { $0.time == nil }
-        let isToday = date == store.calendarToday
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    header(date, items)
-                    if !untimed.isEmpty { untimedList(untimed) }
-                    timeline(timed, date: date, isToday: isToday)
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 24)
-                .frame(maxWidth: 900)
-                .frame(maxWidth: .infinity)
+        let allDay = items.filter { $0.time == nil }
+        let entries = timelineItems(items)
+        let now: Int? = date == store.calendarToday ? store.moment.minutes : nil
+        let twentyFour = Civil.prefers24Hour
+        VStack(spacing: 0) {
+            header(date)
+            WeekStrip(selected: date, today: store.logicalToday, marked: markedDays) { day in
+                withAnimation(.snappy) { store.selectedDate = day }
             }
-            .task(id: date) {
-                await store.loadDay(date)
-                let starts = (store.days[date]?.items ?? []).filter { $0.time != nil }.map(\.clockMinutes)
-                let minutes = isToday ? store.moment.minutes : (starts.min() ?? 8 * 60)
-                proxy.scrollTo(max(0, min(23, minutes / 60 - 1)), anchor: .top)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !allDay.isEmpty {
+                            AllDayRow(tasks: allDay, busy: store.busy,
+                                      onOpen: { editor = EditorRequest(task: $0) },
+                                      onToggle: { task in Task { await store.setDone(task, !task.done) } })
+                                .padding(.bottom, 14)
+                        }
+                        if entries.isEmpty {
+                            emptyState(hasAllDay: !allDay.isEmpty)
+                        }
+                        ForEach(entries) { entry in
+                            switch entry {
+                            case .task(let task, let showsStart):
+                                TimelineRow(
+                                    task: task,
+                                    showsStart: showsStart,
+                                    isFirst: entry.id == entries.first?.id,
+                                    isLast: entry.id == entries.last?.id,
+                                    now: now,
+                                    busy: store.busy.contains(task.id),
+                                    twentyFour: twentyFour,
+                                    onOpen: { editor = EditorRequest(task: task) },
+                                    onToggle: { Task { await store.setDone(task, !task.done) } },
+                                    onMove: { start in store.rescheduleNow(task, date: date, start: start) }
+                                )
+                                .id(task.id)
+                            case .gap(let start, let minutes, let next):
+                                GapRow(start: start, minutes: minutes, next: next, now: now)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 18)
+                    .padding(.bottom, 110)
+                    .frame(maxWidth: 760)
+                    .frame(maxWidth: .infinity)
+                }
+                .background(Palette.card, in: UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous))
+                .task(id: date) {
+                    await store.loadDay(date)
+                    let loaded = timelineItems(store.days[date]?.items ?? [])
+                    let anchor = timelineAnchor(loaded, now: date == store.calendarToday ? store.moment.minutes : nil)
+                    if let anchor { proxy.scrollTo(anchor, anchor: .center) }
+                }
+                .refreshable { await store.refreshAll() }
             }
         }
-        .navigationTitle(isToday ? "Today" : Civil.short(date))
-        .refreshable { await store.refreshAll() }
+        .background(Palette.header)
+        .overlay(alignment: .bottomTrailing) {
+            AddButton { editor = EditorRequest(date: date) }
+        }
+        .hiddenNavigationBar()
+        .sheet(isPresented: $pickingDate) {
+            DayPickerSheet(day: date, timeZone: store.timeZone) { store.selectedDate = $0 }
+        }
     }
 
-    private var dateBinding: Binding<Date> {
-        Binding(get: { Civil.pickerDate(store.selectedDate, in: store.timeZone) },
-                set: { store.selectedDate = Civil.iso($0, in: store.timeZone) })
+    /// Days in view that have something planned, for the dots under the week.
+    private var markedDays: Set<String> {
+        var days = Set(store.days.compactMap { $0.value.items.isEmpty ? nil : $0.key })
+        for task in store.week?.items ?? [] where !task.habit {
+            if let day = task.date { days.insert(day) }
+        }
+        return days
     }
 
-    private func header(_ date: String, _ items: [PlannerTask]) -> some View {
-        let done = items.filter(\.done).count
-        return HStack(spacing: 10) {
-            Button { store.selectedDate = Civil.add(date, days: -1) } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel("Previous day")
-            VStack(alignment: .leading, spacing: 1) {
-                Text(Civil.short(date)).font(.headline)
-                Text(items.isEmpty ? "Nothing planned" : "\(done) of \(items.count) done")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Button { store.selectedDate = Civil.add(date, days: 1) } label: { Image(systemName: "chevron.right") }
-                .accessibilityLabel("Next day")
+    private func header(_ date: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(Civil.monthName(date)).font(.system(size: 28, weight: .bold))
+            Text(Civil.year(date)).font(.system(size: 28, weight: .bold)).foregroundStyle(Color.accentColor)
             Spacer()
             if date != store.logicalToday {
-                Button("Today") { store.selectedDate = store.logicalToday }.buttonStyle(.bordered)
+                Button("Today") { withAnimation(.snappy) { store.selectedDate = store.logicalToday } }
+                    .font(.subheadline.weight(.semibold))
             }
-            DatePicker("Day", selection: dateBinding, displayedComponents: .date)
-                .labelsHidden()
-                .environment(\.timeZone, store.timeZone)
+            Button { pickingDate = true } label: {
+                Image(systemName: "calendar").font(.title3.weight(.semibold))
+            }
+            .accessibilityLabel("Pick a day")
         }
         .buttonStyle(.borderless)
-        .padding(.top, 8)
+        .tint(Color.accentColor)
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
     }
 
-    private func untimedList(_ tasks: [PlannerTask]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Any time").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            ForEach(tasks) { task in
-                HStack(spacing: 10) {
-                    Button { Task { await store.setDone(task, !task.done) } } label: {
-                        Image(systemName: task.done ? "checkmark.circle.fill" : "circle").font(.title3)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(task.done ? "Reopen" : "Mark done")
-                    Text(task.title)
-                        .strikethrough(task.done)
-                        .foregroundStyle(task.done ? .secondary : .primary)
-                        .lineLimit(2)
-                    Spacer()
-                    if task.starred { Image(systemName: "star.fill").font(.caption).foregroundStyle(.pink) }
-                    Text("\(task.minutes)m").font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 10)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
-                .contentShape(Rectangle())
-                .opacity(store.busy.contains(task.id) ? 0.5 : 1)
-                .onTapGesture { editor = EditorRequest(task: task) }
-            }
+    private func emptyState(hasAllDay: Bool) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "sun.horizon").font(.system(size: 40)).foregroundStyle(.secondary)
+            Text(hasAllDay ? "Nothing at a set time" : "Nothing planned").font(.headline)
+            Text("Tap + to add a task.").font(.subheadline).foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
     }
+}
 
-    private func timeline(_ tasks: [PlannerTask], date: String, isToday: Bool) -> some View {
-        let lanes = timelineLanes(tasks)
-        return VStack(spacing: 0) {
-            ForEach(0..<24, id: \.self) { hour in
-                HStack(alignment: .top, spacing: 6) {
-                    Text(Civil.clock(hour * 60))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: Self.gutter - 6, alignment: .trailing)
-                        .offset(y: -7)
-                    Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
+/// Mon to Sun with the selected day in a filled circle. Swipe for other weeks.
+@MainActor
+struct WeekStrip: View {
+    let selected: String
+    let today: String
+    let marked: Set<String>
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        let start = Civil.weekStart(selected)
+        HStack(spacing: 0) {
+            ForEach(0..<7, id: \.self) { offset in
+                let day = Civil.add(start, days: offset)
+                let isSelected = day == selected
+                Button { onSelect(day) } label: {
+                    VStack(spacing: 5) {
+                        Text(Civil.weekdayShort(day)).font(.caption).foregroundStyle(.secondary)
+                        Text(String(Int(day.suffix(2)) ?? 0))
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(isSelected ? Color.white : (day == today ? Color.accentColor : Color.primary))
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(isSelected ? Color.accentColor : Color.clear))
+                        Circle()
+                            .fill(marked.contains(day) && !isSelected ? Color.secondary.opacity(0.6) : Color.clear)
+                            .frame(width: 4, height: 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .frame(height: Self.hourHeight, alignment: .top)
-                .contentShape(Rectangle())
-                .onTapGesture { editor = EditorRequest(date: date, time: Civil.clock(hour * 60)) }
-                .id(hour)
+                .buttonStyle(.plain)
+                .accessibilityLabel(Civil.short(day))
             }
         }
-        .overlay(alignment: .topLeading) {
-            GeometryReader { geo in
-                let width = max(geo.size.width - Self.gutter, 60)
-                ZStack(alignment: .topLeading) {
-                    ForEach(tasks) { task in
-                        let lane = lanes[task.id] ?? (index: 0, count: 1)
-                        let laneWidth = width / CGFloat(lane.count)
-                        TimelineBlock(
-                            task: task,
-                            width: laneWidth - 3,
-                            hourHeight: Self.hourHeight,
-                            busy: store.busy.contains(task.id),
-                            onTap: { editor = EditorRequest(task: task) },
-                            onToggle: { Task { await store.setDone(task, !task.done) } },
-                            onMove: { start in Task { await store.reschedule(task, date: date, start: start) } }
-                        )
-                        .offset(x: Self.gutter + laneWidth * CGFloat(lane.index),
-                                y: CGFloat(task.clockMinutes) / 60 * Self.hourHeight)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 12)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 24).onEnded { value in
+                let dx = value.translation.width
+                guard abs(dx) > 50, abs(dx) > abs(value.translation.height) else { return }
+                onSelect(Civil.add(selected, days: dx < 0 ? 7 : -7))
+            }
+        )
+    }
+}
+
+/// Tasks with no time, as round chips like all-day events.
+@MainActor
+struct AllDayRow: View {
+    let tasks: [PlannerTask]
+    let busy: Set<String>
+    let onOpen: (PlannerTask) -> Void
+    let onToggle: (PlannerTask) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(tasks) { task in
+                    let color = Palette.block(task)
+                    VStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.secondary.opacity(0.12))
+                            .frame(width: 58, height: 58)
+                            .overlay(Image(systemName: taskSymbol(task)).font(.title3).foregroundStyle(color))
+                            .overlay(alignment: .bottomTrailing) {
+                                if task.done {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(color)
+                                        .background(Circle().fill(Palette.card))
+                                }
+                            }
+                        Text(task.title)
+                            .strikethrough(task.done)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(task.done ? .secondary : .primary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .frame(width: 76)
                     }
-                    if isToday {
-                        HStack(spacing: 0) {
-                            Circle().fill(Color.red).frame(width: 8, height: 8)
-                            Rectangle().fill(Color.red).frame(height: 1.5)
-                        }
-                        .frame(width: width + 4)
-                        .offset(x: Self.gutter - 4, y: CGFloat(store.moment.minutes) / 60 * Self.hourHeight - 4)
-                        .allowsHitTesting(false)
+                    .opacity(busy.contains(task.id) ? 0.5 : 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onOpen(task) }
+                    .contextMenu {
+                        Button(task.done ? "Reopen" : "Mark done") { onToggle(task) }
+                        Button("Edit") { onOpen(task) }
                     }
                 }
             }
+            .padding(.vertical, 2)
         }
     }
 }
 
-/// A timed task on the timeline. Hold, then drag: it shows the new start as it
-/// moves and saves on release.
+/// One timed task. Hold it, then drag: it follows the finger, the time on the
+/// left ticks in five-minute steps with a light haptic each step, and on
+/// release it settles into its new place.
 @MainActor
-struct TimelineBlock: View {
+struct TimelineRow: View {
     let task: PlannerTask
-    let width: CGFloat
-    let hourHeight: CGFloat
+    let showsStart: Bool
+    let isFirst: Bool
+    let isLast: Bool
+    let now: Int?
     let busy: Bool
-    let onTap: () -> Void
+    let twentyFour: Bool
+    let onOpen: () -> Void
     let onToggle: () -> Void
     let onMove: (Int) -> Void
 
-    @GestureState private var dragY: CGFloat = 0
-    @GestureState private var lifted = false
+    static let timeColumn: CGFloat = 64
+    static let pillWidth: CGFloat = 52
+    private static let rowPadding: CGFloat = 5
 
-    private var height: CGFloat { max(CGFloat(task.minutes) / 60 * hourHeight, 28) }
+    @State private var lifted = false
+    @State private var dragY: CGFloat = 0
+    @GestureState private var pressing = false
+
+    private var height: CGFloat { CGFloat(pillHeight(task.minutes)) }
+    private var color: Color { Palette.block(task) }
+    private var start: Int { lifted ? preview : task.clockMinutes }
     private var preview: Int {
-        snappedStart(task.clockMinutes, minutes: task.minutes, dragMinutes: Double(dragY / hourHeight * 60))
+        snappedStart(task.clockMinutes, minutes: task.minutes, dragMinutes: Double(dragY) / timelinePointsPerMinute)
     }
-    private var tint: Color { task.habit ? .teal : (task.starred ? .pink : .accentColor) }
+    private var progress: Double? {
+        guard let now, !task.done, now >= task.clockMinutes, now < task.clockMinutes + task.minutes else { return nil }
+        return Double(now - task.clockMinutes) / Double(max(task.minutes, 1))
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .center, spacing: 12) {
+            timeColumn
+            spineAndPill
+            details
+            Spacer(minLength: 8)
             Button(action: onToggle) {
                 Image(systemName: task.done ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 26))
+                    .foregroundStyle(color)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .accessibilityLabel(task.done ? "Reopen" : "Mark done")
-            VStack(alignment: .leading, spacing: 1) {
-                Text(task.title)
-                    .font(.footnote.weight(.semibold))
-                    .strikethrough(task.done)
-                    .lineLimit(height > 44 ? 2 : 1)
-                if height >= 40 || lifted {
-                    Text(lifted ? "Move to \(Civil.clock(preview))"
-                                : "\(Civil.clock(task.clockMinutes))–\(Civil.clock(task.clockMinutes + task.minutes))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+        }
+        .frame(height: height + Self.rowPadding * 2)
+        .contentShape(Rectangle())
+        .opacity(busy && !lifted ? 0.55 : 1)
+        .scaleEffect(lifted ? 1.03 : 1, anchor: .leading)
+        .shadow(color: .black.opacity(lifted ? 0.18 : 0), radius: 12, y: 6)
+        .offset(y: dragY)
+        .zIndex(lifted ? 1 : 0)
+        .onTapGesture(perform: onOpen)
+        .gesture(drag)
+        .onChange(of: pressing) { _, isPressing in
+            // The system can cancel a drag without ending it (a call, a scroll
+            // taking over); put the task back where it was.
+            if !isPressing && lifted {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { lifted = false; dragY = 0 }
+            }
+        }
+        .sensoryFeedback(.impact(weight: .medium), trigger: lifted) { _, isLifted in isLifted }
+        .sensoryFeedback(.selection, trigger: preview) { _, _ in lifted }
+        .accessibilityHint("Hold, then drag to change the time")
+    }
+
+    private var timeColumn: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(showsStart || lifted ? Civil.clockText(start, twentyFour: twentyFour) : " ")
+            Spacer(minLength: 0)
+            Text(Civil.clockText(start + task.minutes, twentyFour: twentyFour))
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(lifted ? Color.accentColor : Color.secondary)
+        .frame(width: Self.timeColumn, height: height, alignment: .trailing)
+    }
+
+    private var spineAndPill: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.pillWidth / 2, style: .continuous)
+        let full = height + Self.rowPadding * 2
+        return ZStack {
+            // The spine runs through every capsule and joins them up.
+            Rectangle()
+                .fill(Color.secondary.opacity(lifted ? 0 : 0.25))
+                .frame(width: 2, height: full - (isFirst ? full / 2 : 0) - (isLast ? full / 2 : 0))
+                .offset(y: (isFirst ? full / 4 : 0) - (isLast ? full / 4 : 0))
+            ZStack(alignment: .top) {
+                shape.fill(color.opacity(task.done ? 0.4 : (progress == nil ? 1 : 0.38)))
+                if let progress {
+                    Rectangle().fill(color).frame(height: height * progress)
                 }
             }
-            Spacer(minLength: 0)
-            if task.starred { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.pink) }
+            .frame(width: Self.pillWidth, height: height)
+            .clipShape(shape)
+            .overlay(
+                Image(systemName: taskSymbol(task))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+            )
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .frame(width: max(width, 30), height: height, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(tint.opacity(task.done ? 0.10 : 0.20)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(tint.opacity(lifted ? 0.9 : 0.35), lineWidth: lifted ? 2 : 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .opacity(busy ? 0.5 : 1)
-        .shadow(color: .black.opacity(lifted ? 0.25 : 0), radius: 8, y: 3)
-        .offset(y: lifted ? CGFloat(preview - task.clockMinutes) / 60 * hourHeight : 0)
-        .zIndex(lifted ? 10 : 0)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .onTapGesture(perform: onTap)
-        .gesture(drag)
-        .animation(.snappy(duration: 0.15), value: lifted)
-        .accessibilityHint("Hold, then drag to move")
+        .frame(width: Self.pillWidth, height: full)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(Civil.clockText(start, twentyFour: twentyFour)) – \(Civil.clockText(start + task.minutes, twentyFour: twentyFour)) (\(durationText(task.minutes)))")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(lifted ? Color.accentColor : Color.secondary)
+            Text(task.title)
+                .strikethrough(task.done)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(task.done ? .secondary : .primary)
+                .lineLimit(height > 64 ? 2 : 1)
+        }
     }
 
     private var drag: some Gesture {
-        LongPressGesture(minimumDuration: 0.3)
+        LongPressGesture(minimumDuration: 0.25)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($lifted) { value, state, _ in
-                if case .second(true, _) = value { state = true }
-            }
-            .updating($dragY) { value, state, _ in
-                if case .second(true, let drag?) = value { state = drag.translation.height }
+            .updating($pressing) { _, state, _ in state = true }
+            .onChanged { value in
+                guard case .second(true, let drag) = value else { return }
+                if !lifted { withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { lifted = true } }
+                // No animation here: the task tracks the finger exactly.
+                var still = Transaction()
+                still.disablesAnimations = true
+                withTransaction(still) { dragY = drag?.translation.height ?? 0 }
             }
             .onEnded { value in
                 guard case .second(true, let drag?) = value else { return }
-                let start = snappedStart(task.clockMinutes, minutes: task.minutes,
-                                         dragMinutes: Double(drag.translation.height / hourHeight * 60))
-                if start != task.clockMinutes { onMove(start) }
+                let target = snappedStart(task.clockMinutes, minutes: task.minutes,
+                                          dragMinutes: Double(drag.translation.height) / timelinePointsPerMinute)
+                // The new time and the release animate together, so the task
+                // glides from under the finger into its slot.
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    lifted = false
+                    dragY = 0
+                    if target != task.clockMinutes { onMove(target) }
+                }
             }
+    }
+}
+
+/// Free time between two tasks: a dotted spine and how long it lasts, or how
+/// long until the next task when now falls inside it.
+@MainActor
+struct GapRow: View {
+    let start: Int
+    let minutes: Int
+    let next: String
+    let now: Int?
+
+    var body: some View {
+        let height = CGFloat(gapHeight(minutes))
+        HStack(spacing: 12) {
+            Color.clear.frame(width: TimelineRow.timeColumn, height: 1)
+            Path { path in
+                path.move(to: CGPoint(x: 1, y: 0))
+                path.addLine(to: CGPoint(x: 1, y: height))
+            }
+            .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [1, 6]))
+            .frame(width: 2, height: height)
+            .frame(width: TimelineRow.pillWidth)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(isNow ? Color.accentColor : Color.secondary)
+            Spacer()
+        }
+        .frame(height: height)
+    }
+
+    private var isNow: Bool {
+        guard let now else { return false }
+        return now >= start && now < start + minutes
+    }
+
+    private var label: String {
+        if isNow, let now { return "Now · \(durationText(start + minutes - now)) until \(next)" }
+        return "\(durationText(minutes)) free"
+    }
+}
+
+/// The floating + button.
+@MainActor
+struct AddButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 58, height: 58)
+                .background(Circle().fill(Color.accentColor))
+                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("n", modifiers: .command)
+        .accessibilityLabel("Add task")
+        .padding(20)
+    }
+}
+
+@MainActor
+struct DayPickerSheet: View {
+    let day: String
+    let timeZone: TimeZone
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var date = Date()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Day", selection: $date, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Go to day")
+            .inlineTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Go") {
+                        onPick(Civil.iso(date, in: timeZone))
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .environment(\.timeZone, timeZone)
+        .presentationDetents([.large])
+        .onAppear { date = Civil.pickerDate(day, in: timeZone) }
+        .macSheetSize()
     }
 }

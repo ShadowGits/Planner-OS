@@ -3,20 +3,21 @@
 One SwiftUI app for all three, built from Xcode with a free Apple account.
 It talks to the same backend as Android, with the same app key.
 
-* **Focus** (opens first): overdue cards ranked by deadline. Starred and high
-  priority come first, then broken deadlines, missed slots and never-scheduled
-  work, then work for a milestone due within 14 days. After that come today's
-  remaining tasks and the week as milestone rows; tap a day to open it.
-  * Each card has **Done**, **Tomorrow**, **Date** (any day from today) and
-    **Drop**. Drop closes a task as skipped; nothing is deleted.
-  * Long-press a card, or tap **Select**, to move or drop several at once.
-  * Moving a task past its milestone's target pushes the milestone out.
-* **Today**: untimed work on top, then a timeline.
-  * Hold a block, then drag it to a new time (5-minute grid).
-  * Tap a block to edit it, or an empty hour to add a task there.
-  * Arrows and the date picker change the day.
-* **+** adds a task (⌘N on iPad keyboards and Mac). **⋯** holds Milestones,
-  Refresh and Settings.
+* **Timeline** (opens first), laid out like Structured:
+  * The month and year sit on top, above a week strip (swipe it for other weeks, or use the calendar button).
+  * Untimed tasks show as round chips.
+  * Each timed task is a coloured capsule on a spine, with an icon taken from its title and a height that follows its duration.
+  * Times are on the left, "start – end (duration)" and the title on the right, and a circle to tick it off at the far edge.
+  * Free time between tasks is shown, with "Now · 25m until …" when you are in a gap.
+  * The task under way fills up as time passes.
+  * **Hold a task, then drag it**: it follows your finger, the time ticks in 5-minute steps with a haptic each step, and it glides into its new place when you let go.
+  * Tap a task to edit it.
+* **Focus**: overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
+  * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
+  * Long-press or **Select** to move or drop several.
+  * Milestones are in the ⋯ menu.
+* **Settings**: server, app key and reminders.
+* The floating **+** adds a task (⌘N on iPad keyboards and Mac).
 * **Reminders** arrive 10 minutes before every timed task. They are local
   notifications, so no push service or paid account is needed.
 

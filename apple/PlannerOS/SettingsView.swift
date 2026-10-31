@@ -5,7 +5,6 @@ import UserNotifications
 @MainActor
 struct SettingsView: View {
     @Environment(PlannerStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let firstRun: Bool
 
     @State private var server = ""
@@ -42,20 +41,12 @@ struct SettingsView: View {
                     Text("The next 7 days of reminders are queued on this device each time the app syncs, so they arrive even when it is closed. Open the app every few days to pick up changes. Turn off browser (PWA) notifications on this device to avoid getting each reminder twice.")
                 }
                 Section {
-                    Button("Disconnect", role: .destructive) {
-                        store.disconnect()
-                        dismiss()
-                    }
+                    Button("Disconnect", role: .destructive) { store.disconnect() }
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle(firstRun ? "Connect Planner OS" : "Settings")
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                if !firstRun { Button("Done") { dismiss() } }
-            }
-        }
         .onAppear { server = store.connection?.base.absoluteString ?? "" }
         .task { await refreshPermission() }
         .onChange(of: reminders) { _, on in
@@ -67,7 +58,6 @@ struct SettingsView: View {
                 store.syncReminders()
             }
         }
-        .macSheetSize()
     }
 
     private func refreshPermission() async {
@@ -87,7 +77,6 @@ struct SettingsView: View {
             do {
                 try await store.connect(server: server, key: typedKey)
                 key = ""
-                if !firstRun { dismiss() }
             } catch {
                 failure = error.localizedDescription
             }

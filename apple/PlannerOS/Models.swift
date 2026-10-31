@@ -231,6 +231,31 @@ enum Civil {
     /// "30 Oct"
     static func dayMonth(_ iso: String) -> String { parse(iso).map(dayMonthUTC.string(from:)) ?? iso }
 
+    private static let monthUTC = formatter("MMMM", TimeZone(identifier: "UTC")!)
+    private static let weekdayUTC = formatter("EEE", TimeZone(identifier: "UTC")!)
+
+    /// "May"
+    static func monthName(_ iso: String) -> String { parse(iso).map(monthUTC.string(from:)) ?? "" }
+
+    /// "2026"
+    static func year(_ iso: String) -> String { String(iso.prefix(4)) }
+
+    /// "Mon"
+    static func weekdayShort(_ iso: String) -> String { parse(iso).map(weekdayUTC.string(from:)) ?? "" }
+
+    /// Whether the device shows a 24-hour clock.
+    static var prefers24Hour: Bool {
+        !(DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? "").contains("a")
+    }
+
+    /// "07:00 AM", or "07:00" on a 24-hour device.
+    static func clockText(_ minutes: Int, twentyFour: Bool) -> String {
+        let m = ((minutes % 1440) + 1440) % 1440
+        let hour = m / 60
+        if twentyFour { return String(format: "%02d:%02d", hour, m % 60) }
+        return String(format: "%02d:%02d", hour % 12 == 0 ? 12 : hour % 12, m % 60) + (hour < 12 ? " AM" : " PM")
+    }
+
     /// "07:05" from minutes after midnight.
     static func clock(_ minutes: Int) -> String {
         let m = max(0, minutes) % (24 * 60)

@@ -103,5 +103,24 @@ check((try? Connection.origin("https://planner.example.com/"))?.absoluteString, 
 check((try? Connection.origin("http://planner.example.com"))?.absoluteString, nil, "https only")
 check((try? Connection.origin("https://planner.example.com/app"))?.absoluteString, nil, "no path")
 
+// Timeline layout: gaps, shared edges, heights, icons, colours.
+let day = timelineItems([
+    task("wake", time: "07:00", minutes: 15), task("yoga", time: "07:15"),
+    task("coffee", time: "08:45", minutes: 15), task("anytime"),
+])
+check(day.map(\.id), ["wake", "yoga", "gap-465", "coffee"], "timeline items")
+if case .task(_, let shows) = day[1] { check(shows, false, "shared edge hides the start") }
+if case .task(_, let shows) = day[3] { check(shows, true, "after a gap the start shows") }
+if case .gap(_, let minutes, let next) = day[2] { check(minutes, 60, "gap length"); check(next, "coffee", "gap leads to") }
+check(pillHeight(15), 52, "short task is a circle"); check(pillHeight(30), 72, "30m"); check(pillHeight(600), 216, "capped")
+check(durationText(15), "15m", "minutes"); check(durationText(60), "1h", "hour"); check(durationText(90), "1h 30m", "mixed")
+check(taskSymbol(task("Wake Up")), "alarm", "wake icon"); check(taskSymbol(task("Bike to Office")), "bicycle", "bike icon")
+check(taskSymbol(task("Coffee")), "cup.and.saucer", "coffee icon"); check(taskSymbol(task("Something else")), "checklist", "default icon")
+check(paletteIndex(task("Yoga"), count: 8), paletteIndex(task("Yoga"), count: 8), "stable colour")
+check(timelineAnchor(day, now: 8 * 60), "coffee", "anchor is next up"); check(timelineAnchor(day, now: nil), "wake", "anchor is first")
+check(Civil.clockText(7 * 60, twentyFour: false), "07:00 AM", "12h"); check(Civil.clockText(13 * 60 + 5, twentyFour: false), "01:05 PM", "pm")
+check(Civil.clockText(1440, twentyFour: true), "00:00", "midnight"); check(Civil.monthName("2026-05-13"), "May", "month")
+check(Civil.weekdayShort("2026-05-13"), "Wed", "weekday")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)
