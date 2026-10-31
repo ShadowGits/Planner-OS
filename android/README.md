@@ -16,6 +16,13 @@ For Samsung background delivery, Settings → Apps → Planner OS → Battery �
 
 Version 1.0.11 (version code 13) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
+* Version 1.0.24 lays the day out like Structured and opens on it:
+  * "May 2026" on top, a week strip you can swipe, and untimed tasks as round chips (hold one to tick it off).
+  * Each timed task is a coloured capsule on a spine, with an icon from its title and a height that follows its duration.
+  * Times are on the left, "start – end (duration)" and the title on the right, and a tick circle at the edge.
+  * Free time shows between tasks (tap it to add a task there), and the task under way fills as time passes.
+  * Hold and drag a task: it tracks your finger, ticks at each 5-minute step, scrolls at the edges, and glides into its new slot while the tasks it passes slide aside.
+  * The bottom bar is Focus · Timeline · Settings with a floating +. Colours and icons match the Apple app.
 * Version 1.0.23 opens on **Focus**, the same view as the web dashboard: overdue task cards ranked by deadline (starred/high first, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), what is left today, and the week as milestone rows. Cards have Done / Tomorrow / Date / Drop; long-press selects several for a bulk move or drop. Moving a task past its milestone's target pushes the milestone out. Drop closes a task as skipped, never deletes it.
 * The bottom bar is Today · (+) · Focus. Inbox, Milestones, Dashboard and Settings sit in the ⋮ menu; the week strip, progress bar and Top Wins row show only on Today, and Top Wins only once something is starred.
 

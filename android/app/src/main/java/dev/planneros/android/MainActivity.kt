@@ -120,7 +120,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
     var showMilestones by rememberSaveable{mutableStateOf(false)}
     // The app opens on Focus: what needs you, ranked, before the timeline.
-    var focus by rememberSaveable{mutableStateOf(true)}
+    var focus by rememberSaveable{mutableStateOf(false)}
     var week by remember{mutableStateOf(repo.cachedWeek())}
     var menu by remember{mutableStateOf(false)}
     val dashRepo=remember{DashboardRepository(context)}
@@ -143,7 +143,6 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     val completedTasks=remember(currentTasks){currentTasks.filter{it.done}.sortedBy{it.clockMinutes}}
     val todoTasks=remember(openTasks,completedTasks){openTasks+completedTasks}
     val unscheduled=inboxRows(day?.takeIf{it.date==selectedIso},backlog,clock)
-    val unfinishedInbox=unscheduled.count{!it.done}
     val focusMilestones=remember(milestonesList){milestonesList.mapNotNull{row->row.nullString("id")?.let{FocusMilestone(it,row.optString("name"),row.nullString("target_date"))}}.associateBy{it.id}}
     val focusProjectNames=remember(planning){planning?.projects.orEmpty().associate{it.id to it.name}}
     val focusOverdue=rankOverdue(unscheduled,focusMilestones,clock)
@@ -367,7 +366,10 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     fun reveal(task:Task){
         if(todoView&&todoTasks.any{it.id==task.id}){inbox=false;scope.launch{delay(80);val index=todoTasks.indexOfFirst{it.id==task.id};if(index>=0)todoScroll.animateScrollToItem(index)}}
         else if(task.time==null){inbox=true;scope.launch{delay(80);val index=unscheduled.indexOfFirst{it.id==task.id};if(index>=0)inboxScroll.animateScrollToItem(index)}}
-        else{inbox=false;scope.launch{delay(80);val bounds=timelineBounds(taskBlocks(timed));scroll.animateScrollTo(((task.clockMinutes-bounds.start)*TIMELINE_DP_PER_MINUTE*density-80*density).toInt().coerceAtLeast(0))}}
+        else{inbox=false;scope.launch{delay(80)
+            val chips=if(currentTasks.any{it.time==null})104f else 0f
+            val y=(entryOffsetDp(dayEntries(timed),task.id)?:0f)+chips
+            scroll.animateScrollTo(((y-80f)*density).toInt().coerceAtLeast(0))}}
     }
     fun jumpNow(){
         if(selected!=today){selectDate(today.toString());return}
@@ -378,8 +380,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     val dragPreview=drag?.let{d->
         val deltaDp=d.deltaY/density+(scroll.value-d.originScroll)/density
         val shift=if(d.deltaX>100*density)1 else if(d.deltaX< -100*density)-1 else 0
-        val bounds=timelineBounds(taskBlocks(timed))
-        DragPreview(d.task.id,deltaDp,shift,dragSlot(d.originDate,d.task.clockMinutes,deltaDp,shift,bounds.start,maxOf(1675,bounds.end-5)))
+        DragPreview(d.task.id,deltaDp,shift,dragSlot(d.originDate,d.task.clockMinutes,deltaDp,shift,0,1675))
     }
     fun finishDrag(task:Task){
         val preview=dragPreview;val origin=drag?.originDate;drag=null
@@ -453,33 +454,24 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
             }
                 LinearProgressIndicator(progress={(remaining.toFloat()/s.durationMs.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp),color=if(dark)Color(0xFFD2A570)else Color(0xFF80502F),trackColor=if(dark)Color(0xFF4C3C2E)else Color(0xFFDCC7AE))
             }}}
-            // Two places to be: what needs you (Focus) and the day itself (Today).
-            // Inbox, Milestones and Dashboard moved to the top bar's menu, so the
-            // bar no longer mixes destinations with a view toggle.
-            Surface{Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=10.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+            // As in Structured: the places along the bottom, the + floating above.
+            NavigationBar{
                 val onDayTab=!focus&&!inbox&&!showMilestones
-                TextButton(onClick={drag=null;focus=false;inbox=false;showMilestones=false},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){
-                        Icon(Icons.Rounded.ViewDay,null,modifier=Modifier.size(22.dp),tint=if(onDayTab)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Today",fontSize=11.sp,color=if(onDayTab)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-                    }
-                }
-                FilledIconButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},modifier=Modifier.size(48.dp),shape=CircleShape){Icon(Icons.Rounded.Add,"Add a task")}
-                TextButton(onClick={openFocus()},modifier=Modifier.weight(1f).height(62.dp),contentPadding=PaddingValues(2.dp)){
-                    Column(horizontalAlignment=Alignment.CenterHorizontally){
-                        Icon(Icons.Rounded.CenterFocusStrong,null,modifier=Modifier.size(22.dp),tint=if(focus)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Focus",fontSize=11.sp,color=if(focus)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-                    }
-                }
-            }}
+                NavigationBarItem(selected=focus,onClick={openFocus()},icon={Icon(Icons.Rounded.Inbox,null)},label={Text("Focus")})
+                NavigationBarItem(selected=onDayTab,onClick={drag=null;focus=false;inbox=false;showMilestones=false},icon={Icon(Icons.AutoMirrored.Rounded.ViewList,null)},label={Text("Timeline")})
+                NavigationBarItem(selected=settings,onClick={settings=true},icon={Icon(Icons.Rounded.Settings,null)},label={Text("Settings")})
+            }
         }
+    },floatingActionButton={
+        if(!showMilestones)FloatingActionButton(onClick={closeEditor();recovery=drafts.remove("new");adding=true},shape=CircleShape,
+            containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary){Icon(Icons.Rounded.Add,"Add a task",modifier=Modifier.size(28.dp))}
     }){padding->
         Column(Modifier.fillMaxSize().padding(padding)){
             Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp,top=2.dp),verticalAlignment=Alignment.CenterVertically){
                 Column(Modifier.weight(1f).then(if(!onDay)Modifier else Modifier.clickable{DatePickerDialog(pickerContext(context,dark),{_,y,m,d->selectDate(LocalDate.of(y,m+1,d).toString())},selected.year,selected.monthValue-1,selected.dayOfMonth).show()})){
-                    Text(if(focus)"Focus" else if(showMilestones)"Milestones" else if(inbox)"Inbox" else (if(selected==today)"Today · " else "")+selected.format(DateTimeFormatter.ofPattern("MMM d")),fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(onDay)MonthTitle(selected)
+                    else Text(if(focus)"Focus" else if(showMilestones)"Milestones" else "Inbox",fontSize=19.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                     if(focus)Text("${focusOverdue.size} overdue · ${focusTodayTasks.size} left today",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    else if(onDay)Text("${currentTasks.count{it.done}} of ${currentTasks.size} complete",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     else if(showMilestones)Text("${milestonesList.count{milestoneIsComplete(it)}} of ${milestonesList.size} milestones finished",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if(onDay)TextButton(onClick={selectDate(today.toString());if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
@@ -504,21 +496,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     }
                 }
             }
-            if(onDay)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                IconButton(onClick={selectDate(selected.minusDays(7).toString())},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronLeft,"Previous week")}
-                val start=selected.minusDays((selected.dayOfWeek.value-1).toLong())
-                for(index in 0..6){val d=start.plusDays(index.toLong());val isSelected=d==selected
-                    Column(Modifier.weight(1f).semantics{contentDescription=d.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy"))+(if(isSelected)", selected" else "")}.background(if(isSelected)MaterialTheme.colorScheme.primary else Color.Transparent,RoundedCornerShape(10.dp)).clickable{selectDate(d.toString())}.padding(vertical=2.dp),horizontalAlignment=Alignment.CenterHorizontally){
-                        Text(d.format(DateTimeFormatter.ofPattern("EEEEE")),fontSize=10.sp,color=if(isSelected)MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(d.dayOfMonth.toString(),fontSize=15.sp,fontWeight=FontWeight.Bold,color=if(isSelected)MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
-                        val hasTasks=if(d==selected)currentTasks.isNotEmpty()else repo.cached(d)?.tasks?.isNotEmpty()==true
-                        Box(Modifier.padding(top=3.dp).size(4.dp).background(if(d==today||hasTasks)if(isSelected)MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary else Color.Transparent,CircleShape))
-                    }
-                }
-                IconButton(onClick={selectDate(selected.plusDays(7).toString())},modifier=Modifier.size(30.dp)){Icon(Icons.Rounded.ChevronRight,"Next week")}
-            }
-            if(onDay&&currentTasks.isNotEmpty())LinearProgressIndicator(progress={currentTasks.count{it.done}.toFloat()/currentTasks.size},modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp).height(3.dp),trackColor=MaterialTheme.colorScheme.primary.copy(alpha=.10f))
-            if(onDay)WinsPanel(currentTasks,day?.starLimit?:5){reveal(it)}
+            if(onDay)StructuredWeekStrip(selected,today,{d->if(d==selected)currentTasks.isNotEmpty() else repo.cached(d)?.tasks?.isNotEmpty()==true}){selectDate(it.toString())}
             if(inbox)InboxOverview(filteredInbox,projectDayTasks,if(selected==today)"Today" else selected.format(DateTimeFormatter.ofPattern("MMM d")),filteredInbox.count{isOverdue(it,clock)},inboxFilter,{inboxFilter=it},pickerProjects(planningProjects,resolvedInboxProjectId),resolvedInboxProjectId,{inboxProjectId=it})
             if(pendingSnapshotCount>0)Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
                 Icon(Icons.Rounded.CloudUpload,null,Modifier.size(15.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -588,12 +566,10 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                         items(completedTasks,key={"done:${it.id}"}){task->DayTodoCard(task,dark,!taskBusy(task),timer?.taskId==task.id,{openEditor(task)},{toggleDone(task)},{toggleStar(task)},{startTimer(task)})}
                     }
                 }
-            }else if(timed.isEmpty()){
-                Box(Modifier.weight(1f).fillMaxWidth().then(swipe),contentAlignment=Alignment.Center){EmptyState("A little space to breathe",if(unscheduled.isEmpty())"Add your first block for this day." else "${unfinishedInbox} inbox items are ready to schedule.")}
             }else{
-                ProportionalTimeline(timed,selected,selected==today,nowMinute,timer?.taskId,dark,true,scroll,dragPreview,
+                StructuredTimeline(timed,currentTasks.filter{it.time==null},selected,selected==today,nowMinute,timer?.taskId,true,scroll,dragPreview,
                     Modifier.weight(1f).fillMaxWidth().then(swipe),
-                    {openEditor(it)},{toggleDone(it)},{toggleStar(it)},{startTimer(it)},
+                    {openEditor(it)},{toggleDone(it)},{startTimer(it)},
                     {minute->closeEditor();adding=true;val slot=normalizeSlot(selected,minute);suggestedDate=slot.date.toString();suggestedTime=slot.clock},
                     {task->requestSerial++;loading=false;drag=DragState(task,selected,scroll.value)},
                     {_,offset,y->drag=drag?.let{it.copy(deltaX=it.deltaX+offset.x,deltaY=it.deltaY+offset.y,pointerY=y)}},
