@@ -149,7 +149,12 @@ def test_reminders_cron_rejects_bad_key_and_reports_unconfigured_telegram(client
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["sent"] == []
-    assert all(item["error"] == "TELEGRAM_NOT_CONFIGURED" for item in data["failed"])
+    # With neither web push nor Telegram configured, that is what each due
+    # reminder has to say. The old expectation, TELEGRAM_NOT_CONFIGURED, is a
+    # code the app no longer emits, and it only passed because "failed" is
+    # empty unless something happens to be due as the suite runs — so the
+    # assertion went unchecked until a morning brief fell inside the window.
+    assert all(item["error"] == "NO_PUSH_OR_TELEGRAM" for item in data["failed"])
 
 
 def test_telegram_webhook_secret_chat_gating_and_done_flow(client) -> None:

@@ -49,11 +49,20 @@ enum Reminders {
 
     static func clear() { UNUserNotificationCenter.current().removeAllPendingNotificationRequests() }
 
+    /// The packaged two-note pop, so a reminder is heard across a room rather
+    /// than lost among every other app using the system default. iOS plays a
+    /// bundled sound at the ringer's volume; a louder-than-everything alert
+    /// needs Apple's critical-alert entitlement, which a free account cannot have.
+    static let alert: UNNotificationSound = {
+        guard Bundle.main.url(forResource: "task_reminder", withExtension: "wav") != nil else { return .default }
+        return UNNotificationSound(named: UNNotificationSoundName("task_reminder.wav"))
+    }()
+
     static func sendTest() async {
         let content = UNMutableNotificationContent()
         content.title = "Planner OS reminders work"
         content.body = "Tasks will remind you \(reminderLeadMinutes) minutes before they start."
-        content.sound = .default
+        content.sound = alert
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "test", content: content, trigger: trigger))
     }
@@ -62,7 +71,7 @@ enum Reminders {
         let content = UNMutableNotificationContent()
         content.title = reminder.title
         content.body = reminder.body
-        content.sound = .default
+        content.sound = alert
         content.threadIdentifier = "planner-tasks"
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone

@@ -21,8 +21,11 @@ It talks to the same backend as Android, with the same app key.
 * **Settings**: server, app key and reminders.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
 * **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
-* **Reminders** arrive 10 minutes before every timed task. They are local
-  notifications, so no push service or paid account is needed.
+* **Reminders** arrive 10 minutes before every timed task, with their own
+  two-note pop rather than the system default. They are local notifications,
+  so no push service or paid account is needed. iOS plays them at the ringer's
+  volume; an alert that overrides silent mode needs Apple's critical-alert
+  entitlement, which a free account cannot get.
 
 ## Build and run
 

@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -22,6 +24,25 @@ object Reminders {
     private const val POLICY_VERSION=2
     private const val WINE_ACCENT=0xFF722F37.toInt()
     private fun prefs(c:Context)=c.getSharedPreferences("reminders",Context.MODE_PRIVATE)
+    /** A channel's sound cannot be changed once Android has created it, so giving
+     *  reminders a sound of their own means a new channel. The old silent one is
+     *  removed, or it would sit in Settings collecting nothing. */
+    const val CHANNEL="reminders-sound"
+    private const val OLD_CHANNEL="reminders"
+    /** Creates the channel if it is missing and returns it, or null if it is off. */
+    internal fun channel(c:Context):NotificationChannel? {
+        val manager=c.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL,"Planner reminders",NotificationManager.IMPORTANCE_HIGH).apply{
+            description="Ten minutes before a timed task."
+            setSound(Uri.parse("android.resource://${c.packageName}/raw/task_reminder"),
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            enableVibration(true);vibrationPattern=longArrayOf(0,220,140,220)
+            lockscreenVisibility=Notification.VISIBILITY_PUBLIC
+        })
+        if(manager.getNotificationChannel(OLD_CHANNEL)!=null)manager.deleteNotificationChannel(OLD_CHANNEL)
+        return manager.getNotificationChannel(CHANNEL)?.takeIf{it.importance!=NotificationManager.IMPORTANCE_NONE}
+    }
     fun revision(c:Context):Long=prefs(c).getLong("schedule_revision",0L)
     fun invalidateSchedule(c:Context)=synchronized(lock){
         prefs(c).edit().putLong("schedule_revision",revision(c)+1).commit()
@@ -41,7 +62,7 @@ object Reminders {
                 p.edit().putInt("policy_version",POLICY_VERSION).remove("last_refresh")
                     .putString("epoch",UUID.randomUUID().toString()).putLong("schedule_revision",revision(c)+1).commit()
                 val notifications=c.getSystemService(NotificationManager::class.java)
-                notifications.activeNotifications.filter{it.notification.channelId=="reminders"}
+                notifications.activeNotifications.filter{it.notification.channelId==CHANNEL||it.notification.channelId==OLD_CHANNEL}
                     .forEach{notifications.cancel(it.tag,it.id)}
             }
         }
@@ -127,11 +148,10 @@ object Reminders {
         if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return false
         val manager=c.getSystemService(NotificationManager::class.java)
         if(!manager.areNotificationsEnabled())return false
-        manager.createNotificationChannel(NotificationChannel("reminders","Planner reminders",NotificationManager.IMPORTANCE_HIGH))
-        if(manager.getNotificationChannel("reminders")?.importance==NotificationManager.IMPORTANCE_NONE)return false
+        if(channel(c)==null)return false
         val open=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return try {
-            manager.notify("planner-notification-test",62,NotificationCompat.Builder(c,"reminders")
+            manager.notify("planner-notification-test",62,NotificationCompat.Builder(c,CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification).setContentTitle("Planner OS notifications work")
                 .setContentText("Task names appear first · reminders arrive 10 minutes before start.")
                 .setStyle(NotificationCompat.BigTextStyle().bigText("Planner OS notifications work\nTask names appear first · reminders arrive 10 minutes before start."))
@@ -145,12 +165,11 @@ object Reminders {
         if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return@synchronized
         val manager=c.getSystemService(NotificationManager::class.java)
         if(!manager.areNotificationsEnabled())return@synchronized
-        manager.createNotificationChannel(NotificationChannel("reminders","Planner reminders",NotificationManager.IMPORTANCE_HIGH))
-        if(manager.getNotificationChannel("reminders")?.importance==NotificationManager.IMPORTANCE_NONE)return@synchronized
+        if(channel(c)==null)return@synchronized
         val pi=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notificationTag=reminderNotificationTag(kind)
         // A string tag avoids hash collisions replacing another task's alert.
-        manager.notify("$date:$notificationTag",61,NotificationCompat.Builder(c,"reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(if(kind.startsWith("event10:"))"$title\n$body" else body).setBigContentTitle(title))
+        manager.notify("$date:$notificationTag",61,NotificationCompat.Builder(c,CHANNEL).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(if(kind.startsWith("event10:"))"$title\n$body" else body).setBigContentTitle(title))
             .setColor(WINE_ACCENT).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setAutoCancel(true).setContentIntent(pi).build())
         val p=prefs(c)
         p.edit().putStringSet("sent:$date",sent(c,date)+kind).commit()
