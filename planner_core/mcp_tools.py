@@ -353,7 +353,53 @@ def register_core_tools(server: Any) -> None:
                 "data": {},
                 "errors": [str(error)],
             }
-        return tasks.import_ics(text, window_days=days, forget_deletions=forget_deletions)
+        result = tasks.import_ics(text, window_days=days, forget_deletions=forget_deletions)
+
+        # Say what became of each event. "0 imported, 48 already there" is true
+        # and useless when the question is why an event is not on the timeline:
+        # already a task, deleted here and remembered as deleted, and repeating
+        # all count as "already there" or vanish silently.
+        from datetime import date as _date, timedelta as _timedelta
+
+        from planner_core.services import _local_today
+        from planner_integrations.ics import occurrence_in_window, parse_ics
+
+        start = _local_today(tasks.timezone)
+        end = start + _timedelta(days=days)
+        by_uid: dict[str, str] = {}
+        for row in tasks.repository.list_rows("planner_tasks", columns="title,scheduled_date,metadata"):
+            uid = (row.get("metadata") or {}).get("apple_uid")
+            if uid:
+                by_uid[str(uid)] = "on the timeline"
+        buried: set[str] = set()
+        try:
+            for row in tasks.repository.list_rows("apple_event_tombstones", columns="apple_uid"):
+                if row.get("apple_uid"):
+                    buried.add(str(row["apple_uid"]))
+        except Exception:
+            pass
+
+        events = []
+        for event in parse_ics(text):
+            placed = occurrence_in_window(event, start, end, tasks.timezone)
+            if placed is None:
+                if event.recurring:
+                    events.append({"title": event.summary, "state": "repeats, so it is not imported"})
+                continue
+            on_date, at_time, minutes = placed
+            events.append({
+                "title": event.summary,
+                "date": on_date.isoformat(),
+                "time": at_time or "all day",
+                "minutes": minutes,
+                "state": (
+                    "deleted here, so it stays out" if event.uid in buried
+                    else by_uid.get(event.uid, "imported just now")
+                ),
+            })
+        events.sort(key=lambda e: (e.get("date") or "9999", e.get("time") or ""))
+        result["data"]["events"] = events
+        return result
 
     @server.tool(name="core_metrics")
     def core_metrics() -> dict:
