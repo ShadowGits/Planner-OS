@@ -240,6 +240,22 @@ let widgetRoundTrip = try! JSONDecoder().decode(
     PlannerSnapshot.self, from: try! JSONEncoder().encode(widgetDay))
 check(widgetRoundTrip, widgetDay, "the snapshot survives being written and read")
 
+// Ticking from the widget: its own copy first, so the circle fills at once.
+PlannerSnapshot.save(widgetDay)
+check(PlannerSnapshot.mark("b", done: true), true, "a task on the widget can be ticked")
+check(PlannerSnapshot.load()?.tasks.first { $0.id == "b" }?.done, true, "and it stays ticked")
+check(PlannerSnapshot.load()?.remaining, 2, "with one fewer left")
+check(PlannerSnapshot.mark("b", done: false), true, "and it can be put back")
+check(PlannerSnapshot.load()?.tasks.first { $0.id == "b" }?.done, false, "back to not done")
+check(PlannerSnapshot.mark("gone", done: true), false, "a task that is no longer there cannot be ticked")
+
+// What the widget needs to reach the server, and that disconnecting takes it.
+WidgetConnection.save(server: "https://planner.example.com", key: "app-secret")
+check(WidgetConnection.load()?.server, "https://planner.example.com", "the widget gets the server")
+check(WidgetConnection.load()?.key, "app-secret", "and the key")
+WidgetConnection.clear()
+check(WidgetConnection.load() == nil, true, "disconnecting takes it away")
+
 // Capsules fill by time; words match Structured.
 let emails = task("Emails", time: "16:00", minutes: 30)
 check(taskPhase(emails, now: 15 * 60), .upcoming, "ahead of now")

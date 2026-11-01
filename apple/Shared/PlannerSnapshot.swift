@@ -62,6 +62,17 @@ struct PlannerSnapshot: Codable, Equatable {
         return try? JSONDecoder().decode(PlannerSnapshot.self, from: data)
     }
 
+    /// Tick a task off, or put it back, in the copy the widget is showing, so
+    /// the widget redraws immediately instead of waiting for the server and
+    /// then for the app's next sync. Returns false when the task has gone.
+    @discardableResult
+    static func mark(_ id: String, done: Bool) -> Bool {
+        guard var snapshot = load(), let index = snapshot.tasks.firstIndex(where: { $0.id == id }) else { return false }
+        snapshot.tasks[index].done = done
+        save(snapshot)
+        return true
+    }
+
     /// The task under way at `minute`, if any.
     func current(at minute: Int) -> Item? {
         tasks.first { !$0.done && minute >= $0.start && minute < $0.end }

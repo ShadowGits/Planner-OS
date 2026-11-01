@@ -402,6 +402,10 @@ final class PlannerStore {
         Reminders.clear()
         connection = nil; api = nil
         days = [:]; inbox = nil; week = nil; milestoneRows = []; projects = [:]
+        // The widget's copy of the key and the day go too, or a disconnected
+        // phone keeps a widget that still works.
+        WidgetConnection.clear()
+        publishWidget()
     }
 
     /// Re-queues the coming week's reminders, once things settle.

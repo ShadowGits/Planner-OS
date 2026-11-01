@@ -32,11 +32,24 @@ It talks to the same backend as Android, with the same app key.
 A home-screen and lock-screen widget showing what you are on now and what is
 next, in the same colours as the timeline.
 
-* It reads what the app last synced; it never calls the server, so it has no
-  app key of its own, draws instantly and still says something with no signal.
-* It redraws when a task starts or ends, not on a timer.
-* Sizes: small, medium, and the lock-screen inline, circular and rectangular ones.
+* **Tick a task off from the widget itself** — tap the circle; it fills at once
+  and the server is told behind it. If that fails, the tick is taken back, the
+  same as in the app. No need to open anything.
+* **Large** shows the whole day, each task with its own tick, the one under way
+  marked and filling; **extra large** (iPad) shows more of it.
+* Small and medium show what is on now with the time left, then what is next.
+  The lock screen has inline, circular and rectangular.
+* It draws what the app last synced, so it paints instantly and still says
+  something with no signal, and it redraws when a task starts or ends rather
+  than on a timer.
 * Add it like any widget: hold the home screen, **+**, search Planner OS.
+
+The one compromise: ticking from the widget means the widget needs the server
+and app key, and it cannot read the app's Keychain without a second shared
+entitlement. So the app writes a copy into the App Group, with iOS file
+protection, unreadable until the phone has been unlocked once after a restart.
+Disconnecting in Settings removes it. The Keychain is still where the app's own
+copy lives.
 
 The app and the widget are separate programs and cannot see each other's
 files, so they share one folder — an **App Group**, `group.dev.planneros.planner`.

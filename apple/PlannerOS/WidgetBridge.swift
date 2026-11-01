@@ -11,6 +11,14 @@ import WidgetKit
  */
 extension PlannerStore {
     func publishWidget() {
+        // The widget ticks tasks off itself, so it needs the server as well as
+        // the day. Cleared on disconnect, with everything else.
+        if let connection {
+            WidgetConnection.save(server: connection.base.absoluteString, key: connection.key)
+        } else {
+            WidgetConnection.clear()
+        }
+
         let day = logicalToday
         let tasks = (days[day]?.items ?? [])
             .filter { $0.time != nil }

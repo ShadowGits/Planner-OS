@@ -106,6 +106,9 @@ func widgetRemaining(_ minutes: Int) -> String {
 private struct TaskLine: View {
     let item: PlannerSnapshot.Item
     var underway = false
+    /// Off on the lock screen and in the small size, where there is no room
+    /// for a target big enough to hit.
+    var tickable = true
 
     var body: some View {
         HStack(spacing: 7) {
@@ -115,13 +118,42 @@ private struct TaskLine: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(.caption.weight(underway ? .bold : .semibold))
+                    .strikethrough(item.done)
+                    .foregroundStyle(item.done ? .secondary : .primary)
                     .lineLimit(1)
-                Text(widgetClock(item.start))
+                Text(underway ? "\(widgetClock(item.start)) · now" : widgetClock(item.start))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if tickable { TickButton(item: item) }
         }
+    }
+}
+
+/// The tick itself. Tapping it marks the task done without opening the app —
+/// the widget's own copy changes at once and the server is told behind it.
+private struct TickButton: View {
+    let item: PlannerSnapshot.Item
+
+    var body: some View {
+        Button(intent: ToggleTaskIntent(taskId: item.id, done: !item.done)) {
+            ZStack {
+                Circle()
+                    .strokeBorder(PlannerWidgetPalette.block(item), lineWidth: 2)
+                    .frame(width: 22, height: 22)
+                if item.done {
+                    Circle().fill(PlannerWidgetPalette.block(item)).frame(width: 22, height: 22)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 34, height: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.done ? "Reopen \(item.title)" : "Tick off \(item.title)")
     }
 }
 
@@ -169,6 +201,8 @@ struct PlannerWidgetView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         case .systemMedium:
             medium
+        case .systemLarge, .systemExtraLarge:
+            large
         default:
             small
         }
@@ -228,22 +262,69 @@ struct PlannerWidgetView: View {
         } else {
             VStack(alignment: .leading, spacing: 7) {
                 if let now = entry.current {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
                         Text(now.title).font(.subheadline.weight(.bold)).lineLimit(1)
                         Spacer(minLength: 0)
                         Text(widgetRemaining(now.end - entry.minute))
                             .font(.caption2.monospacedDigit()).foregroundStyle(PlannerWidgetPalette.accent)
+                        TickButton(item: now)
                     }
                     ProgressView(value: Double(entry.minute - now.start), total: Double(max(now.minutes, 1)))
                         .tint(PlannerWidgetPalette.block(now))
                 }
-                ForEach(Array(upcoming.prefix(entry.current == nil ? 4 : 3))) { item in
+                ForEach(Array(upcoming.prefix(entry.current == nil ? 3 : 2))) { item in
                     TaskLine(item: item)
                 }
                 Spacer(minLength: 0)
                 Text(footer).font(.system(size: 9)).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The whole day, tickable. Done tasks stay, greyed and struck through,
+    /// so the widget reads as a day rather than a shrinking queue.
+    @ViewBuilder private var large: some View {
+        if !entry.fresh {
+            EmptyLook(entry: entry)
+        } else {
+            let all = (entry.snapshot?.tasks ?? []).sorted { $0.start < $1.start }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Today").font(.headline)
+                    Spacer()
+                    Text(footer).font(.caption2).foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 8)
+
+                if all.isEmpty {
+                    Text("Nothing planned.").font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                } else {
+                    ForEach(Array(all.prefix(family == .systemExtraLarge ? 14 : 8))) { item in
+                        let underway = item.id == entry.current?.id
+                        VStack(spacing: 0) {
+                            TaskLine(item: item, underway: underway)
+                            if underway {
+                                ProgressView(value: Double(entry.minute - item.start),
+                                             total: Double(max(item.minutes, 1)))
+                                    .tint(PlannerWidgetPalette.block(item))
+                                    .padding(.top, 3)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                        if item.id != all.prefix(family == .systemExtraLarge ? 14 : 8).last?.id {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                    if all.count > (family == .systemExtraLarge ? 14 : 8) {
+                        Text("+ \(all.count - (family == .systemExtraLarge ? 14 : 8)) more")
+                            .font(.caption2).foregroundStyle(.secondary).padding(.top, 5)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -263,8 +344,8 @@ struct PlannerWidget: Widget {
                 .containerBackground(.fill.tertiary, for: .widget)
         }
         .configurationDisplayName("Today")
-        .description("What you are on now, and what is next.")
-        .supportedFamilies([.systemSmall, .systemMedium,
+        .description("Your day, with a tick beside each task. The large size shows all of it.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge,
                             .accessoryInline, .accessoryCircular, .accessoryRectangular])
     }
 }

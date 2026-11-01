@@ -163,6 +163,39 @@ func run() async {
     check(onWidget?.tasks.allSatisfy { $0.palette >= 0 && $0.palette < 8 }, true, "each in a real colour slot")
     check(onWidget?.tasks.contains { $0.title == "Read" }, false, "and nothing moved to another day")
 
+    print("Ticking a task off from the widget")
+    store.publishWidget()
+    let widgetTask = PlannerSnapshot.load()?.tasks.first { $0.title == "Quick" }
+    check(widgetTask != nil, true, "the task is on the widget")
+    if let widgetTask {
+        check(PlannerSnapshot.mark(widgetTask.id, done: true), true, "the widget ticks it at once")
+        check(PlannerSnapshot.load()?.tasks.first { $0.id == widgetTask.id }?.done, true, "and shows it ticked")
+        do {
+            try await PlannerWidgetAPI.setDone(widgetTask.id, true)
+            check(await onServer("Quick")?.done, true, "and the server has it too")
+        } catch {
+            failures += 1
+            print("  FAIL the widget could not tell the server: \(error)")
+        }
+        // Putting it back has to work the same way, or an accidental tap sticks.
+        try? await PlannerWidgetAPI.setDone(widgetTask.id, false)
+        check(await onServer("Quick")?.done, false, "and it can be put back")
+
+        // A task that has gone: the widget takes its own tick back rather than
+        // sitting there showing something that never happened.
+        WidgetConnection.save(server: base.absoluteString, key: "wrong-key")
+        PlannerSnapshot.mark(widgetTask.id, done: true)
+        do {
+            try await PlannerWidgetAPI.setDone(widgetTask.id, true)
+            failures += 1; print("  FAIL a refused tick looked like it worked")
+        } catch {
+            PlannerSnapshot.mark(widgetTask.id, done: false)
+            check(PlannerSnapshot.load()?.tasks.first { $0.id == widgetTask.id }?.done, false,
+                  "a refused tick is taken back")
+        }
+        WidgetConnection.save(server: base.absoluteString, key: connection.key)
+    }
+
     print("Reminders")
     check(await store.create(title: "Call", date: tomorrow, time: "09:00", minutes: 15, notes: nil, starred: false), true, "add tomorrow's call")
     let zone = TimeZone(identifier: "Asia/Kolkata")!
