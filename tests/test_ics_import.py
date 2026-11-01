@@ -221,3 +221,43 @@ def test_a_batch_delete_refuses_ids_that_are_not_task_ids():
         assert "valid task id" in str(error)
     else:
         raise AssertionError("a malformed task id should be refused")
+
+
+def test_an_event_at_half_past_eleven_imports_at_that_time():
+    """A plain timed event from an iCloud feed, in the shape Apple writes it:
+    a TZID-qualified start and end, CRLF endings, a VTIMEZONE block before it
+    and the escaped comma iCalendar requires. It should land on its own day,
+    at its own time."""
+    feed = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//Apple Inc.//iPhone OS 18.0//EN\r\n"
+        "BEGIN:VTIMEZONE\r\n"
+        "TZID:Asia/Kolkata\r\n"
+        "END:VTIMEZONE\r\n"
+        "BEGIN:VEVENT\r\n"
+        "UID:4F2A9C10-1C7B-4C2E-9A77-7E2A0D5B1C33\r\n"
+        "DTSTAMP:20261101T050000Z\r\n"
+        "DTSTART;TZID=Asia/Kolkata:20261103T113000\r\n"
+        "DTEND;TZID=Asia/Kolkata:20261103T123000\r\n"
+        "SUMMARY:Visa appointment\\, VFS Global\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+
+    events = parse_ics(feed)
+    assert len(events) == 1
+    assert events[0].summary == "Visa appointment, VFS Global"
+    assert events[0].recurring is False
+
+    placed = occurrence_in_window(events[0], date(2026, 11, 1), date(2026, 12, 1), "Asia/Kolkata")
+    assert placed == (date(2026, 11, 3), "11:30", 60)
+
+    tasks, gw = _service()
+    result = tasks.import_ics(feed, window_days=30, today=date(2026, 11, 1))
+    assert result["data"]["created"] == 1
+
+    row = [r for r in gw.tables["planner_tasks"] if r["title"] == "Visa appointment, VFS Global"][0]
+    assert row["scheduled_date"] == "2026-11-03"
+    assert str(row["start_time"]).startswith("11:30")
+    assert row["metadata"]["apple_uid"] == "4F2A9C10-1C7B-4C2E-9A77-7E2A0D5B1C33"

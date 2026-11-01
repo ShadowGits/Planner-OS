@@ -321,6 +321,40 @@ def register_core_tools(server: Any) -> None:
         except Exception as e:
             return {"success": False, "message": str(e), "data": {}, "errors": [str(e)]}
 
+    @server.tool(name="core_import_apple_calendar")
+    def core_import_apple_calendar(days: int = 30, forget_deletions: bool = False) -> dict:
+        """Pull one-off events from the published Apple/iCloud calendar (APPLE_ICS_URL) into tasks, for today through `days` ahead.
+
+        Each event is keyed by its calendar UID, so running this again never duplicates anything. Repeating events are deliberately skipped — a repeating commitment belongs in the habit engine. An event you deleted here stays deleted; set forget_deletions to true to let the ones you removed come back.
+
+        Returns how many were created and how many were already there. If APPLE_ICS_URL is not set on the server, it says so rather than silently importing nothing — which is the usual reason events do not appear."""
+        import os
+        import urllib.request
+
+        url = os.environ.get("APPLE_ICS_URL", "").strip()
+        if not url:
+            return {
+                "success": False,
+                "message": "APPLE_ICS_URL is not set on the server, so there is no calendar to read",
+                "data": {},
+                "errors": ["APPLE_ICS_URL_NOT_SET"],
+            }
+        if url.startswith("webcal://"):
+            url = "https://" + url[len("webcal://"):]
+
+        tasks, _, _, _, _ = _core_for_current_user()
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                text = response.read().decode("utf-8", errors="replace")
+        except Exception as error:  # the feed is someone else's server
+            return {
+                "success": False,
+                "message": f"Could not read the calendar feed: {error}",
+                "data": {},
+                "errors": [str(error)],
+            }
+        return tasks.import_ics(text, window_days=days, forget_deletions=forget_deletions)
+
     @server.tool(name="core_metrics")
     def core_metrics() -> dict:
         """Full metrics snapshot: per-project completion, upcoming deadlines, streaks, totals."""

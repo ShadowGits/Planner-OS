@@ -52,7 +52,7 @@ class TestMCPExports(unittest.TestCase):
             "update_recurring",  # mapped to core_update_recurring_charge
             "delete_recurring",  # mapped to core_delete_recurring_charge
             "materialize_recurring",  # cron only: POST /v2/finance/recurring/run
-            "import_ics",  # cron/manual only: POST /v2/calendar/import-apple
+            "import_ics",  # core_import_apple_calendar wraps it with the feed read
             # Recovery, not planning: reached by asking the import to forget
             # deletions (POST /v2/calendar/import-apple?forget_deletions=true).
             "forget_deleted_events",
