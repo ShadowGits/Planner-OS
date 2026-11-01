@@ -27,6 +27,30 @@ It talks to the same backend as Android, with the same app key.
   volume; an alert that overrides silent mode needs Apple's critical-alert
   entitlement, which a free account cannot get.
 
+## The Today widget
+
+A home-screen and lock-screen widget showing what you are on now and what is
+next, in the same colours as the timeline.
+
+* It reads what the app last synced; it never calls the server, so it has no
+  app key of its own, draws instantly and still says something with no signal.
+* It redraws when a task starts or ends, not on a timer.
+* Sizes: small, medium, and the lock-screen inline, circular and rectangular ones.
+* Add it like any widget: hold the home screen, **+**, search Planner OS.
+
+The app and the widget are separate programs and cannot see each other's
+files, so they share one folder — an **App Group**, `group.dev.planneros.planner`.
+Both targets are already set up for it.
+
+* If you change the bundle identifier (see below), change the group to match
+  in `apple/PlannerOS.entitlements`, `apple/PlannerWidget.entitlements`, their
+  two `-Mac` counterparts and `apple/Shared/PlannerSnapshot.swift`, and set the
+  widget's identifier to your app's with `.widget` on the end.
+* If Xcode refuses to sign the App Group on your free account, the widget will
+  not read anything and shows "Open Planner OS once" for good. Tell me and
+  I'll switch it to a widget you configure with the server and key directly,
+  which needs no shared entitlement.
+
 ## Build and run
 
 You need Xcode 16 or later. Open `apple/PlannerOS.xcodeproj`, then:
@@ -34,13 +58,15 @@ You need Xcode 16 or later. Open `apple/PlannerOS.xcodeproj`, then:
 1. Select the **PlannerOS** target, then **Signing & Capabilities**.
    * Set **Team** to your Personal Team (sign in under Xcode, Settings, Accounts if it isn't listed).
    * If Xcode says the bundle identifier is taken, change `dev.planneros.planner` to something of your own, e.g. `dev.planneros.planner.sparsh`.
-2. **iPhone / iPad**: plug the device in.
+2. Do the same for the **PlannerWidget** target: same Team, and if you changed
+   the app's identifier, set this one to it with `.widget` on the end.
+3. **iPhone / iPad**: plug the device in.
    * On the device, turn on Settings, Privacy & Security, **Developer Mode** (it restarts).
    * Pick the device as the run destination, then press Run (⌘R).
    * The first time, trust your certificate on the device: Settings, General, VPN & Device Management.
-3. **Mac**: pick **My Mac** as the destination, then press Run.
+4. **Mac**: pick **My Mac** as the destination, then press Run.
    * To keep the app, use Product, Show Build Folder in Finder, and drag `PlannerOS.app` into Applications.
-4. On first launch, enter your server origin (HTTPS, without `/app`) and your `PWA_ACCESS_KEY`.
+5. On first launch, enter your server origin (HTTPS, without `/app`) and your `PWA_ACCESS_KEY`.
    * The key is stored in the Keychain.
    * Allow notifications when asked.
    * Settings has a **Send a test notification** button.

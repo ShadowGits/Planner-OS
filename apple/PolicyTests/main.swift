@@ -217,6 +217,29 @@ let notedTask = editedTask(sop, from: openedFields, to: notedFields)
 check(notedTask.notes, "bring CV", "notes trimmed"); check(notedTask.minutes, 60, "length"); check(notedTask.starred, true, "star")
 check(notedTask.time, "25:30", "time untouched when only other fields change")
 
+// What the widget is handed, and what it makes of it.
+let widgetDay = PlannerSnapshot(
+    date: "2026-05-13", updated: Date(),
+    tasks: [
+        .init(id: "a", title: "Gym", start: 7 * 60, minutes: 60, done: true, palette: 3),
+        .init(id: "b", title: "Shortlist", start: 11 * 60, minutes: 90, done: false, palette: 4),
+        .init(id: "c", title: "Dinner", start: 20 * 60, minutes: 45, done: false, palette: 0),
+        .init(id: "d", title: "Night owl", start: 25 * 60 + 30, minutes: 30, done: false, palette: 6),
+    ],
+    waiting: 2)
+check(widgetDay.current(at: 11 * 60 + 20)?.title, "Shortlist", "the task under way")
+check(widgetDay.current(at: 10 * 60) == nil, true, "nothing is under way in a gap")
+check(widgetDay.current(at: 7 * 60 + 10) == nil, true, "a finished task is not under way")
+check(widgetDay.upcoming(after: 11 * 60 + 20).map(\.title), ["Dinner", "Night owl"], "what is still coming")
+check(widgetDay.upcoming(after: 26 * 60), [], "nothing after the last one")
+check(widgetDay.remaining, 3, "how many are left")
+check(widgetDay.turningPoints(from: 11 * 60 + 20), [12 * 60 + 30, 20 * 60, 20 * 60 + 45, 25 * 60 + 30, 26 * 60],
+      "it redraws when something starts or ends, never in between")
+check(widgetDay.turningPoints(from: 26 * 60), [], "and not again once the day is done")
+let widgetRoundTrip = try! JSONDecoder().decode(
+    PlannerSnapshot.self, from: try! JSONEncoder().encode(widgetDay))
+check(widgetRoundTrip, widgetDay, "the snapshot survives being written and read")
+
 // Capsules fill by time; words match Structured.
 let emails = task("Emails", time: "16:00", minutes: 30)
 check(taskPhase(emails, now: 15 * 60), .upcoming, "ahead of now")

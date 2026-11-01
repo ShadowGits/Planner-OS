@@ -101,6 +101,7 @@ final class PlannerStore {
         _ = await (selected, today, backlog, thisWeek, targets, names)
         loading = false
         syncReminders()
+        publishWidget()
     }
 
     /// Focus needs today's view even while Today shows another day.
@@ -249,6 +250,7 @@ final class PlannerStore {
         await refreshInbox(quiet: true)
         await refreshWeek(quiet: true)
         syncReminders()
+        publishWidget()
     }
 
     func setDone(_ task: PlannerTask, _ done: Bool = true) async {

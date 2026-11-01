@@ -155,6 +155,14 @@ func run() async {
     check(await store.delete(onScreen("Yoga flow")!), true, "delete")
     check(await onServer("Yoga flow"), nil, "deleted on server")
 
+    print("What the widget is left")
+    store.publishWidget()
+    let onWidget = PlannerSnapshot.load()
+    check(onWidget?.date, today, "the widget gets today, by the planner's day")
+    check(onWidget?.tasks.contains { $0.title == "Quick" }, true, "with today's timed tasks on it")
+    check(onWidget?.tasks.allSatisfy { $0.palette >= 0 && $0.palette < 8 }, true, "each in a real colour slot")
+    check(onWidget?.tasks.contains { $0.title == "Read" }, false, "and nothing moved to another day")
+
     print("Reminders")
     check(await store.create(title: "Call", date: tomorrow, time: "09:00", minutes: 15, notes: nil, starred: false), true, "add tomorrow's call")
     let zone = TimeZone(identifier: "Asia/Kolkata")!

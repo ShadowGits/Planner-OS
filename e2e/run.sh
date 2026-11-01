@@ -23,17 +23,21 @@ echo "== Backend tests"
 python3 -m pytest -q
 
 APPLE=apple/PlannerOS
+echo "== Apple: the Xcode project still hangs together"
+python3 "$ROOT/e2e/xcode_project.py"
+
 echo "== Apple: every task field the screens read exists"
 python3 "$ROOT/e2e/swift_fields.py"
 
 echo "== Apple: Focus and timeline rules"
 "$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
-    apple/PolicyTests/main.swift -o "$BUILD/policy"
+    apple/Shared/PlannerSnapshot.swift apple/PolicyTests/main.swift -o "$BUILD/policy"
 "$BUILD/policy"
 
 echo "== Apple: every action against the API"
 "$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
-    $APPLE/PlannerStore.swift apple/EndToEnd/StandIns.swift apple/EndToEnd/main.swift -o "$BUILD/e2e"
+    $APPLE/PlannerStore.swift $APPLE/WidgetBridge.swift apple/Shared/PlannerSnapshot.swift \
+    apple/EndToEnd/StandIns.swift apple/EndToEnd/main.swift -o "$BUILD/e2e"
 "$BUILD/e2e" "$URL"
 
 echo "== Android: unit, touch and end-to-end tests"
