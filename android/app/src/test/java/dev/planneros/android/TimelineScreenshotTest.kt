@@ -73,6 +73,20 @@ class TimelineScreenshotTest {
         save("timeline-1401")
     }
 
+    @Test fun overlappingTasks(){
+        assumeTrue("Set SCREENSHOT_DIR to write screenshots",dir!=null)
+        val clash=listOf(
+            task("Lunch break","12:30",60,done=true),
+            task("Standup","13:30",30),
+            task("Blogpost draft","13:30",120),
+            task("Design review","14:00",45),
+            task("Check emails","16:00",30),
+            task("Get home","17:00",30),
+        )
+        rule.setContent{Screen(now=14*60+1,tasks=clash)}
+        save("timeline-overlap")
+    }
+
     @Test fun draggingDinnerPastMidnight(){
         assumeTrue("Set SCREENSHOT_DIR to write screenshots",dir!=null)
         val starred=day.map{if(it.title=="Dinner"||it.title=="Lunch break")it.copy(starred=true) else it}

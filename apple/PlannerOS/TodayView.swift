@@ -90,6 +90,12 @@ struct TodayView: View {
                                             onLift: { store.beginDrag(task.id) }
                                         )
                                         .id(task.id)
+                                    case .overlap(let group):
+                                        OverlapRow(group: group, now: now, twentyFour: twentyFour,
+                                                   hiddenID: hover != nil ? store.draggingID : nil,
+                                                   onOpen: { editor = EditorRequest(task: $0) },
+                                                   onToggle: { task in Task { await store.setDone(task, !task.done) } },
+                                                   onLift: { store.beginDrag($0) })
                                     case .gap(let start, let minutes, let next):
                                         GapRow(start: start, minutes: minutes, next: next,
                                                previous: color(of: entries, at: place.index - 1),
@@ -510,6 +516,158 @@ struct TimelineRow: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(solid || (phase == .underway && progress > 0.5) ? Color.white : color)
         )
+    }
+}
+
+/// Tasks that run at the same time, drawn beside each other.
+///
+/// A single file cannot say this: stacked, two things at eleven look like one
+/// at eleven and one after it. Here each column is its own task, placed by its
+/// own clock, so an overlap reads as an overlap. Nothing is moved, nothing is
+/// hidden — running two things at once is a choice.
+@MainActor
+struct OverlapRow: View {
+    let group: OverlapGroup
+    let now: Int
+    let twentyFour: Bool
+    let hiddenID: String?
+    let onOpen: (PlannerTask) -> Void
+    let onToggle: (PlannerTask) -> Void
+    let onLift: (String) -> Void
+
+    var body: some View {
+        let height = CGFloat(itemHeight(.overlap(group)))
+        HStack(spacing: 0) {
+            TimeColumn(height: height, labels: labels(height), now: nil)
+            Spacer().frame(width: 4)
+            GeometryReader { space in
+                let columnWidth = space.size.width / CGFloat(group.columns)
+                ForEach(group.placed) { placed in
+                    OverlapBlock(placed: placed, columns: group.columns, now: now, twentyFour: twentyFour,
+                                 onOpen: { onOpen(placed.task) }, onToggle: { onToggle(placed.task) },
+                                 onLift: { onLift(placed.task.id) })
+                        .frame(width: columnWidth - 4, height: CGFloat(placed.height))
+                        .opacity(hiddenID == placed.task.id ? 0 : 1)
+                        .offset(x: columnWidth * CGFloat(placed.column),
+                                y: CGFloat(timelineRowPadding + placed.top))
+                }
+            }
+        }
+        .frame(height: height)
+    }
+
+    /// The start is already printed as the previous task's end where they meet.
+    private func labels(_ height: CGFloat) -> [TimeLabel] {
+        var out: [TimeLabel] = []
+        if group.showsStart {
+            out.append(TimeLabel(y: CGFloat(timelineRowPadding) + 6, text: columnClock(group.start, twentyFour: twentyFour)))
+        }
+        out.append(TimeLabel(y: height - CGFloat(timelineRowPadding) - 6, text: columnClock(group.end, twentyFour: twentyFour)))
+        return out
+    }
+}
+
+/// One task inside a side-by-side group: its own block, in its own column.
+@MainActor
+private struct OverlapBlock: View {
+    let placed: OverlapGroup.Placed
+    let columns: Int
+    let now: Int
+    let twentyFour: Bool
+    let onOpen: () -> Void
+    let onToggle: () -> Void
+    let onLift: () -> Void
+
+    var body: some View {
+        let task = placed.task
+        let color = Palette.block(task)
+        let phase = taskPhase(task, now: now)
+        let progress = CGFloat(taskProgress(task, now: now))
+        let solid = phase == .past || phase == .done
+        let ink: Color = solid || (phase == .underway && progress > 0.5) ? .white : color
+        let narrow = columns > 2
+        // A 30-minute block is one line tall: a time and a tick under the title
+        // would be drawn straight through it.
+        let roomy = placed.height >= 78
+
+        ZStack(alignment: .topLeading) {
+            Rectangle().fill(solid ? color : Palette.pale)
+            if phase == .underway {
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(LinearGradient(stops: [.init(color: color, location: 0), .init(color: color, location: 0.8),
+                                                     .init(color: color.opacity(0.4), location: 1)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .frame(height: max(CGFloat(placed.height) * progress, 1))
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if roomy {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(systemName: taskSymbol(task)).font(.system(size: narrow ? 11 : 13, weight: .semibold))
+                            .foregroundStyle(ink)
+                        if !narrow {
+                            Text(columnClock(task.clockMinutes, twentyFour: twentyFour))
+                                .font(.system(size: 10).monospacedDigit())
+                                .foregroundStyle(solid ? Color.white.opacity(0.85) : Color.secondary)
+                        }
+                    }
+                    title(lines: placed.height > 110 ? 3 : 2, solid: solid, narrow: narrow)
+                    Spacer(minLength: 0)
+                }
+                .padding(EdgeInsets(top: 5, leading: 7, bottom: 4, trailing: 28))
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: taskSymbol(task)).font(.system(size: 11, weight: .semibold)).foregroundStyle(ink)
+                    title(lines: 1, solid: solid, narrow: narrow)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 7)
+                .frame(maxHeight: .infinity)
+            }
+
+            // The tick floats in the corner rather than taking a row of its own.
+            VStack {
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer(minLength: 0)
+                    Button(action: onToggle) {
+                        ZStack {
+                            Circle().stroke(ink, lineWidth: 2)
+                            if task.done {
+                                Circle().fill(color)
+                                Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                            }
+                        }
+                        .frame(width: 18, height: 18)
+                        .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+        .onDrag {
+            onLift()
+            return NSItemProvider(object: task.id as NSString)
+        } preview: {
+            DragChip(task: task, twentyFour: twentyFour)
+        }
+        .accessibilityHint("Hold, then drag to change the time")
+    }
+
+    private func title(lines: Int, solid: Bool, narrow: Bool) -> some View {
+        Text(placed.task.title)
+            .font(.system(size: narrow ? 11 : 13, weight: .semibold))
+            .strikethrough(placed.task.done)
+            .foregroundStyle(solid ? Color.white : Color.primary)
+            .lineLimit(lines)
+            .multilineTextAlignment(.leading)
     }
 }
 

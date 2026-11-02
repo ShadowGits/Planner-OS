@@ -6,15 +6,61 @@ import Foundation
 
 enum TimelineItem: Identifiable, Equatable {
     case task(PlannerTask, showsStart: Bool)
+    /// Tasks running at the same time, side by side in their own columns.
+    case overlap(OverlapGroup)
     /// Free time between tasks, and the task that follows it.
     case gap(start: Int, minutes: Int, next: String)
 
     var id: String {
         switch self {
         case .task(let task, _): return task.id
+        case .overlap(let group): return group.id
         case .gap(let start, _, _): return "gap-\(start)"
         }
     }
+}
+
+/// Tasks that run over each other, each placed by its own clock rather than
+/// stacked as though they were a queue. Two things at once is a decision, not
+/// a mistake, so nothing is moved and nothing is hidden.
+struct OverlapGroup: Equatable {
+    var placed: [Placed]
+    var start: Int
+    var end: Int
+    var columns: Int
+    var showsStart: Bool
+
+    var id: String { "overlap-\(start)-\(placed.count)" }
+
+    /// Where one task sits inside the group: which column, and how far down.
+    struct Placed: Equatable, Identifiable {
+        var task: PlannerTask
+        var column: Int
+        var top: Double
+        var height: Double
+        var id: String { task.id }
+    }
+}
+
+/// Which column each task takes, so two running at once never share one. The
+/// first free column is reused, as a calendar does, so tasks that merely touch
+/// end to end stay in the same column.
+private func columnsFor(_ group: [PlannerTask]) -> [String: Int] {
+    var ends: [Int] = []
+    var out: [String: Int] = [:]
+    for task in group {
+        let start = task.clockMinutes
+        let column: Int
+        if let free = ends.firstIndex(where: { $0 <= start }) {
+            column = free
+        } else {
+            column = ends.count
+            ends.append(0)
+        }
+        ends[column] = start + max(task.minutes, 1)
+        out[task.id] = column
+    }
+    return out
 }
 
 /// Timed tasks in order, with free time of five minutes or more between them.
@@ -22,15 +68,47 @@ enum TimelineItem: Identifiable, Equatable {
 func timelineItems(_ tasks: [PlannerTask]) -> [TimelineItem] {
     let timed = tasks.filter { $0.time != nil }
         .sorted { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }
+
+    // Everything that overlaps, directly or through a third task, belongs together.
+    var groups: [[PlannerTask]] = []
+    var groupEnd = Int.min
+    for task in timed {
+        if groups.isEmpty || task.clockMinutes >= groupEnd {
+            groups.append([task])
+            groupEnd = task.clockMinutes + max(task.minutes, 1)
+        } else {
+            groups[groups.count - 1].append(task)
+            groupEnd = max(groupEnd, task.clockMinutes + max(task.minutes, 1))
+        }
+    }
+
     var items: [TimelineItem] = []
     var lastEnd: Int?
-    for task in timed {
-        let start = task.clockMinutes
-        if let end = lastEnd, start - end >= 5 {
-            items.append(.gap(start: end, minutes: start - end, next: task.title))
+    for group in groups {
+        let start = group[0].clockMinutes
+        let end = group.map { $0.clockMinutes + max($0.minutes, 1) }.max() ?? start
+        if let previous = lastEnd, start - previous >= 5 {
+            items.append(.gap(start: previous, minutes: start - previous, next: group[0].title))
         }
-        items.append(.task(task, showsStart: lastEnd != start))
-        lastEnd = max(lastEnd ?? 0, start + task.minutes)
+        if group.count == 1 {
+            items.append(.task(group[0], showsStart: lastEnd != start))
+        } else {
+            let columns = columnsFor(group)
+            let width = (columns.values.max() ?? 0) + 1
+            // Each sits where its own start falls, unless that would let two in
+            // one column touch: a 5-minute task is drawn taller than 5 minutes.
+            var bottoms = [Double](repeating: 0, count: width)
+            let placed = group.map { task -> OverlapGroup.Placed in
+                let column = columns[task.id] ?? 0
+                let height = pillHeight(task.minutes)
+                let top = max(Double(task.clockMinutes - start) * timelinePointsPerMinute, bottoms[column])
+                bottoms[column] = top + height + 2
+                return OverlapGroup.Placed(task: task, column: column, top: top, height: height)
+            }
+            items.append(.overlap(OverlapGroup(placed: placed, start: start, end: end,
+                                               columns: width, showsStart: lastEnd != start)))
+        }
+        lastEnd = max(lastEnd ?? 0, end)
     }
     return items
 }
@@ -61,6 +139,7 @@ func gapHeight(_ minutes: Int) -> Double {
 func itemHeight(_ item: TimelineItem) -> Double {
     switch item {
     case .task(let task, _): return pillHeight(task.minutes) + 2 * timelineRowPadding
+    case .overlap(let group): return (group.placed.map { $0.top + $0.height }.max() ?? 0) + 2 * timelineRowPadding
     case .gap(_, let minutes, _): return gapHeight(minutes)
     }
 }
@@ -78,7 +157,10 @@ func itemOffset(_ id: String, in items: [TimelineItem]) -> Double? {
 private func snapToFive(_ minute: Double) -> Int { min(max(Int((minute / 5).rounded()) * 5, 0), timelineLastStart) }
 
 private func firstStart(_ items: [TimelineItem]) -> Int? {
-    for item in items { if case .task(let task, _) = item { return task.clockMinutes } }
+    for item in items {
+        if case .task(let task, _) = item { return task.clockMinutes }
+        if case .overlap(let group) = item { return group.start }
+    }
     return nil
 }
 
@@ -98,6 +180,13 @@ func minuteAt(_ y: Double, in items: [TimelineItem]) -> Int {
                 return snapToFive(Double(task.clockMinutes) + inside * Double(task.minutes))
             }
             end = max(end ?? 0, task.clockMinutes + task.minutes)
+        case .overlap(let group):
+            // Time runs evenly over a group: its columns are a way of drawing
+            // the same stretch of clock, not more of it.
+            if y < top + height {
+                return snapToFive(Double(group.start) + (y - top) / height * Double(group.end - group.start))
+            }
+            end = max(end ?? 0, group.end)
         case .gap(let start, let minutes, _):
             if y < top + height { return snapToFive(Double(start) + (y - top) / height * Double(minutes)) }
             end = start + minutes
@@ -122,6 +211,12 @@ func offsetFor(_ minute: Int, in items: [TimelineItem]) -> Double {
                     + Double(minute - task.clockMinutes) / Double(max(task.minutes, 1)) * pillHeight(task.minutes)
             }
             end = max(end ?? 0, task.clockMinutes + task.minutes)
+        case .overlap(let group):
+            if minute < group.start { return top }
+            if minute < group.end {
+                return top + Double(minute - group.start) / Double(max(group.end - group.start, 1)) * height
+            }
+            end = max(end ?? 0, group.end)
         case .gap(let start, let minutes, _):
             if minute < start + minutes { return top + Double(minute - start) / Double(max(minutes, 1)) * height }
             end = start + minutes
@@ -144,6 +239,7 @@ func dropTarget(_ date: String, _ start: Int) -> (date: String, time: String) {
 func timelineLastEnd(_ items: [TimelineItem]) -> Int? {
     items.compactMap { item -> Int? in
         if case .task(let task, _) = item { return task.clockMinutes + task.minutes }
+        if case .overlap(let group) = item { return group.end }
         return nil
     }.max()
 }
@@ -336,9 +432,10 @@ func paletteIndex(_ task: PlannerTask, count: Int) -> Int {
 
 /// The task to scroll to: the one under way or next up today, else the first.
 func timelineAnchor(_ items: [TimelineItem], now: Int?) -> String? {
-    let tasks = items.compactMap { item -> PlannerTask? in
-        if case .task(let task, _) = item { return task }
-        return nil
+    let tasks = items.flatMap { item -> [PlannerTask] in
+        if case .task(let task, _) = item { return [task] }
+        if case .overlap(let group) = item { return group.placed.map(\.task) }
+        return []
     }
     if let now, let current = tasks.first(where: { $0.clockMinutes + $0.minutes > now }) { return current.id }
     return tasks.first?.id

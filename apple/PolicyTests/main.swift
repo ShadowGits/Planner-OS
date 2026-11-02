@@ -240,6 +240,43 @@ let widgetRoundTrip = try! JSONDecoder().decode(
     PlannerSnapshot.self, from: try! JSONEncoder().encode(widgetDay))
 check(widgetRoundTrip, widgetDay, "the snapshot survives being written and read")
 
+// Tasks at the same time sit side by side, as the old timeline had them.
+let clash = timelineItems([task("Standup", time: "11:00", minutes: 30),
+                           task("Deep work", time: "11:00", minutes: 120),
+                           task("Lunch", time: "13:30", minutes: 45)])
+check(clash.map(\.id), ["overlap-660-2", "gap-780", "Lunch"], "two at once become one group")
+guard case .overlap(let clashGroup) = clash[0] else { fatalError("expected a group") }
+check(clashGroup.columns, 2, "two at once means two columns")
+check(clashGroup.start, 11 * 60, "it starts when the first does")
+check(clashGroup.end, 13 * 60, "and ends when the last does")
+check(Set(clashGroup.placed.map(\.column)), [0, 1], "each keeps its own column")
+check(Set(clashGroup.placed.map(\.top)), [0], "both start together, so both sit at the top")
+check(clashGroup.placed.first { $0.task.title == "Standup" }?.height, pillHeight(30),
+      "a short task is still drawn at least a circle tall")
+
+let reused = timelineItems([task("Standup", time: "11:00", minutes: 30),
+                            task("Deep work", time: "11:00", minutes: 120),
+                            task("Call", time: "11:45", minutes: 30)])
+guard case .overlap(let reusedGroup) = reused[0] else { fatalError("expected a group") }
+check(reusedGroup.columns, 2, "the column the short task freed is reused, not a third opened")
+check(reusedGroup.placed.first { $0.task.title == "Call" }?.column,
+      reusedGroup.placed.first { $0.task.title == "Standup" }?.column, "the call takes the free column")
+check(reusedGroup.placed.first { $0.task.title == "Call" }?.top, 45 * 1.6,
+      "and sits where its own clock puts it")
+
+let queue = timelineItems([task("A", time: "09:00", minutes: 30), task("B", time: "09:30", minutes: 30)])
+check(queue.allSatisfy { if case .task = $0 { return true } else { return false } }, true,
+      "back to back is not an overlap: that stays an ordinary row")
+
+// And the clock still reads true across a group, so a drag lands where it looks.
+for minute in stride(from: 11 * 60, through: 14 * 60 + 15, by: 5) {
+    check(minuteAt(offsetFor(minute, in: clash), in: clash), minute, "round trip at \(columnClock(minute, twentyFour: true))")
+}
+let clashHeight = itemHeight(clash[0])
+check(minuteAt(0, in: clash), 11 * 60, "the group starts where it starts")
+check(minuteAt(clashHeight / 2, in: clash), 12 * 60, "and halfway down it is halfway through")
+check(timelineAnchor(clash, now: 11 * 60 + 10)?.isEmpty, false, "a task inside a group can still be scrolled to")
+
 // The six the widget shows: what is on now and what follows, ticked or not.
 check(widgetDay.window(at: 11 * 60 + 20, count: 6).map(\.title), ["Shortlist", "Dinner", "Night owl"],
       "it starts at the task under way and carries on from there")

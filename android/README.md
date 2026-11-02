@@ -16,6 +16,7 @@ For Samsung background delivery, Settings → Apps → Planner OS → Battery �
 
 Version 1.0.11 (version code 13) preserves the same private signing identity for in-place upgrades. Bright wine accents sit on white backgrounds and stable pastel blocks; Settings offers system, light and dark appearance.
 
+* Version 1.0.32: tasks at the same time are **side by side again**, each in its own column, placed by its own clock — the way the timeline worked before the Structured rewrite. Back-to-back tasks stay a single column; a column freed by a short task is reused rather than squeezing everything. Nothing is moved and nothing is hidden: a clash is yours to make.
 * Version 1.0.31: Settings now says why a reminder would arrive in silence — blocked, set to Silent, playing another sound, Do Not Disturb, or reminders simply switched off here (in which case anything arriving is from the web app or Telegram). **Play the reminder sound** plays it on demand, which tells a silenced channel apart from a muted phone.
 * Version 1.0.30: task reminders have their own sound — a short two-note pop — and vibrate. A notification channel's sound is fixed when Android first creates it, so this is a new channel ("Planner reminders"); the old silent one is removed. If you had silenced it, check Settings, Notifications once.
 * Version 1.0.29: a task's name can be changed for habits too (the field was read-only for them, so no cursor appeared); a new name renames the habit on every day. Habits no longer offer notes, which they cannot keep.

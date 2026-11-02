@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -77,16 +78,66 @@ internal sealed interface DayEntry { val key:String }
 internal data class TaskEntry(val task:Task,val showsStart:Boolean):DayEntry { override val key get()=task.id }
 /** Free time between tasks, and the task that follows it. */
 internal data class GapEntry(val start:Int,val minutes:Int,val next:String):DayEntry { override val key get()="gap-$start" }
+/** Tasks that run at the same time, side by side in their own columns, each
+ *  placed by its own clock rather than stacked as though they were a queue.
+ *  Two things at once is a decision, not a mistake, so nothing is hidden and
+ *  nothing is moved. */
+internal data class OverlapEntry(val placed:List<Placed>,val start:Int,val end:Int,val columns:Int,val showsStart:Boolean=true):DayEntry {
+    override val key get()="overlap-$start-${placed.size}"
+    /** Where one task sits inside the group: which column, and how far down. */
+    data class Placed(val task:Task,val column:Int,val topDp:Float,val heightDp:Float)
+}
+
+/** Which column each task takes, so that tasks running at the same time never
+ *  share one. The first free column is reused, as a calendar does, so two
+ *  tasks that merely touch end-to-end stay in the same column. */
+private fun columnsFor(group:List<Task>):Map<String,Int> {
+    val ends=mutableListOf<Int>();val out=mutableMapOf<String,Int>()
+    for(task in group){
+        val start=task.clockMinutes
+        val free=ends.indexOfFirst{it<=start}
+        val column=if(free>=0)free else ends.size.also{ends.add(0)}
+        ends[column]=start+task.minutes.coerceAtLeast(1)
+        out[task.id]=column
+    }
+    return out
+}
 
 /** Timed tasks in order, with free time of five minutes or more between them.
- *  A start time shows only where it is not the previous task's end. */
+ *  A start time shows only where it is not the previous task's end. Tasks that
+ *  run over each other become one side-by-side group. */
 internal fun dayEntries(tasks:List<Task>):List<DayEntry> {
+    val timed=tasks.filter{it.time!=null}.sortedWith(compareBy<Task>{it.clockMinutes}.thenBy{it.title})
+    // Everything that overlaps, directly or through a third task, belongs together.
+    val groups=mutableListOf<MutableList<Task>>();var groupEnd=Int.MIN_VALUE
+    for(task in timed){
+        if(groups.isEmpty()||task.clockMinutes>=groupEnd){groups+=mutableListOf(task);groupEnd=task.clockMinutes+task.minutes.coerceAtLeast(1)}
+        else{groups.last()+=task;groupEnd=maxOf(groupEnd,task.clockMinutes+task.minutes.coerceAtLeast(1))}
+    }
+
     val entries=mutableListOf<DayEntry>();var lastEnd:Int?=null
-    for(task in tasks.filter{it.time!=null}.sortedWith(compareBy<Task>{it.clockMinutes}.thenBy{it.title})){
-        val start=task.clockMinutes
-        lastEnd?.let{end->if(start-end>=5)entries+=GapEntry(end,start-end,task.title)}
-        entries+=TaskEntry(task,lastEnd!=start)
-        lastEnd=maxOf(lastEnd?:0,start+task.minutes)
+    for(group in groups){
+        val start=group.first().clockMinutes
+        val end=group.maxOf{it.clockMinutes+it.minutes.coerceAtLeast(1)}
+        lastEnd?.let{previous->if(start-previous>=5)entries+=GapEntry(previous,start-previous,group.first().title)}
+        if(group.size==1)entries+=TaskEntry(group.first(),lastEnd!=start)
+        else{
+            val columns=columnsFor(group)
+            val width=(columns.values.maxOrNull()?:0)+1
+            // Each task sits where its own start time falls, except where that
+            // would let two in the same column touch: a 5-minute task is drawn
+            // 48 dp tall, which is taller than its five minutes.
+            val bottoms=MutableList(width){0f}
+            val placed=group.map{task->
+                val column=columns.getValue(task.id)
+                val height=pillHeightDp(task.minutes)
+                val top=maxOf((task.clockMinutes-start)*MINUTE_DP,bottoms[column])
+                bottoms[column]=top+height+2f
+                OverlapEntry.Placed(task,column,top,height)
+            }
+            entries+=OverlapEntry(placed,start,end,width,showsStart=lastEnd!=start)
+        }
+        lastEnd=maxOf(lastEnd?:0,end)
     }
     return entries
 }
@@ -105,7 +156,11 @@ internal const val LAST_START=27*60+55
 internal fun pillHeightDp(minutes:Int)=(minutes*MINUTE_DP).coerceIn(PILL_DP,640f)
 /** A few minutes is a short piece of spine; free time keeps the scale; a long window is capped. */
 internal fun gapHeightDp(minutes:Int)=when{minutes<30->16f;minutes<180->maxOf(minutes*MINUTE_DP,64f);else->104f}
-internal fun entryHeightDp(entry:DayEntry)=when(entry){is TaskEntry->pillHeightDp(entry.task.minutes)+2*ROW_PADDING_DP;is GapEntry->gapHeightDp(entry.minutes)}
+internal fun entryHeightDp(entry:DayEntry)=when(entry){
+    is TaskEntry->pillHeightDp(entry.task.minutes)+2*ROW_PADDING_DP
+    is GapEntry->gapHeightDp(entry.minutes)
+    is OverlapEntry->entry.placed.maxOf{it.topDp+it.heightDp}+2*ROW_PADDING_DP
+}
 /** How far down the list an item starts, for scrolling to it and for drags. */
 internal fun entryOffsetDp(entries:List<DayEntry>,key:String):Float? {
     var y=0f
@@ -114,7 +169,9 @@ internal fun entryOffsetDp(entries:List<DayEntry>,key:String):Float? {
 }
 
 private fun snapFive(minute:Float)=((minute/5f).roundToInt()*5).coerceIn(0,LAST_START)
-private fun firstStart(entries:List<DayEntry>)=entries.firstNotNullOfOrNull{(it as? TaskEntry)?.task?.clockMinutes}
+private fun firstStart(entries:List<DayEntry>)=entries.firstNotNullOfOrNull{
+    when(it){is TaskEntry->it.task.clockMinutes;is OverlapEntry->it.start;else->null}
+}
 
 /** The time at a point of the list, y in dp from its top, snapped to five minutes. Inside a
  *  capsule time runs over its duration, inside free time over the gap, beyond the ends at scale. */
@@ -135,6 +192,12 @@ internal fun minuteAtDp(y:Float,entries:List<DayEntry>):Int {
             is GapEntry->{
                 if(y<top+height)return snapFive(entry.start+(y-top)/height*entry.minutes)
                 end=entry.start+entry.minutes
+            }
+            is OverlapEntry->{
+                // Time runs evenly over a group: the columns inside it are a
+                // way of drawing the same stretch of clock, not more of it.
+                if(y<top+height)return snapFive(entry.start+(y-top)/height*(entry.end-entry.start))
+                end=maxOf(end?:0,entry.end)
             }
         }
         top+=height
@@ -161,6 +224,11 @@ internal fun offsetForDp(minute:Int,entries:List<DayEntry>):Float {
                 if(minute<entry.start+entry.minutes)return top+(minute-entry.start).toFloat()/entry.minutes.coerceAtLeast(1)*height
                 end=entry.start+entry.minutes
             }
+            is OverlapEntry->{
+                if(minute<entry.start)return top
+                if(minute<entry.end)return top+(minute-entry.start).toFloat()/(entry.end-entry.start).coerceAtLeast(1)*height
+                end=maxOf(end?:0,entry.end)
+            }
         }
         top+=height
     }
@@ -170,7 +238,9 @@ internal fun offsetForDp(minute:Int,entries:List<DayEntry>):Float {
 /** The now bar's height in the list: at the current time's place in the layout, and when now
  *  is before the first task or after the last, just above or below them. Null on other days. */
 /** Where the day's tasks finish, for the room below them. */
-internal fun lastEnd(entries:List<DayEntry>):Int? = entries.mapNotNull{(it as? TaskEntry)?.task}.maxOfOrNull{it.clockMinutes+it.minutes}
+internal fun lastEnd(entries:List<DayEntry>):Int? = entries.mapNotNull{
+    when(it){is TaskEntry->it.task.clockMinutes+it.task.minutes;is OverlapEntry->it.end;else->null}
+}.maxOrNull()
 
 /** While a task is held, the timeline carries on below the last task at scale to the end of the
  *  day at 04:00, with room for the held task's capsule, so it can be dropped anywhere until then. */
@@ -371,7 +441,9 @@ internal fun taskIcon(task:Task):ImageVector {
     val config=LocalViewConfiguration.current
     val holdConfig=remember(config){object:ViewConfiguration by config{override val longPressTimeoutMillis=300L}}
     val twelve=!DateFormat.is24HourFormat(LocalContext.current)
-    val tasksById=entries.mapNotNull{(it as? TaskEntry)?.task}.associateBy{it.id}
+    val tasksById=entries.flatMap{entry->
+        when(entry){is TaskEntry->listOf(entry.task);is OverlapEntry->entry.placed.map{it.task};else->emptyList()}
+    }.associateBy{it.id}
     CompositionLocalProvider(LocalViewConfiguration provides holdConfig){
         Column(modifier.onGloballyPositioned{val y=it.positionInWindow().y;viewport(y,y+it.size.height)}
             .verticalScroll(scroll).padding(start=12.dp,end=8.dp,top=6.dp,bottom=110.dp)){
@@ -391,6 +463,9 @@ internal fun taskIcon(task:Task):ImageVector {
                                     edit={edit(entry.task)},done={done(entry.task)},star={star(entry.task)},focus={focus(entry.task)},
                                     dragStart={dragStart(entry.task)},dragMove={delta,pointer->dragMove(entry.task,delta,pointer)},
                                     dragEnd={dragEnd(entry.task)},dragCancel=dragCancel)
+                                is OverlapEntry->OverlapRow(entry,now,twelve,enabled,timerId,
+                                    hiddenId=preview?.taskId,edit=edit,done=done,
+                                    dragStart=dragStart,dragMove=dragMove,dragEnd=dragEnd,dragCancel=dragCancel)
                                 is GapEntry->GapRow(entry,
                                     (entries.getOrNull(index-1) as? TaskEntry)?.task?.let(::blockColor),
                                     (entries.getOrNull(index+1) as? TaskEntry)?.task?.let(::blockColor),now,twelve){gap(((entry.start+4)/5)*5)}
@@ -577,6 +652,112 @@ internal fun taskIcon(task:Task):ImageVector {
             Box(Modifier.size(24.dp).then(if(task.done)Modifier.background(color,CircleShape) else Modifier.border(2.dp,color,CircleShape)),contentAlignment=Alignment.Center){
                 if(task.done)Icon(Icons.Rounded.Check,null,tint=Color.White,modifier=Modifier.size(16.dp))
             }
+        }
+    }
+}
+
+/**
+ * Tasks that run at the same time, drawn beside each other.
+ *
+ * The single-file row cannot say this: stacked, two things at eleven look like
+ * one at eleven and one after it. Here each column is its own task, placed by
+ * its own clock, so an overlap reads as an overlap. Nothing is moved and
+ * nothing is hidden — running two things at once is a choice.
+ */
+@Composable private fun OverlapRow(entry:OverlapEntry,now:Int,twelve:Boolean,enabled:Boolean,timerId:String?,
+    hiddenId:String?,edit:(Task)->Unit,done:(Task)->Unit,
+    dragStart:(Task)->Unit,dragMove:(Task,Offset,Offset)->Unit,dragEnd:(Task)->Unit,dragCancel:()->Unit){
+    val height=entryHeightDp(entry)
+    // The start is already printed as the previous task's end when they meet.
+    val labels=buildList{
+        if(entry.showsStart)add(ROW_PADDING_DP+6f to columnClock(entry.start,twelve))
+        add(height-ROW_PADDING_DP-6f to columnClock(entry.end,twelve))
+    }
+    Row(Modifier.fillMaxWidth().height(height.dp)){
+        TimeColumn(height,labels,null)
+        Spacer(Modifier.width(4.dp))
+        BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()){
+            val columnWidth=maxWidth/entry.columns
+            entry.placed.forEach{placed->
+                key(placed.task.id){
+                    OverlapBlock(placed,entry.columns,columnWidth,now,twelve,
+                        interactive=enabled&&!placed.task.id.startsWith("pending:"),
+                        timing=timerId==placed.task.id,hidden=hiddenId==placed.task.id,
+                        edit={edit(placed.task)},done={done(placed.task)},
+                        dragStart={dragStart(placed.task)},dragMove={d,p->dragMove(placed.task,d,p)},
+                        dragEnd={dragEnd(placed.task)},dragCancel=dragCancel)
+                }
+            }
+        }
+    }
+}
+
+/** One task inside a side-by-side group: its own block, in its own column. */
+@Composable private fun OverlapBlock(placed:OverlapEntry.Placed,columns:Int,columnWidth:Dp,now:Int,twelve:Boolean,
+    interactive:Boolean,timing:Boolean,hidden:Boolean,edit:()->Unit,done:()->Unit,
+    dragStart:()->Unit,dragMove:(Offset,Offset)->Unit,dragEnd:()->Unit,dragCancel:()->Unit){
+    val task=placed.task
+    val haptic=LocalHapticFeedback.current
+    var windowPosition by remember{mutableStateOf(Offset.Zero)}
+    val latestStart by rememberUpdatedState(dragStart);val latestMove by rememberUpdatedState(dragMove)
+    val latestEnd by rememberUpdatedState(dragEnd);val latestCancel by rememberUpdatedState(dragCancel)
+    val color=blockColor(task);val pale=pale()
+    val phase=phaseOf(task,now);val progress=progressOf(task,now)
+    val solid=phase==Phase.PAST||phase==Phase.DONE
+    val start=task.clockMinutes;val end=start+task.minutes
+    val narrow=columns>2
+    Box(Modifier.offset(x=columnWidth*placed.column,y=(ROW_PADDING_DP+placed.topDp).dp)
+        .width(columnWidth-4.dp).height(placed.heightDp.dp)
+        .alpha(if(hidden)0f else 1f)
+        .onGloballyPositioned{windowPosition=it.positionInWindow()}
+        .pointerInput(task.id,interactive){if(interactive)detectDragGesturesAfterLongPress(
+            onDragStart={haptic.performHapticFeedback(HapticFeedbackType.LongPress);latestStart()},
+            onDrag={change,amount->change.consume();latestMove(amount,windowPosition+change.position)},
+            onDragEnd={latestEnd()},onDragCancel={latestCancel()})}
+        .clip(RoundedCornerShape(14.dp))
+        .background(if(solid)color else pale)
+        .clickable(enabled=interactive,onClick=edit)
+        .semantics{contentDescription="${task.title}, ${fullClock(start,twelve)} to ${fullClock(end,twelve)}, ${durationWords(task.minutes)}, at the same time as ${columns-1} other${if(columns==2)"" else "s"}. Hold and drag to reschedule"}){
+        if(phase==Phase.UNDERWAY)Box(Modifier.fillMaxWidth().fillMaxHeight(progress.coerceAtLeast(.02f))
+            .background(Brush.verticalGradient(0f to color,.8f to color,1f to color.copy(alpha=.4f))))
+        val ink=if(solid||(phase==Phase.UNDERWAY&&progress>.5f))Color.White else color
+        val words=if(solid)Color.White else MaterialTheme.colorScheme.onSurface
+        // A 30-minute block is one line tall: its own time and a tick below the
+        // title would be drawn straight through it.
+        val roomy=placed.heightDp>=78f
+        val title=@Composable{ lines:Int->
+            Text(task.title,fontSize=if(narrow)11.sp else 13.sp,fontWeight=FontWeight.SemiBold,
+                maxLines=lines,overflow=TextOverflow.Ellipsis,lineHeight=15.sp,
+                textDecoration=if(task.done)TextDecoration.LineThrough else null,color=words)
+        }
+        val tick=@Composable{ size:Dp->
+            IconButton(onClick=done,enabled=interactive,modifier=Modifier.size(size)
+                .semantics{contentDescription="${if(task.done)"Reopen" else "Complete"} ${task.title}"}){
+                Box(Modifier.size(18.dp).then(if(task.done)Modifier.background(color,CircleShape) else Modifier.border(2.dp,ink,CircleShape)),
+                    contentAlignment=Alignment.Center){
+                    if(task.done)Icon(Icons.Rounded.Check,null,tint=Color.White,modifier=Modifier.size(12.dp))
+                }
+            }
+        }
+        // The tick floats in the corner rather than taking a row of its own:
+        // stacked under the title it pushed the words out of a short block.
+        if(roomy){
+            Column(Modifier.fillMaxSize().padding(start=7.dp,top=5.dp,end=30.dp,bottom=4.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    Icon(taskIcon(task),null,tint=ink,modifier=Modifier.size(if(narrow)14.dp else 16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    if(!narrow)Text(columnClock(start,twelve),fontSize=10.sp,maxLines=1,
+                        color=if(solid)Color.White.copy(alpha=.85f) else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Box(Modifier.weight(1f).padding(top=2.dp)){title(if(placed.heightDp>110f)3 else 2)}
+            }
+            Box(Modifier.align(Alignment.BottomEnd)){tick(30.dp)}
+        }
+        else Row(Modifier.fillMaxSize().padding(start=7.dp,end=2.dp),verticalAlignment=Alignment.CenterVertically){
+            Icon(taskIcon(task),null,tint=ink,modifier=Modifier.size(14.dp))
+            Spacer(Modifier.width(5.dp))
+            Box(Modifier.weight(1f)){title(1)}
+            tick(30.dp)
         }
     }
 }

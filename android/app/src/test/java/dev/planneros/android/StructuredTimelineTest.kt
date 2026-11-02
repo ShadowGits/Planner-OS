@@ -91,6 +91,48 @@ class StructuredTimelineTest {
         assertEquals("Day won",winsTitle(listOf(a.copy(done=true),b)))
     }
 
+    @Test fun tasksAtTheSameTimeSitSideBySide(){
+        val entries=dayEntries(listOf(task("Standup","11:00",30),task("Deep work","11:00",120),task("Lunch","13:30",45)))
+        assertEquals(listOf("overlap-660-2","gap-780","Lunch"),entries.map{it.key})
+        val group=entries[0] as OverlapEntry
+        assertEquals("two at once means two columns",2,group.columns)
+        assertEquals(11*60,group.start);assertEquals(13*60,group.end)
+        assertEquals("each keeps its own column",setOf(0,1),group.placed.map{it.column}.toSet())
+        assertEquals("both start together, so both sit at the top",setOf(0f),group.placed.map{it.topDp}.toSet())
+
+        // A third, overlapping only the long one, takes the column the short one left.
+        val three=dayEntries(listOf(task("Standup","11:00",30),task("Deep work","11:00",120),task("Call","11:45",30)))
+        val wide=three[0] as OverlapEntry
+        assertEquals(2,wide.columns)
+        // The short task frees its column at 11:30, so the 11:45 call takes it
+        // rather than opening a third and squeezing everything.
+        assertEquals("the free column is reused rather than a third added",
+            wide.placed.first{it.task.title=="Standup"}.column,
+            wide.placed.first{it.task.title=="Call"}.column)
+        assertNotEquals("and never the column of something still running",
+            wide.placed.first{it.task.title=="Deep work"}.column,
+            wide.placed.first{it.task.title=="Call"}.column)
+        assertEquals("and it sits where its own clock puts it",45*MINUTE_DP,
+            wide.placed.first{it.task.title=="Call"}.topDp,.01f)
+
+        // Touching end to end is not an overlap: that stays an ordinary row.
+        val queue=dayEntries(listOf(task("A","09:00",30),task("B","09:30",30)))
+        assertTrue("back to back is still a list",queue.all{it is TaskEntry})
+    }
+
+    @Test fun timeStillReadsTrueAcrossAGroup(){
+        val entries=dayEntries(listOf(task("Standup","11:00",30),task("Deep work","11:00",120),task("Lunch","13:30",45)))
+        for(minute in 11*60..14*60+15 step 5){
+            assertEquals("round trip at ${columnClock(minute,false)}",minute,minuteAtDp(offsetForDp(minute,entries),entries))
+        }
+        val group=entries[0] as OverlapEntry
+        val height=entryHeightDp(group)
+        assertEquals("the group starts where it starts",11*60,minuteAtDp(0f,entries))
+        assertEquals("and halfway down it is halfway through",12*60,minuteAtDp(height/2,entries))
+        assertEquals("a short task is still drawn at least a circle tall",
+            PILL_DP,group.placed.first{it.task.title=="Standup"}.heightDp,.01f)
+    }
+
     @Test fun wordsMatchStructured(){
         assertEquals("7:00–7:15 AM",rangeText(420,435,true))
         assertEquals("11:30 AM–12:15 PM",rangeText(690,735,true))

@@ -7,6 +7,8 @@ It talks to the same backend as Android, with the same app key.
   * "16. October 2025 ›" on top, the week strip with each day's task colours under it, untimed tasks as round chips.
   * Time runs down the page at 1.6 pt a minute. Capsules ahead of now are pale with a coloured icon; the one under way fills with colour down to now and says "28m remaining"; passed and done ones are solid. The line is coloured up to now, and a very subtle now bar runs across the timeline with the current time in bold on the left.
   * Free time reads "You'll have 30m free. Anything you'd like to fit in?"; a long stretch offers "Add Task".
+  * Tasks at the same time sit **side by side**, each in its own column placed
+    by its own clock. Nothing is moved or hidden — a clash is yours to make.
   * **Hold a task and drag it**: an outlined capsule shows where it will land with the new times in bold, a chip follows your finger, and the + turns into a bin to delete. Scrolling still works everywhere.
     * Drag past the last task, through midnight, to as late as 3:55 the next morning without leaving the day, as the old timeline did: the night's hours show faintly while you drag, and a drop after midnight saves on the next date and stays at the end of this day.
     * Drop it on a day in the week strip to move it to that day at the same time.
