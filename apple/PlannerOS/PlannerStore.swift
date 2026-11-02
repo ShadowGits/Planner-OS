@@ -218,8 +218,11 @@ final class PlannerStore {
         }
     }
 
-    /// Projects a change into every copy on screen: each day, the Inbox and the week.
+    /// Projects a change into every copy on screen: each day, the Inbox and
+    /// the week — and the widget, which otherwise would not catch up until the
+    /// server had answered and the next read had come back.
     private func applyLocal(_ tasks: [PlannerTask], _ change: (PlannerTask) -> PlannerTask?) {
+        defer { publishWidget() }
         let ids = Set(tasks.map(\.id))
         var updated: [String: PlannerTask] = [:]
         for task in tasks { if let next = change(task) { updated[task.id] = next } }

@@ -8,6 +8,7 @@ struct SettingsView: View {
     let firstRun: Bool
 
     @State private var server = ""
+    @State private var soundReport: String?
     @State private var key = ""
     @State private var connecting = false
     @State private var failure: String?
@@ -35,6 +36,10 @@ struct SettingsView: View {
                     Toggle("Remind me \(reminderLeadMinutes) minutes before", isOn: $reminders)
                     LabeledContent("Notifications", value: permission)
                     Button("Send a test notification") { Task { await Reminders.sendTest() } }
+                    // A silent reminder has a reason, and only the phone knows it.
+                    if let soundReport {
+                        Text(soundReport).font(.caption).foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("Reminders")
                 } footer: {
@@ -46,6 +51,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .task { soundReport = await Reminders.soundReport() }
         .navigationTitle(firstRun ? "Connect Planner OS" : "Settings")
         .onAppear { server = store.connection?.base.absoluteString ?? "" }
         .task { await refreshPermission() }

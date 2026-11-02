@@ -58,6 +58,32 @@ enum Reminders {
         return UNNotificationSound(named: UNNotificationSoundName("task_reminder.wav"))
     }()
 
+    /// Why a reminder would arrive in silence on this phone, in one sentence.
+    /// iOS will not say why it muted something, so the settings that decide it
+    /// are read back instead of guessed at.
+    static func soundReport() async -> String {
+        if Bundle.main.url(forResource: "task_reminder", withExtension: "wav") == nil {
+            return "The sound file is not in this build, so reminders fall back to the default sound."
+        }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .denied:
+            return "Notifications are off for Planner OS in iOS Settings, Notifications."
+        case .notDetermined:
+            return "Notifications have not been allowed yet. Send a test notification to be asked."
+        default:
+            break
+        }
+        if settings.soundSetting == .disabled {
+            return "Sounds are off for Planner OS in iOS Settings, Notifications."
+        }
+        if settings.alertSetting == .disabled {
+            return "Banners are off for Planner OS in iOS Settings, Notifications."
+        }
+        return "Ready, playing task_reminder. It uses the ringer volume, so the side switch, "
+            + "a Focus and the volume buttons still silence it."
+    }
+
     static func sendTest() async {
         let content = UNMutableNotificationContent()
         content.title = "Planner OS reminders work"

@@ -29,12 +29,60 @@ object Reminders {
      *  removed, or it would sit in Settings collecting nothing. */
     const val CHANNEL="reminders-sound"
     private const val OLD_CHANNEL="reminders"
+    internal fun soundUri(c:Context)="android.resource://${c.packageName}/raw/task_reminder"
+
+    /**
+     * Why a reminder would arrive without a sound on this phone, in one sentence.
+     *
+     * Android gives an app no way to make a noise it has been told not to make,
+     * and no way to ask why it was refused — so the settings that actually
+     * decide it are read back and reported, rather than guessed at from here.
+     */
+    fun soundReport(c:Context):String {
+        val manager=c.getSystemService(NotificationManager::class.java)
+        if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+            return "Notifications are not allowed for Planner OS. Allow them in Android Settings."
+        if(!manager.areNotificationsEnabled())
+            return "Notifications are switched off for Planner OS in Android Settings."
+        if(!SecureConfig(c).reminders)
+            return "Native reminders are off, just above. This app is sending none — anything arriving now is from the web app or Telegram, and its sound is theirs."
+        val channel=manager.getNotificationChannel(CHANNEL)
+            ?: return "The reminder channel is not there yet. Tap Test notification once to create it."
+        val filter=manager.currentInterruptionFilter
+        return when {
+            channel.importance==NotificationManager.IMPORTANCE_NONE ->
+                "The Planner reminders channel is blocked. Switch it on in Android Settings, Notifications."
+            channel.importance<NotificationManager.IMPORTANCE_DEFAULT ->
+                "The Planner reminders channel is set to Silent. Set it to Default or Urgent in Android Settings, Notifications."
+            channel.sound==null ->
+                "The Planner reminders channel has no sound set. Choose one in Android Settings, Notifications."
+            channel.sound.toString()!=soundUri(c) ->
+                "The channel plays ${channel.sound} instead of the packaged sound. Change it in Android Settings, Notifications."
+            filter>NotificationManager.INTERRUPTION_FILTER_ALL ->
+                "Do Not Disturb is on, so reminders stay quiet until you turn it off."
+            else -> "Ready. The channel is set to ${if(channel.importance>=NotificationManager.IMPORTANCE_HIGH)"Urgent" else "Default"} and plays task_reminder."
+        }
+    }
+
+    /** Play it on demand, to tell a silent channel apart from a silent phone. */
+    fun playSound(c:Context):Boolean = runCatching {
+        android.media.MediaPlayer().apply{
+            setAudioAttributes(android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            setDataSource(c,Uri.parse(soundUri(c)))
+            setOnCompletionListener{it.release()}
+            prepare();start()
+        }
+        true
+    }.getOrDefault(false)
+
     /** Creates the channel if it is missing and returns it, or null if it is off. */
     internal fun channel(c:Context):NotificationChannel? {
         val manager=c.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL,"Planner reminders",NotificationManager.IMPORTANCE_HIGH).apply{
             description="Ten minutes before a timed task."
-            setSound(Uri.parse("android.resource://${c.packageName}/raw/task_reminder"),
+            setSound(Uri.parse(soundUri(c)),
                 AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
             enableVibration(true);vibrationPattern=longArrayOf(0,220,140,220)

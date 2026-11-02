@@ -18,7 +18,8 @@ It talks to the same backend as Android, with the same app key.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
   * Hold a card for its menu (Select, Done, Tomorrow, Pick a date, Drop), or tap **Select** to move or drop several.
   * Milestones are in the ⋯ menu.
-* **Settings**: server, app key and reminders.
+* **Settings**: server, app key and reminders, and a line saying why a reminder
+  would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
 * **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
 * **Reminders** arrive 10 minutes before every timed task, with their own
@@ -35,8 +36,10 @@ next, in the same colours as the timeline.
 * **Tick a task off from the widget itself** — tap the circle; it fills at once
   and the server is told behind it. If that fails, the tick is taken back, the
   same as in the app. No need to open anything.
-* **Large** shows the whole day, each task with its own tick, the one under way
-  marked and filling; **extra large** (iPad) shows more of it.
+* **Large** shows six: what is on now and the five after it, each with its own
+  tick, the one under way in the accent colour. **Extra large** (iPad) shows
+  nine. A widget cannot scroll — it is a picture iOS redraws, not a view — so
+  the rest is a tap away in the app.
 * Small and medium show what is on now with the time left, then what is next.
   The lock screen has inline, circular and rectangular.
 * It draws what the app last synced, so it paints instantly and still says

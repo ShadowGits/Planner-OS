@@ -39,6 +39,42 @@ class ReminderSoundTest {
             manager.getNotificationChannel("reminders"))
     }
 
+    @Test fun theReportNamesWhatIsKeepingItQuiet(){
+        // Android 13 and later will not post anything without this, and the
+        // report says so first — which is right, but not what is under test.
+        org.robolectric.shadows.ShadowApplication.getInstance()
+            .grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        SecureConfig(app).reminders=true
+        Reminders.channel(app)
+        assertTrue("a working setup should say so, said: ${Reminders.soundReport(app)}",
+            Reminders.soundReport(app).startsWith("Ready"))
+
+        // Silenced by the user in Android Settings.
+        manager.deleteNotificationChannel(Reminders.CHANNEL)
+        manager.createNotificationChannel(android.app.NotificationChannel(
+            Reminders.CHANNEL,"Planner reminders",NotificationManager.IMPORTANCE_LOW))
+        assertTrue("silent channel: ${Reminders.soundReport(app)}",
+            Reminders.soundReport(app).contains("Silent"))
+
+        // Blocked altogether.
+        manager.deleteNotificationChannel(Reminders.CHANNEL)
+        manager.createNotificationChannel(android.app.NotificationChannel(
+            Reminders.CHANNEL,"Planner reminders",NotificationManager.IMPORTANCE_NONE))
+        assertTrue("blocked channel: ${Reminders.soundReport(app)}",
+            Reminders.soundReport(app).contains("blocked"))
+
+        // The app is not the one sending them, which is its own answer.
+        SecureConfig(app).reminders=false
+        assertTrue("reminders off: ${Reminders.soundReport(app)}",
+            Reminders.soundReport(app).contains("web app or Telegram"))
+    }
+
+    @Test fun theChannelAndThePlayerAgreeOnTheSameFile(){
+        val channel=Reminders.channel(app)
+        assertEquals("the button plays exactly what the channel plays",
+            channel!!.sound.toString(),Reminders.soundUri(app))
+    }
+
     @Test fun aSilencedChannelStopsTheReminder(){
         Reminders.channel(app)
         manager.deleteNotificationChannel(Reminders.CHANNEL)

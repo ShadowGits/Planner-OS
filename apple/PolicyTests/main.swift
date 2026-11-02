@@ -240,6 +240,19 @@ let widgetRoundTrip = try! JSONDecoder().decode(
     PlannerSnapshot.self, from: try! JSONEncoder().encode(widgetDay))
 check(widgetRoundTrip, widgetDay, "the snapshot survives being written and read")
 
+// The six the widget shows: what is on now and what follows, ticked or not.
+check(widgetDay.window(at: 11 * 60 + 20, count: 6).map(\.title), ["Shortlist", "Dinner", "Night owl"],
+      "it starts at the task under way and carries on from there")
+check(widgetDay.window(at: 10 * 60, count: 6).map(\.title), ["Shortlist", "Dinner", "Night owl"],
+      "in a gap it starts at the next one")
+check(widgetDay.window(at: 7 * 60 + 10, count: 2).map(\.title), ["Gym", "Shortlist"],
+      "a ticked task still holds its place, so the list does not jump as you tick")
+check(widgetDay.window(at: 30 * 60, count: 2).map(\.title), ["Dinner", "Night owl"],
+      "once the day has gone it shows the end of it rather than nothing")
+check(widgetDay.window(at: 11 * 60, count: 2).map(\.title), ["Shortlist", "Dinner"], "and never more than asked")
+check(PlannerSnapshot(date: "2026-05-13", updated: Date(), tasks: [], waiting: 0).window(at: 600, count: 6), [],
+      "an empty day has nothing to show")
+
 // Ticking from the widget: its own copy first, so the circle fills at once.
 PlannerSnapshot.save(widgetDay)
 check(PlannerSnapshot.mark("b", done: true), true, "a task on the widget can be ticked")

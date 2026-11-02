@@ -154,6 +154,10 @@ internal fun pickerContext(context:Context,dark:Boolean):Context = ContextThemeW
         Text(if(enabled)"System notifications enabled" else "System notifications blocked",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick={if(!enabled)notification();testResult=if(Reminders.test(c))"Test sent — check your notification shade." else "Notifications are blocked. Allow notifications and the Planner reminders channel in Android Settings, then test again."}){Icon(Icons.Rounded.NotificationsNone,null);Text(" Test notification")}
         testResult?.let{Text(it,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        // A reminder that arrives in silence has a reason, and only the phone
+        // knows it: read the settings back rather than leaving it a mystery.
+        Text(Reminders.soundReport(c),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
+        TextButton(onClick={testResult=if(Reminders.playSound(c))"Playing the reminder sound. No sound means the phone is muted, not the app." else "That sound could not be played at all."}){Icon(Icons.Rounded.VolumeUp,null);Text(" Play the reminder sound")}
         if(TimerPreferences.enabled(c)){
         Text("Lock-screen timer",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=10.dp))
         Text(timerVisibility,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)

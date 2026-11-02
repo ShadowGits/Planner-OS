@@ -24,12 +24,15 @@ struct ToggleTaskIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         guard PlannerSnapshot.mark(taskId, done: done) else { return .result() }
+        // Redraw from the new copy before going near the network, so the tick
+        // lands as fast as it does in the app rather than after a round trip.
+        WidgetCenter.shared.reloadAllTimelines()
         do {
             try await PlannerWidgetAPI.setDone(taskId, done)
         } catch {
             PlannerSnapshot.mark(taskId, done: !done)
+            WidgetCenter.shared.reloadAllTimelines()
         }
-        WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
 }

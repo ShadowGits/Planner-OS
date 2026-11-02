@@ -115,17 +115,17 @@ private struct TaskLine: View {
             Capsule()
                 .fill(PlannerWidgetPalette.block(item))
                 .frame(width: 3)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
-                    .font(.caption.weight(underway ? .bold : .semibold))
-                    .strikethrough(item.done)
-                    .foregroundStyle(item.done ? .secondary : .primary)
-                    .lineLimit(1)
-                Text(underway ? "\(widgetClock(item.start)) · now" : widgetClock(item.start))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+            Text(widgetClock(item.start))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(underway ? PlannerWidgetPalette.accent : .secondary)
+                .frame(width: 42, alignment: .leading)
+            Text(item.title)
+                .font(.caption.weight(underway ? .bold : .medium))
+                .strikethrough(item.done)
+                .foregroundStyle(item.done ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
             if tickable { TickButton(item: item) }
         }
     }
@@ -282,47 +282,40 @@ struct PlannerWidgetView: View {
         }
     }
 
-    /// The whole day, tickable. Done tasks stay, greyed and struck through,
-    /// so the widget reads as a day rather than a shrinking queue.
+    /// What is on now and the five after it, each tickable.
+    ///
+    /// Six rows, not as many as will fit: eight plus dividers, a progress bar
+    /// and a "+2 more" ran into the widget's own margins and clipped the
+    /// heading. A widget cannot scroll — it is a picture, not a view — so what
+    /// does not fit is simply not shown, and the app is a tap away.
     @ViewBuilder private var large: some View {
         if !entry.fresh {
             EmptyLook(entry: entry)
         } else {
-            let all = (entry.snapshot?.tasks ?? []).sorted { $0.start < $1.start }
+            let rows = entry.snapshot?.window(at: entry.minute, count: family == .systemExtraLarge ? 9 : 6) ?? []
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Today").font(.headline)
-                    Spacer()
-                    Text(footer).font(.caption2).foregroundStyle(.secondary)
+                    Text("Today")
+                        .font(.subheadline.weight(.bold))
+                    Spacer(minLength: 8)
+                    Text(footer)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .padding(.bottom, 8)
+                .padding(.bottom, 10)
 
-                if all.isEmpty {
+                if rows.isEmpty {
                     Text("Nothing planned.").font(.caption).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
                 } else {
-                    ForEach(Array(all.prefix(family == .systemExtraLarge ? 14 : 8))) { item in
-                        let underway = item.id == entry.current?.id
-                        VStack(spacing: 0) {
-                            TaskLine(item: item, underway: underway)
-                            if underway {
-                                ProgressView(value: Double(entry.minute - item.start),
-                                             total: Double(max(item.minutes, 1)))
-                                    .tint(PlannerWidgetPalette.block(item))
-                                    .padding(.top, 3)
-                            }
-                        }
-                        .padding(.vertical, 3)
-                        if item.id != all.prefix(family == .systemExtraLarge ? 14 : 8).last?.id {
-                            Divider().opacity(0.4)
+                    VStack(spacing: 0) {
+                        ForEach(rows) { item in
+                            TaskLine(item: item, underway: item.id == entry.current?.id)
+                                .frame(maxHeight: .infinity)
                         }
                     }
-                    if all.count > (family == .systemExtraLarge ? 14 : 8) {
-                        Text("+ \(all.count - (family == .systemExtraLarge ? 14 : 8)) more")
-                            .font(.caption2).foregroundStyle(.secondary).padding(.top, 5)
-                    }
-                    Spacer(minLength: 0)
                 }
+                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -330,7 +323,7 @@ struct PlannerWidgetView: View {
 
     private var footer: String {
         guard let snapshot = entry.snapshot, entry.fresh else { return "" }
-        let left = "\(snapshot.remaining) left today"
+        let left = "\(snapshot.remaining) left"
         return snapshot.waiting > 0 ? "\(left) · \(snapshot.waiting) waiting" : left
     }
 }

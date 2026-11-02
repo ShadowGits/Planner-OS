@@ -78,6 +78,17 @@ struct PlannerSnapshot: Codable, Equatable {
         tasks.first { !$0.done && minute >= $0.start && minute < $0.end }
     }
 
+    /// The handful the widget shows: the task under way, or the next one to
+    /// start if nothing is, and the ones after it in time — ticked or not, so
+    /// the list stays where you left it instead of shuffling as you tick.
+    /// Once the whole day has passed it shows the last of it rather than nothing.
+    func window(at minute: Int, count: Int) -> [Item] {
+        let ordered = tasks.sorted { ($0.start, $0.title) < ($1.start, $1.title) }
+        guard !ordered.isEmpty, count > 0 else { return [] }
+        let anchor = ordered.firstIndex { minute < $0.end } ?? max(ordered.count - count, 0)
+        return Array(ordered[anchor...].prefix(count))
+    }
+
     /// What is coming, soonest first, skipping anything finished or passed.
     func upcoming(after minute: Int) -> [Item] {
         tasks.filter { !$0.done && $0.start >= minute }.sorted { $0.start < $1.start }
