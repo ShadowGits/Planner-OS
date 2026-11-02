@@ -30,6 +30,8 @@ final class PlannerStore {
 
     /// Bumped by every write, so a refresh that started before it is not applied.
     private var revision = 0
+    /// When the server was last read, so an open window can notice it is stale.
+    private(set) var lastRefresh = Date.distantPast
     private var reminderSync: Task<Void, Never>?
     private var toastClear: Task<Void, Never>?
 
@@ -89,9 +91,9 @@ final class PlannerStore {
         if await Reminders.status() == .notDetermined, await Reminders.requestPermission() { syncReminders() }
     }
 
-    func refreshAll() async {
+    func refreshAll(quiet: Bool = false) async {
         guard api != nil else { return }
-        loading = true
+        if !quiet { loading = true }
         async let selected: Void = loadDay(selectedDate)
         async let today: Void = loadTodayIfAway()
         async let backlog: Void = refreshInbox()
@@ -100,8 +102,21 @@ final class PlannerStore {
         async let names: Void = refreshProjects()
         _ = await (selected, today, backlog, thisWeek, targets, names)
         loading = false
+        lastRefresh = Date()
         syncReminders()
         publishWidget()
+    }
+
+    /// Reads the server again when what is on screen has been sitting there a
+    /// while. Nothing else would: the app reads on launch, when it comes to the
+    /// front and when you pull down, which is fine for a phone you pick up and
+    /// put down, and useless for a Mac window left open all afternoon while the
+    /// phone changes the same day. Skipped mid-write and mid-drag, where a read
+    /// would fight what you are doing.
+    func refreshIfStale(after seconds: TimeInterval = 90) async {
+        guard api != nil, writesInFlight == 0, busy.isEmpty, draggingID == nil,
+              Date().timeIntervalSince(lastRefresh) >= seconds else { return }
+        await refreshAll(quiet: true)
     }
 
     /// Focus needs today's view even while Today shows another day.
@@ -116,6 +131,9 @@ final class PlannerStore {
             let view: DayView = try await api.get("/v2/day?date=\(date)")
             guard started == revision, unconfirmed == 0 else { return }
             days[date] = view
+            // Any read of the day counts as being up to date, not just a full
+            // refresh — otherwise the window looks stale seconds after a save.
+            lastRefresh = Date()
             adopt(view.timezone)
         } catch { if !quiet { report(error) } }
     }

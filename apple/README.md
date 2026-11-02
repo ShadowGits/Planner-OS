@@ -23,6 +23,9 @@ It talks to the same backend as Android, with the same app key.
 * **Settings**: server, app key and reminders, and a line saying why a reminder
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
+* **A change made somewhere else turns up on its own.** An open window re-reads
+  the server about every minute and a half, so what the phone does appears on
+  the Mac without touching it. Skipped while you are saving or dragging.
 * **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
 * **Reminders** arrive 10 minutes before every timed task, with their own
   two-note pop rather than the system default. They are local notifications,

@@ -106,11 +106,14 @@ struct RootView: View {
         }
     }
 
-    /// Moves "now" along so overdue cards and the now line stay current.
+    /// Moves "now" along so overdue cards and the now line stay current, and
+    /// takes the chance to see what else has changed — a change made on the
+    /// phone reaches a Mac window that has been open for hours.
     private func tick() async {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 60_000_000_000)
             store.now = Date()
+            await store.refreshIfStale()
         }
     }
 }
