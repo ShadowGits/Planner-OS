@@ -29,6 +29,12 @@ python3 "$ROOT/e2e/xcode_project.py"
 echo "== Apple: every task field the screens read exists"
 python3 "$ROOT/e2e/swift_fields.py"
 
+echo "== Apple: no tap gesture or drag sits on top of a button"
+python3 "$ROOT/e2e/swift_gestures.py"
+
+echo "== Apple: every screen still parses"
+"$SWIFTC" -parse $APPLE/*.swift apple/Shared/*.swift apple/PlannerWidget/*.swift
+
 echo "== Apple: Focus and timeline rules"
 "$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
     apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift apple/PolicyTests/main.swift -o "$BUILD/policy"

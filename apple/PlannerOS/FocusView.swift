@@ -234,6 +234,10 @@ struct TaskCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Only the card above the divider opens the task. The buttons below
+            // it stay outside that gesture: a tap gesture laid over a button
+            // takes the click away from it on the Mac.
+            VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 if selecting {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -259,6 +263,10 @@ struct TaskCard: View {
             if let context {
                 Text(context).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
             Divider()
             HStack(spacing: 2) {
                 action("Done", "checkmark", .green, onDone)
@@ -275,8 +283,6 @@ struct TaskCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(selected ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: selected ? 2 : 1)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onTapGesture(perform: onTap)
         // A long-press gesture here would stop the list scrolling on iOS 18
         // and later; the system's context menu does not.
         .contextMenu {

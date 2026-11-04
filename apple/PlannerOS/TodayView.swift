@@ -422,7 +422,12 @@ struct TimelineRow: View {
         let start = task.clockMinutes, end = start + task.minutes
         let showsNow = phase == .underway || (phase == .done && now >= start && now < end)
         let nowLabel: TimeLabel? = showsNow ? TimeLabel(y: Self.pad + progress * pill, text: columnClock(now, twentyFour: twentyFour)) : nil
+        // The star and the tick are siblings of the part that opens the task,
+        // never inside it. A tap gesture or a drag source laid over a button
+        // takes the click away from it on the Mac, which made the tick open
+        // the editor instead of ticking.
         HStack(spacing: 0) {
+            HStack(spacing: 0) {
             TimeColumn(height: rowHeight, labels: hidden ? [] : timeLabels(start: start, end: end), now: hidden ? nil : nowLabel)
             Spacer().frame(width: 4)
             ZStack {
@@ -461,6 +466,17 @@ struct TimelineRow: View {
             }
             .opacity(hidden ? 0 : 1)
             Spacer(minLength: 8)
+            }
+            .frame(height: rowHeight)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onOpen)
+            .onDrag {
+                onLift()
+                return NSItemProvider(object: task.id as NSString)
+            } preview: {
+                DragChip(task: task, twentyFour: twentyFour)
+            }
+            .accessibilityHint("Hold, then drag to change the time")
             // Top Win: tap the star, as on the old timeline.
             Button(action: onStar) {
                 Image(systemName: task.starred ? "star.fill" : "star")
@@ -487,15 +503,6 @@ struct TimelineRow: View {
             .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
         }
         .frame(height: rowHeight)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onOpen)
-        .onDrag {
-            onLift()
-            return NSItemProvider(object: task.id as NSString)
-        } preview: {
-            DragChip(task: task, twentyFour: twentyFour)
-        }
-        .accessibilityHint("Hold, then drag to change the time")
     }
 
     private func capsule(color: Color, phase: TaskPhase, progress: CGFloat, solid: Bool) -> some View {
@@ -628,26 +635,6 @@ private struct OverlapBlock: View {
                 .frame(maxHeight: .infinity)
             }
 
-            // The tick floats in the corner rather than taking a row of its own.
-            VStack {
-                Spacer(minLength: 0)
-                HStack {
-                    Spacer(minLength: 0)
-                    Button(action: onToggle) {
-                        ZStack {
-                            Circle().stroke(ink, lineWidth: 2)
-                            if task.done {
-                                Circle().fill(color)
-                                Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                            }
-                        }
-                        .frame(width: 18, height: 18)
-                        .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
-                }
-            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
@@ -659,6 +646,24 @@ private struct OverlapBlock: View {
             DragChip(task: task, twentyFour: twentyFour)
         }
         .accessibilityHint("Hold, then drag to change the time")
+        // The tick floats in the corner rather than taking a row of its own,
+        // and sits above the block's tap gesture instead of under it, or the
+        // Mac would send the click to the block and open the editor.
+        .overlay(alignment: .bottomTrailing) {
+            Button(action: onToggle) {
+                ZStack {
+                    Circle().stroke(ink, lineWidth: 2)
+                    if task.done {
+                        Circle().fill(color)
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 18, height: 18)
+                .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
+        }
     }
 
     private func title(lines: Int, solid: Bool, narrow: Bool) -> some View {
@@ -949,7 +954,9 @@ struct GapRow: View {
         }
         .frame(height: height)
         .contentShape(Rectangle())
-        .onTapGesture(perform: onAdd)
+        // The whole gap taps to add, and so does the chip inside it: one
+        // action, so it does not matter which of the two the Mac picks.
+        .onTapGesture(perform: onAdd) // tap-ok
     }
 }
 
