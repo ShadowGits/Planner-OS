@@ -334,6 +334,34 @@ final class PlannerStore {
         if response != nil { show("Dropped \(plural(tasks.count, "task")) — kept as skipped, not deleted") }
     }
 
+    /// Gives the day's loose ends a time that does not clash: everything with
+    /// no time, and every slot that has already gone by.
+    ///
+    /// The server does the arithmetic, so this, Siri and Android cannot
+    /// disagree about where a task should land — and it is the server's own
+    /// sentence that is shown, so they cannot describe it differently either.
+    /// Nothing is guessed on screen first: only the server knows what fits.
+    func fitDay(fromNow: Bool = true) async {
+        guard let api else { return }
+        writesInFlight += 1
+        defer { writesInFlight -= 1 }
+        revision += 1
+        var body: [String: Any] = ["date": selectedDate]
+        // The clock only bears on the day being looked at. Fitting out a
+        // future day starts at the top of its window instead.
+        if fromNow, selectedDate == logicalToday { body["after"] = "now" }
+        do {
+            let data = try await api.send("POST", "/v2/day/fit", body: body)
+            revision += 1
+            await loadDay(selectedDate, quiet: true)
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let said = (json?["data"] as? [String: Any])?["spoken"] as? String
+            show(said ?? json?["message"] as? String ?? "The day was fitted.")
+        } catch {
+            failed("fit the day", error)
+        }
+    }
+
     /// Saves an edited task, sending only the fields that changed.
     @discardableResult
     func update(_ task: PlannerTask, to edited: PlannerTask) async -> Bool {

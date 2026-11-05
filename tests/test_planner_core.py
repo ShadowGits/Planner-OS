@@ -814,6 +814,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_delete_transaction",
         "core_finance_goals",
         "core_finance_summary",
+        "core_fit_day",
         "core_import_apple_calendar",
         "core_inbox_view",
         "core_list_habits",

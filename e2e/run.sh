@@ -37,7 +37,8 @@ echo "== Apple: every screen still parses"
 
 echo "== Apple: Focus and timeline rules"
 "$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
-    apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift apple/PolicyTests/main.swift -o "$BUILD/policy"
+    apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift apple/Shared/PlannerVoice.swift \
+    apple/PolicyTests/main.swift -o "$BUILD/policy"
 "$BUILD/policy"
 
 echo "== Apple: every action against the API"

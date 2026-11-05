@@ -818,3 +818,23 @@ internal fun taskIcon(task:Task):ImageVector {
         Text(label,fontSize=11.sp,fontWeight=if(selected)FontWeight.SemiBold else FontWeight.Medium,color=if(selected)Accent else MaterialTheme.colorScheme.onSurface,maxLines=1)
     }
 }
+
+/**
+ * The day's loose ends: what "Fit my day" would find a time for.
+ *
+ * The same rule as the server and as the iPhone's looseEnds, so the button
+ * only appears when it would do something and the count on screen matches
+ * what comes back. A habit is a standing commitment, not a loose end; a task
+ * running right now is happening, so it stays; a task whose slot finished
+ * without it being ticked off has slipped and wants a new time.
+ *
+ * `now` is minutes after midnight, or null on a day that is not today.
+ */
+fun looseEnds(tasks:List<Task>,now:Int?):List<Task> = tasks.filter{ task ->
+    when {
+        task.done || task.habit -> false
+        task.time == null -> true
+        now == null -> false
+        else -> task.clockMinutes + task.minutes.coerceAtLeast(1) <= now
+    }
+}

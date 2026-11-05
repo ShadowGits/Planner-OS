@@ -489,6 +489,15 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     if(focus)Text("${focusOverdue.size} overdue · ${focusTodayTasks.size} left today",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     else if(showMilestones)Text("${milestonesList.count{milestoneIsComplete(it)}} of ${milestonesList.size} milestones finished",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                // Fit the day: only offered when there is something to fit, and
+                // it says how many, so pressing it is never a shot in the dark.
+                // The server decides where things land, so this agrees with the
+                // iPhone and with Siri by construction.
+                val loose=if(onDay)looseEnds(day?.tasks?:emptyList(),if(selected==today)clock.hour*60+clock.minute else null) else emptyList()
+                if(loose.isNotEmpty())TextButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{
+                    try{val said=repo.fitDay(selected,fromNow=selected==today);refresh(true,false,true);snackbar.showSnackbar(said)}
+                    catch(e:Exception){snackbar.showSnackbar(e.message?:"The day could not be fitted")}
+                }},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text("Fit ${loose.size}",fontSize=12.sp)}
                 if(onDay)TextButton(onClick={selectDate(today.toString());if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
                 IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{
                     if(showMilestones)refreshMilestones(true) else refresh(true,false,true)

@@ -191,6 +191,21 @@ struct TodayView: View {
             .buttonStyle(.plain)
             .accessibilityHint("Pick a day")
             Spacer()
+            // Only offered when there is something to fit, and it says how
+            // many, so pressing it is never a shot in the dark.
+            let loose = looseEnds(store.days[date]?.items ?? [], now: date == store.logicalToday ? now : nil)
+            if !loose.isEmpty {
+                Button {
+                    Task { await store.fitDay() }
+                } label: {
+                    Label("Fit \(loose.count)", systemImage: "wand.and.stars")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .tint(Palette.accent)
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Find a time for \(plural(loose.count, "loose task"))")
+                .padding(.trailing, 12)
+            }
             if date != store.logicalToday {
                 Button("Today") { withAnimation(.snappy) { store.selectedDate = store.logicalToday } }
                     .font(.subheadline.weight(.semibold))

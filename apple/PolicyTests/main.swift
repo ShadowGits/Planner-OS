@@ -326,5 +326,89 @@ var colourHash: UInt64 = 5381
 for scalar in "Yoga".unicodeScalars { colourHash = (colourHash &* 33) &+ UInt64(scalar.value) }
 check(paletteIndex(task("Yoga"), count: 8), Int(colourHash % 8), "same colour hash as Android")
 
+
+// What Siri is allowed to do, and what it says back. The intents themselves
+// are thin wrappers Apple's framework reads; all of this is the part that
+// decides, so all of it is checked here.
+func spoken(_ id: String, _ start: Int, _ minutes: Int, done: Bool = false) -> PlannerSnapshot.Item {
+    PlannerSnapshot.Item(id: id, title: id, start: start, minutes: minutes, done: done, palette: 0)
+}
+let voiceDay = PlannerSnapshot(date: "2026-11-05", updated: Date(), tasks: [
+    spoken("Gym", 7 * 60, 60, done: true),
+    spoken("Deep work", 9 * 60, 60),
+    spoken("Standup", 11 * 60, 15),
+    spoken("Gym kit wash", 19 * 60, 30),
+], waiting: 2)
+
+check(PlannerVoice.spokenClock(570), "9:30 am", "says half nine")
+check(PlannerVoice.spokenClock(1145), "7:05 pm", "says five past seven")
+check(PlannerVoice.spokenClock(720), "12:00 pm", "says noon")
+check(PlannerVoice.spokenClock(0), "12:00 am", "says midnight")
+check(PlannerVoice.spokenClock(1530), "1:30 am", "a small-hours slot reads as the morning")
+check(PlannerVoice.durationSpoken(45), "45 minutes", "minutes only")
+check(PlannerVoice.durationSpoken(60), "1 hour", "one hour")
+check(PlannerVoice.durationSpoken(150), "2 hours 30 minutes", "hours and minutes")
+check(PlannerVoice.clockText(570), "09:30", "writes a time the server takes")
+check(PlannerVoice.clockText(1530), "25:30", "and writes a small-hours slot the way the day view does")
+
+// "What am I doing?"
+check(PlannerVoice.nowSentence(voiceDay, at: 9 * 60 + 31), "Deep work, 29 minutes left.", "what is under way")
+check(PlannerVoice.nowSentence(voiceDay, at: 10 * 60 + 30), "Next is Standup at 11:00 am.", "nothing on, so what is next")
+check(PlannerVoice.nowSentence(voiceDay, at: 22 * 60), "Nothing more is scheduled today.", "past the last task")
+check(PlannerVoice.nowSentence(nil, at: 600), "Nothing on today.", "no snapshot at all")
+check(PlannerVoice.nowSentence(PlannerSnapshot(date: "2026-11-05", updated: Date(), tasks: [], waiting: 0), at: 600),
+      "Nothing on today.", "an empty day")
+
+// "What's next?" skips whatever is already running.
+check(PlannerVoice.nextSentence(voiceDay, at: 9 * 60 + 31), "Next is Standup at 11:00 am.", "next, not now")
+check(PlannerVoice.nextSentence(voiceDay, at: 20 * 60), "Nothing more is scheduled today.", "nothing left to come")
+
+// "How much is left?"
+check(PlannerVoice.remainingSentence(voiceDay, at: 600), "3 left, 1 hour 45 minutes of it.", "what is still open")
+let allDone = PlannerSnapshot(date: "2026-11-05", updated: Date(), tasks: [spoken("Gym", 420, 60, done: true)], waiting: 0)
+check(PlannerVoice.remainingSentence(allDone, at: 600), "Everything is ticked off.", "a finished day")
+
+// Finding the task someone named out loud.
+check(PlannerVoice.onlyMatch(voiceDay, matching: "deep work", at: 600)?.id, "Deep work", "a plain name")
+check(PlannerVoice.onlyMatch(voiceDay, matching: "DEEP", at: 600)?.id, "Deep work", "case does not matter")
+check(PlannerVoice.onlyMatch(voiceDay, matching: "gy", at: 600) == nil, true, "half a word fits two tasks: ask which")
+check(PlannerVoice.onlyMatch(voiceDay, matching: "gym", at: 600)?.id, "Gym",
+      "but the whole name wins outright, even though it is inside the other one")
+check(PlannerVoice.onlyMatch(voiceDay, matching: "yoga", at: 600) == nil, true, "nothing matches")
+check(PlannerVoice.candidates(voiceDay, matching: "gym", at: 600).map { $0.id },
+      ["Gym kit wash", "Gym"], "open before finished when asked which")
+check(PlannerVoice.candidates(voiceDay, matching: "", at: 600).count, 4, "no name offers the whole day")
+
+// A time handed over by Siri, turned into the planner's counting.
+var voiceCal = Calendar(identifier: .gregorian)
+voiceCal.timeZone = TimeZone(identifier: "UTC")!
+func moment(_ text: String) -> Date {
+    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"; f.timeZone = TimeZone(identifier: "UTC")!
+    return f.date(from: text)!
+}
+check(PlannerVoice.minutes(from: moment("2026-11-05 19:00"), on: "2026-11-05", calendar: voiceCal), 1140, "seven in the evening")
+check(PlannerVoice.minutes(from: moment("2026-11-06 01:30"), on: "2026-11-05", calendar: voiceCal), 1530,
+      "half one tomorrow is still tonight at 25:30")
+check(PlannerVoice.minutes(from: moment("2026-11-06 09:00"), on: "2026-11-05", calendar: voiceCal), 540,
+      "but nine tomorrow is just nine")
+check(PlannerVoice.dayStamp(moment("2026-11-05 19:00"), calendar: voiceCal), "2026-11-05", "the day it falls on")
+
+
+// The day's loose ends: the same rule the server uses, so the Fit button only
+// shows when it would do something and the count matches what comes back.
+let looseDay = [
+    task("untimed"),
+    task("missed", time: "09:00", minutes: 30),
+    task("underway", time: "12:00", minutes: 120),
+    task("later", time: "19:00"),
+    task("ticked", time: "08:00", done: true),
+    task("habit", habit: true),
+]
+check(looseEnds(looseDay, now: 13 * 60).map { $0.id }, ["untimed", "missed"], "untimed and slipped, nothing else")
+check(looseEnds(looseDay, now: nil).map { $0.id }, ["untimed"], "another day has no clock, so only the untimed")
+check(looseEnds(looseDay, now: 9 * 60 + 15).map { $0.id }, ["untimed"], "a slot still running has not slipped")
+check(looseEnds([], now: 600).isEmpty, true, "an empty day has no loose ends")
+check(looseEnds([task("ticked", done: true)], now: 600).isEmpty, true, "a finished task is not a loose end")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

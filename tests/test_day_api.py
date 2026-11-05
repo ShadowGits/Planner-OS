@@ -747,3 +747,163 @@ def test_triage_moves_extend_milestones_too(client, runtime) -> None:
     assert resp.status_code == 200, resp.text
     assert milestone["target_date"] == later
     assert resp.json()["data"]["milestones_extended"][0]["to"] == later
+
+
+# --- Fitting the day: giving loose ends a time that does not clash ---------
+
+
+def _make(client, title, **fields):
+    created = client.post(
+        "/v2/day/tasks", json={"title": title, "date": "2026-07-22", **fields}, headers=APP_KEY
+    )
+    assert created.status_code == 201, created.text
+    return created.json()["data"]["task"]["id"]
+
+
+def _times(client, date="2026-07-22"):
+    day = client.get(f"/v2/day?date={date}", headers=APP_KEY)
+    return {item["title"]: item["start_time"] for item in day.json()["data"]["items"]}
+
+
+def test_fit_requires_app_key(client) -> None:
+    assert client.post("/v2/day/fit", json={}).status_code == 401
+
+
+def test_fit_gives_an_untimed_task_a_time(client) -> None:
+    _make(client, "Write the brief", estimated_minutes=60)
+    answer = client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY)
+    assert answer.status_code == 200, answer.text
+    data = answer.json()["data"]
+    assert data["placed_count"] == 1
+    assert data["placements"][0]["start_time"] == "07:00"
+    assert data["saved"] == [data["placements"][0]["id"]]
+    # And it really was written, not just worked out.
+    assert _times(client)["Write the brief"] == "07:00"
+
+
+def test_fit_never_books_over_what_is_already_there(client) -> None:
+    _make(client, "Appointment", start_time="11:30", estimated_minutes=60)
+    _make(client, "Deep work", estimated_minutes=120)
+    client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY)
+    times = _times(client)
+    assert times["Appointment"] == "11:30"
+    start = times["Deep work"]
+    # Two hours from 07:00 ends at 09:00, well clear of the appointment.
+    assert start == "07:00"
+
+
+def test_fit_queues_several_tasks_without_overlapping(client) -> None:
+    for n in range(3):
+        _make(client, f"Task {n}", estimated_minutes=60)
+    client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY)
+    times = _times(client)
+    starts = sorted(times[f"Task {n}"] for n in range(3))
+    assert starts == ["07:00", "08:00", "09:00"]
+
+
+def test_fit_respects_a_window(client) -> None:
+    _make(client, "Afternoon only", estimated_minutes=60)
+    client.post(
+        "/v2/day/fit",
+        json={"date": "2026-07-22", "window_start": "14:00", "window_end": "18:00"},
+        headers=APP_KEY,
+    )
+    assert _times(client)["Afternoon only"] == "14:00"
+
+
+def test_fit_leaves_a_gap_when_asked(client) -> None:
+    _make(client, "One", estimated_minutes=60)
+    _make(client, "Two", estimated_minutes=60)
+    client.post("/v2/day/fit", json={"date": "2026-07-22", "gap": 15}, headers=APP_KEY)
+    starts = sorted(_times(client).values())
+    assert starts == ["07:00", "08:15"]
+
+
+def test_fit_says_what_would_not_fit_and_leaves_it_alone(client) -> None:
+    _make(client, "All day", start_time="07:00", estimated_minutes=15 * 60)
+    _make(client, "Homeless", estimated_minutes=60)
+    answer = client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY)
+    data = answer.json()["data"]
+    assert data["placed_count"] == 0
+    assert [one["title"] for one in data["unplaced"]] == ["Homeless"]
+    assert _times(client)["Homeless"] is None
+    assert "would not fit" in data["spoken"]
+
+
+def test_fit_dry_run_changes_nothing(client) -> None:
+    _make(client, "Write", estimated_minutes=60)
+    answer = client.post(
+        "/v2/day/fit", json={"date": "2026-07-22", "dry_run": True}, headers=APP_KEY
+    )
+    data = answer.json()["data"]
+    assert data["placed_count"] == 1 and data["dry_run"] is True
+    assert data["saved"] == []
+    assert _times(client)["Write"] is None
+
+
+def test_fit_only_touches_the_tasks_it_is_given(client) -> None:
+    wanted = _make(client, "Wanted", estimated_minutes=60)
+    _make(client, "Left alone", estimated_minutes=60)
+    client.post(
+        "/v2/day/fit", json={"date": "2026-07-22", "task_ids": [wanted]}, headers=APP_KEY
+    )
+    times = _times(client)
+    assert times["Wanted"] == "07:00"
+    assert times["Left alone"] is None
+
+
+def test_fit_explains_a_task_it_cannot_move(client) -> None:
+    done = _make(client, "Finished", start_time="08:00")
+    client.patch(f"/v2/day/tasks/{done}", json={"done": True}, headers=APP_KEY)
+    answer = client.post(
+        "/v2/day/fit",
+        json={"date": "2026-07-22", "task_ids": [done, "no-such-task"]},
+        headers=APP_KEY,
+    )
+    reasons = {one["id"]: one["reason"] for one in answer.json()["data"]["unplaced"]}
+    assert reasons == {done: "already_done", "no-such-task": "not_on_this_day"}
+
+
+def test_fit_starts_after_a_given_time(client) -> None:
+    _make(client, "This afternoon", estimated_minutes=60)
+    client.post("/v2/day/fit", json={"date": "2026-07-22", "after": "15:00"}, headers=APP_KEY)
+    assert _times(client)["This afternoon"] == "15:00"
+
+
+def test_fit_moves_a_slot_that_has_already_gone_by(client) -> None:
+    _make(client, "Missed call", start_time="09:00", estimated_minutes=30)
+    _make(client, "Under way", start_time="13:00", estimated_minutes=120)
+    client.post("/v2/day/fit", json={"date": "2026-07-22", "after": "14:00"}, headers=APP_KEY)
+    times = _times(client)
+    # The 13:00 block is running at 14:00, so it stays; the 09:00 call slipped.
+    assert times["Under way"] == "13:00"
+    assert times["Missed call"] == "15:00"
+
+
+def test_fit_refuses_a_backwards_window(client) -> None:
+    answer = client.post(
+        "/v2/day/fit",
+        json={"date": "2026-07-22", "window_start": "18:00", "window_end": "09:00"},
+        headers=APP_KEY,
+    )
+    assert answer.status_code == 400
+    assert answer.json()["errors"] == ["FIT_INVALID"]
+
+
+def test_fit_refuses_a_time_that_is_not_a_time(client) -> None:
+    answer = client.post(
+        "/v2/day/fit", json={"date": "2026-07-22", "after": "half past tea"}, headers=APP_KEY
+    )
+    assert answer.status_code == 400
+
+
+def test_fit_reports_how_full_the_day_is(client) -> None:
+    _make(client, "Booked", start_time="09:00", estimated_minutes=120)
+    answer = client.post(
+        "/v2/day/fit",
+        json={"date": "2026-07-22", "window_start": "09:00", "window_end": "17:00", "dry_run": True},
+        headers=APP_KEY,
+    )
+    data = answer.json()["data"]
+    assert data["booked_minutes"] == 120
+    assert data["free_minutes"] == 6 * 60

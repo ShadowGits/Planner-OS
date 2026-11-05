@@ -15,6 +15,7 @@ from uuid import UUID
 from planner_engine.models import DailyPlan, ScheduledBlock
 from zoneinfo import ZoneInfo
 
+from planner_core import fitting
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
 
 logger = logging.getLogger(__name__)
@@ -1596,6 +1597,99 @@ class TaskService:
         rows.sort(key=lambda row: (str(row.get("due_date") or "9999"), str(row.get("created_at") or "")))
         return _envelope(True, f"{len(rows)} tasks", {"tasks": rows})
 
+    def fit_day(
+        self,
+        on_date: str | None = None,
+        task_ids: list[str] | None = None,
+        after: str | None = None,
+        window_start: str | None = None,
+        window_end: str | None = None,
+        gap: int = 0,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Give the day's loose ends a time, without clashing or cramming.
+
+        task_ids names what to place; left out, it takes everything unfinished
+        that has no time yet or whose slot has already gone by — "I am running
+        late, sort out the rest of my day". after="now" starts from the clock,
+        which only means anything on today. A habit stays where it is: it is a
+        standing commitment, not a loose end.
+
+        dry_run works out the same answer and saves nothing, so a voice
+        assistant or a screen can say what it would do before doing it.
+        """
+        target = _parse_date(on_date) or _local_today(self.timezone)
+        day = self.day_view(target.isoformat())["data"]
+        items = day["items"]
+
+        floor: int | None = None
+        if after == "now":
+            # The clock only bears on the day being looked at. Fitting out a
+            # future day starts at the top of its window, not at this minute.
+            if target == _local_today(self.timezone):
+                now = datetime.now(ZoneInfo(self.timezone))
+                floor = now.hour * 60 + now.minute
+        elif after:
+            floor = fitting.parse_clock(after)
+            if floor is None:
+                raise PlannerCoreError(f"Not a time: {after}")
+
+        bounds = {}
+        for name, value in (("window_start", window_start), ("window_end", window_end)):
+            if value:
+                parsed = fitting.parse_clock(value)
+                if parsed is None:
+                    raise PlannerCoreError(f"Not a time: {value}")
+                bounds[name] = parsed
+        if bounds.get("window_start", 0) >= bounds.get("window_end", fitting.DAY_END):
+            raise PlannerCoreError("The window has to end after it starts")
+        if gap < 0 or gap > 120:
+            raise PlannerCoreError("A gap between tasks has to be between 0 and 120 minutes")
+
+        result = fitting.fit_day(
+            items,
+            move_ids=task_ids,
+            after=floor,
+            gap=gap,
+            is_fixed=lambda item: parse_habit_item_id(str(item.get("id"))) is not None,
+            **bounds,
+        )
+
+        saved, failed = [], []
+        if not dry_run:
+            for placement in result["placements"]:
+                start = placement["start_minutes"]
+                # The day runs past midnight, so a slot at 25:30 belongs to
+                # tomorrow's date at 01:30, the way every other write does it.
+                if start >= 24 * 60:
+                    when = (target + timedelta(days=1)).isoformat()
+                    clock = fitting.format_clock(start - 24 * 60)
+                else:
+                    when, clock = target.isoformat(), placement["start_time"]
+                try:
+                    self.update_task(
+                        placement["id"],
+                        {"start_time": clock, "scheduled_date": when},
+                    )
+                    saved.append(placement["id"])
+                except (PlannerCoreError, ValueError) as error:
+                    # One stubborn row must not cost the other placements.
+                    failed.append({"id": placement["id"], "message": str(error)})
+
+        placed = len(result["placements"])
+        return _envelope(
+            True,
+            fitting.fit_sentence(result),
+            {
+                **result,
+                "date": target.isoformat(),
+                "dry_run": dry_run,
+                "saved": saved,
+                "failed": failed,
+                "spoken": fitting.fit_sentence(result),
+                "placed_count": placed,
+            },
+        )
 
 
 HABIT_CADENCES = {"daily", "weekly"}
