@@ -68,6 +68,24 @@ class BatchDeleteRequest(BaseModel):
     task_ids: list[str]
 
 
+class FitDayRequest(BaseModel):
+    """Ask the day to make room, without clashing or cramming.
+
+    Everything is optional: with an empty body it takes today's loose ends —
+    unfinished tasks with no time, and slots that have already gone by — and
+    gives them the earliest times that fit.
+    """
+    date: str | None = None
+    task_ids: list[str] | None = Field(default=None, max_length=200)
+    # "now" starts from the clock, which only bears on today. A plain "14:00"
+    # fits the afternoon and leaves the morning alone.
+    after: str | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+    gap: int = Field(default=0, ge=0, le=120)
+    dry_run: bool = False
+
+
 class TaskTriageRequest(BaseModel):
     task_ids: list[str] = Field(min_length=1, max_length=500)
     action: str
@@ -407,6 +425,32 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(
                 status_code=400, detail={"code": "BATCH_DELETE_FAILED", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
+    @api.post("/v2/day/fit")
+    def fit_day_endpoint(body: FitDayRequest, x_app_key: str | None = Header(default=None)):
+        """Find each loose end a time that does not clash.
+
+        Plain arithmetic over the gaps the day already has: no model, no
+        guesswork, the same answer every time. Voice, both apps and the
+        dashboard all come through here so they cannot disagree.
+        """
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.fit_day(
+                on_date=body.date,
+                task_ids=body.task_ids,
+                after=body.after,
+                window_start=body.window_start,
+                window_end=body.window_end,
+                gap=body.gap,
+                dry_run=body.dry_run,
+            )
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "FIT_INVALID", "message": str(error)}
             ) from error
         return _envelope(True, result["message"], result["data"])
 

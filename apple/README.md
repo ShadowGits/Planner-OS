@@ -23,6 +23,9 @@ It talks to the same backend as Android, with the same app key.
 * **Settings**: server, app key and reminders, and a line saying why a reminder
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
+* **A change made somewhere else turns up on its own.** An open window re-reads
+  the server about every minute and a half, so what the phone does appears on
+  the Mac without touching it. Skipped while you are saving or dragging.
 * **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
 * **Reminders** arrive 10 minutes before every timed task, with their own
   two-note pop rather than the system default. They are local notifications,
@@ -112,12 +115,38 @@ The system delivers queued notifications even when the app is closed.
 
 `PolicyTests/main.swift` checks the Focus rules against the same cases as
 Android's `FocusPolicyTest`: ranking, lateness, today, moves, quick dates,
-week rows, timeline lanes, drag snapping, reminder timing and API decoding.
+week rows, timeline lanes, drag snapping, reminder timing, API decoding, the
+day's loose ends, and what Siri is allowed to do and says back.
 From `apple/` on a Mac (or any machine with Swift):
 
 ```sh
-swiftc PlannerOS/Models.swift PlannerOS/FocusPolicy.swift PlannerOS/PlannerAPI.swift PolicyTests/main.swift -o /tmp/policy && /tmp/policy
+swiftc -swift-version 5 PlannerOS/Models.swift PlannerOS/FocusPolicy.swift \
+    PlannerOS/TimelinePolicy.swift PlannerOS/PlannerAPI.swift \
+    Shared/PlannerSnapshot.swift Shared/SharedConnection.swift Shared/PlannerVoice.swift \
+    PolicyTests/main.swift -o /tmp/policy && /tmp/policy
 ```
+
+The screens themselves need Xcode, so `e2e/run.sh` parses them instead and
+refuses a tap gesture or drag source laid over a button — the fault that made
+the Mac open a task when the tick was clicked.
+
+## Siri, Shortcuts and Spotlight
+
+`PlannerOS/VoiceIntents.swift` is the menu the app puts out front: what is
+under way, what is next, what is left, add a task, complete a task, and fit
+the day. Siri cannot look at a screen and press things, so this list is the
+whole of what it can do — and the same list serves the Shortcuts app,
+Spotlight, the Action button and Siri on the Mac.
+
+Those are thin wrappers on purpose. Everything that decides what happens, and
+every word said back, lives in `Shared/PlannerVoice.swift`, which is plain
+Foundation and is checked by the command above on every run rather than only
+when someone opens Xcode. Reading is answered from the snapshot the app
+already shares with the widget, so it is instant and works with no signal;
+anything that changes something waits for the server, because Siri must not
+say "done" before it is true.
+
+Nothing here needs an entitlement, a paid account or a beta OS.
 
 ## Checking both apps together
 

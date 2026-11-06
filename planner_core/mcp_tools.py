@@ -247,6 +247,28 @@ def register_core_tools(server: Any) -> None:
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.triage_tasks(task_ids, action, to_date)
 
+    @server.tool(name="core_fit_day")
+    def core_fit_day(
+        on_date: str | None = None,
+        task_ids: list[str] | None = None,
+        after: str | None = None,
+        window_start: str | None = None,
+        window_end: str | None = None,
+        gap: int = 0,
+        dry_run: bool = False,
+    ) -> dict:
+        """Give a day's loose ends a start time that does not clash with anything already booked. Plain arithmetic over the day's real gaps, not a judgement call: it never double-books, it never shortens a task to make it fit, and it refuses rather than cramming. task_ids names what to place; left out it takes everything unfinished on the day that has either no time at all or a slot that has already gone by. after="now" starts from the clock (today only), or pass a time like "14:00" to sort out the afternoon and leave the morning alone. window_start/window_end bound where it may put things, 07:00 to 22:00 by default; gap is minutes of breathing space between tasks. A habit is never moved, and nor is a task that is finished or under way right now. dry_run works out the same answer and saves nothing, so you can show it before doing it. Returns placements, whatever would not fit and why, and how full the window is."""
+        tasks, _, _, _, _ = _core_for_current_user()
+        return tasks.fit_day(
+            on_date=on_date,
+            task_ids=task_ids,
+            after=after,
+            window_start=window_start,
+            window_end=window_end,
+            gap=gap,
+            dry_run=dry_run,
+        )
+
     @server.tool(name="core_list_tasks")
     def core_list_tasks(status: str | None = None, project_id: str | None = None) -> dict:
         """List tasks, optionally filtered by status or project, sorted by due date."""

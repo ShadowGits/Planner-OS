@@ -196,6 +196,23 @@ func run() async {
         WidgetConnection.save(server: base.absoluteString, key: connection.key)
     }
 
+    print("A change made elsewhere reaches a window left open")
+    check(await store.create(title: "From the phone", date: today, time: "14:00", minutes: 30, notes: nil, starred: false), true, "add a task")
+    await settle()
+    let elsewhere = await onServer("From the phone")!
+    // As the phone would: straight to the server, with this store none the wiser.
+    _ = try? await server.send("PATCH", PlannerAPI.taskPath(elsewhere.id), body: ["title": "Renamed on the phone"])
+    check(onScreen("From the phone") != nil, true, "the open window still shows the old name")
+
+    // Not yet: a window that has just read is not re-read every minute.
+    await store.refreshIfStale(after: 600)
+    check(onScreen("From the phone") != nil, true, "a fresh window is left alone")
+
+    // Once it is stale, it catches up without being touched.
+    await store.refreshIfStale(after: 0)
+    check(onScreen("Renamed on the phone") != nil, true, "a stale window re-reads and catches up")
+    check(onScreen("From the phone"), nil, "and drops what it was showing")
+
     print("Reminders")
     check(await store.create(title: "Call", date: tomorrow, time: "09:00", minutes: 15, notes: nil, starred: false), true, "add tomorrow's call")
     let zone = TimeZone(identifier: "Asia/Kolkata")!

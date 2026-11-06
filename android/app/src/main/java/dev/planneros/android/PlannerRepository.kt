@@ -379,6 +379,23 @@ class PlannerRepository(private val context: Context) {
         invalidateDays()
         return data
     }
+    /**
+     * Give a day's loose ends a start time that does not clash.
+     *
+     * The server does the arithmetic — the gaps, the durations, the day that
+     * runs to four in the morning — so this, the iPhone and Siri cannot
+     * disagree about where a task should land. It returns the server's own
+     * sentence, which is what every one of them shows.
+     */
+    suspend fun fitDay(date: LocalDate, fromNow: Boolean = true): String {
+        val body = JSONObject().put("date", date.toString())
+        if (fromNow) body.put("after", "now")
+        val answer = request("POST", "/v2/day/fit", body)
+        invalidateDays()
+        return answer.optJSONObject("data")?.optString("spoken")?.takeIf { it.isNotBlank() }
+            ?: answer.optString("message", "The day was fitted.")
+    }
+
     /** Focus's week, read whole in one request; the last copy stays for offline. */
     suspend fun week(anchor:LocalDate):Day=withContext(Dispatchers.IO){
         val generation=config.generation
