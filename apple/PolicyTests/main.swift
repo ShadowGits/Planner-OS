@@ -410,5 +410,56 @@ check(looseEnds(looseDay, now: 9 * 60 + 15).map { $0.id }, ["untimed"], "a slot 
 check(looseEnds([], now: 600).isEmpty, true, "an empty day has no loose ends")
 check(looseEnds([task("ticked", done: true)], now: 600).isEmpty, true, "a finished task is not a loose end")
 
+
+// Talking about a set of tasks: "move all the transcript ones to today".
+check(PlannerVoice.dayLabel("2026-11-06", today: "2026-11-06"), "today", "today")
+check(PlannerVoice.dayLabel("2026-11-07", today: "2026-11-06"), "tomorrow", "tomorrow")
+check(PlannerVoice.dayLabel("2026-11-05", today: "2026-11-06"), "yesterday", "yesterday")
+check(PlannerVoice.dayLabel("2026-11-30", today: "2026-11-06"), "30 November", "a day further off")
+check(PlannerVoice.dayLabel("2027-01-01", today: "2026-12-31"), "tomorrow", "tomorrow over new year")
+check(PlannerVoice.dayLabel("nonsense", today: "2026-11-06"), "nonsense", "nothing to read")
+check(PlannerVoice.shift("2026-02-28", by: 1), "2026-03-01", "no leap day in 2026")
+check(PlannerVoice.shift("2028-02-28", by: 1), "2028-02-29", "but there is in 2028")
+
+// Siri always asks before moving a pile: a misheard word must not move forty.
+check(PlannerVoice.moveQuestion(count: 6, to: "today"), "That is 6 tasks. Move them all to today?", "asks first")
+check(PlannerVoice.moveQuestion(count: 1, to: "tomorrow"), "Move 1 task to tomorrow?", "asks about one")
+check(PlannerVoice.movedSentence(count: 6, to: "today"), "Moved 6 tasks to today.", "says what it did")
+check(PlannerVoice.movedSentence(count: 1, to: "today"), "Moved 1 task to today.", "and for one")
+check(PlannerVoice.foundSentence(count: 6, total: 6, query: "transcripts"), "6 tasks match transcripts.", "what was found")
+check(PlannerVoice.foundSentence(count: 1, total: 1, query: "APS"), "1 task matches APS.", "just the one")
+check(PlannerVoice.foundSentence(count: 0, total: 0, query: "yoga"), "Nothing matches yoga.", "nothing found")
+check(PlannerVoice.foundSentence(count: 50, total: 588, query: "study"), "50 tasks match study, out of 588.",
+      "owns up to showing only some")
+
+// How each task reads in a list Siri puts on screen.
+check(PlannerVoice.describe(VoiceTask(id: "a", title: "A", date: "2026-11-06", time: "09:30"), today: "2026-11-06"),
+      "today, 9:30 am", "today at a time")
+check(PlannerVoice.describe(VoiceTask(id: "b", title: "B", date: "2026-11-30"), today: "2026-11-06"),
+      "30 November", "a day with no time")
+check(PlannerVoice.describe(VoiceTask(id: "c", title: "C"), today: "2026-11-06"), "No date yet", "nothing set")
+check(PlannerVoice.describe(VoiceTask(id: "d", title: "D", date: "2026-11-06", done: true), today: "2026-11-06"),
+      "Done", "already finished")
+
+// Reading the server's own task shape, the one search returns.
+let searchRow: [String: Any] = ["id": "t1", "title": "Order transcripts", "scheduled_date": "2026-11-30",
+                                "start_time": "09:30:00", "estimated_minutes": 45, "status": "todo"]
+let fromRow = VoiceTask(row: searchRow)
+check(fromRow?.id, "t1", "the id")
+check(fromRow?.title, "Order transcripts", "the name")
+check(fromRow?.date, "2026-11-30", "the planned day")
+check(fromRow?.minutes, 45, "how long")
+check(fromRow?.done, false, "still open")
+check(VoiceTask(row: ["id": "t2", "title": "Sorted", "status": "done"])?.done, true, "a finished one")
+check(VoiceTask(row: ["id": "t3", "title": "Skipped", "status": "skipped"])?.done, true, "a dropped one counts as closed")
+check(VoiceTask(row: ["id": "t4", "title": "Bare"])?.minutes, 30, "no duration given")
+check(VoiceTask(row: ["id": "t5", "title": "Due only", "due_date": "2026-12-15"])?.date, "2026-12-15",
+      "a deadline stands in for a planned day")
+check(VoiceTask(row: ["title": "No id"]) == nil, true, "a row with no id is refused")
+check(VoiceTask(row: ["id": "t6"]) == nil, true, "and so is one with no name")
+check(PlannerVoice.parseClock("09:30:00"), 570, "reads the server's clock")
+check(PlannerVoice.parseClock("25:30"), 1530, "and a small-hours one")
+check(PlannerVoice.parseClock(nil) == nil, true, "no time at all")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

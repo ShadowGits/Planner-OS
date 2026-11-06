@@ -428,6 +428,32 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.get("/v2/tasks/search")
+    def search_tasks_endpoint(
+        q: str = Query(min_length=2, max_length=200),
+        open_only: bool = Query(default=True, alias="open"),
+        project_id: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        x_app_key: str | None = Header(default=None),
+    ):
+        """Tasks by what they are called.
+
+        Spoken instructions name things — "the transcript ones", "Shashank
+        sir" — and until this there was no way to ask for them: tasks could
+        be listed by status or project and nothing else.
+        """
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.search_tasks(
+                q, open_only=open_only, project_id=project_id, limit=limit
+            )
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "SEARCH_INVALID", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
     @api.post("/v2/day/fit")
     def fit_day_endpoint(body: FitDayRequest, x_app_key: str | None = Header(default=None)):
         """Find each loose end a time that does not clash.
