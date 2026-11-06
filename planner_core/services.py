@@ -1597,6 +1597,67 @@ class TaskService:
         rows.sort(key=lambda row: (str(row.get("due_date") or "9999"), str(row.get("created_at") or "")))
         return _envelope(True, f"{len(rows)} tasks", {"tasks": rows})
 
+    def search_tasks(
+        self,
+        text: str,
+        *,
+        open_only: bool = True,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Tasks whose name contains `text`, soonest first.
+
+        There was no way to ask for "the transcript ones" before this: tasks
+        could be listed by status or project, never by what they are called.
+        Spoken instructions are almost always by name, so this is what the
+        assistant and the voice menu search with.
+
+        The match is done here rather than in the query on purpose. It keeps a
+        spoken phrase out of the database's query language altogether, and the
+        workspace's open tasks are a single small read — the same one
+        list_tasks already does unfiltered.
+        """
+        needle = (text or "").strip()
+        if len(needle) < 2:
+            raise PlannerCoreError("Give at least two letters to search for")
+        if limit < 1 or limit > 200:
+            raise PlannerCoreError("A search returns between 1 and 200 tasks")
+
+        filters: dict[str, Any] = {}
+        if project_id is not None:
+            filters["project_id"] = project_id
+        rows = self.repository.list_rows(
+            "planner_tasks",
+            filters,
+            columns="id,title,status,start_time,estimated_minutes,due_date,scheduled_date,"
+            "project_id,milestone_id,starred,priority",
+        )
+        lowered = needle.lower()
+        found = [row for row in rows if lowered in str(row.get("title") or "").lower()]
+        if open_only:
+            found = [row for row in found if row.get("status") not in CLOSED_TASK_STATUSES]
+        # Whatever is happening soonest first, then by name so the order never
+        # shuffles between two identical-looking answers.
+        found.sort(
+            key=lambda row: (
+                str(row.get("scheduled_date") or row.get("due_date") or "9999-12-31"),
+                str(row.get("start_time") or "99:99"),
+                str(row.get("title") or ""),
+            )
+        )
+        total = len(found)
+        kept = found[:limit]
+        return _envelope(
+            True,
+            f"{total} {'task' if total == 1 else 'tasks'} matching “{needle}”",
+            {
+                "query": needle,
+                "tasks": kept,
+                "total": total,
+                "truncated": total > len(kept),
+            },
+        )
+
     def fit_day(
         self,
         on_date: str | None = None,

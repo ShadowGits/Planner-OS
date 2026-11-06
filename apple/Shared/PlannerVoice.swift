@@ -118,6 +118,70 @@ enum PlannerVoice {
         }
     }
 
+    // MARK: - Talking about a set of tasks
+
+    /// "Today", "Tomorrow", "30 November" — how a day is named out loud.
+    static func dayLabel(_ stamp: String, today: String) -> String {
+        if stamp == today { return "today" }
+        if stamp == shift(today, by: 1) { return "tomorrow" }
+        if stamp == shift(today, by: -1) { return "yesterday" }
+        let parts = stamp.split(separator: "-")
+        guard parts.count == 3, let day = Int(parts[2]), let month = Int(parts[1]),
+              (1...12).contains(month) else { return stamp }
+        let names = ["January", "February", "March", "April", "May", "June",
+                     "July", "August", "September", "October", "November", "December"]
+        return "\(day) \(names[month - 1])"
+    }
+
+    /// A date stamp moved by whole days, without a Calendar.
+    static func shift(_ stamp: String, by days: Int) -> String {
+        let parts = stamp.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return stamp }
+        var components = DateComponents()
+        components.year = parts[0]; components.month = parts[1]; components.day = parts[2]
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        guard let date = calendar.date(from: components),
+              let moved = calendar.date(byAdding: .day, value: days, to: date) else { return stamp }
+        return dayStamp(moved, calendar: calendar)
+    }
+
+    /// What Siri asks before moving a pile of tasks. Never skipped: a misheard
+    /// word should not quietly move forty tasks.
+    static func moveQuestion(count: Int, to label: String) -> String {
+        count == 1 ? "Move 1 task to \(label)?" : "That is \(count) tasks. Move them all to \(label)?"
+    }
+
+    static func movedSentence(count: Int, to label: String) -> String {
+        count == 1 ? "Moved 1 task to \(label)." : "Moved \(count) tasks to \(label)."
+    }
+
+    /// What came back from a search, said out loud.
+    static func foundSentence(count: Int, total: Int, query: String) -> String {
+        if count == 0 { return "Nothing matches \(query)." }
+        let head = count == 1 ? "1 task matches \(query)" : "\(count) tasks match \(query)"
+        return total > count ? "\(head), out of \(total)." : "\(head)."
+    }
+
+    /// The line under a task's name when Siri shows a list of them.
+    static func describe(_ task: VoiceTask, today: String) -> String {
+        if task.done { return "Done" }
+        guard let date = task.date else { return "No date yet" }
+        let day = dayLabel(date, today: today)
+        guard let clock = parseClock(task.time) else { return day }
+        return "\(day), \(spokenClock(clock))"
+    }
+
+    /// "09:30:00" or "25:30" to minutes after midnight.
+    static func parseClock(_ text: String?) -> Int? {
+        guard let text, !text.isEmpty else { return nil }
+        let parts = text.split(separator: ":")
+        guard let hours = Int(parts.first ?? ""), hours >= 0 else { return nil }
+        let minutes = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        guard (0...59).contains(minutes) else { return nil }
+        return hours * 60 + minutes
+    }
+
     /// The single task a phrase can only mean, or nil when it is ambiguous.
     static func onlyMatch(_ snapshot: PlannerSnapshot?, matching text: String, at minute: Int) -> PlannerSnapshot.Item? {
         let found = candidates(snapshot, matching: text, at: minute)
@@ -129,10 +193,51 @@ enum PlannerVoice {
     }
 }
 
-/// The calls the voice menu makes. Reading is free from the snapshot; these
-/// are the ones that change something and so have to reach the server.
+/// A task as the voice menu sees one, from anywhere in the workspace and on
+/// any date — not only today, which is all the widget's snapshot holds.
+struct VoiceTask: Codable, Equatable, Identifiable {
+    var id: String
+    var title: String
+    var date: String?
+    var time: String?
+    var minutes: Int
+    var done: Bool
+
+    init(id: String, title: String, date: String? = nil, time: String? = nil,
+         minutes: Int = 30, done: Bool = false) {
+        self.id = id
+        self.title = title
+        self.date = date
+        self.time = time
+        self.minutes = minutes
+        self.done = done
+    }
+
+    /// Reads one row of the server's task shape, which is also what search
+    /// returns. Unknown fields are ignored and missing ones take a sane value,
+    /// so a new column on the server cannot break the voice menu.
+    init?(row: [String: Any]) {
+        guard let id = row["id"] as? String, let title = row["title"] as? String else { return nil }
+        self.id = id
+        self.title = title
+        date = row["scheduled_date"] as? String ?? row["due_date"] as? String
+        time = row["start_time"] as? String
+        minutes = max((row["estimated_minutes"] as? Int) ?? 30, 1)
+        let status = (row["status"] as? String) ?? ""
+        done = (row["done"] as? Bool) ?? ["done", "skipped"].contains(status)
+    }
+}
+
+/// The calls the voice menu makes. Reading today is free from the snapshot;
+/// these reach the server, because they either change something or need to see
+/// past today.
 enum PlannerVoiceAPI {
     struct Failure: Error { var message: String }
+
+    struct Found: Equatable {
+        var tasks: [VoiceTask]
+        var total: Int
+    }
 
     struct Created: Equatable {
         var id: String
@@ -186,6 +291,43 @@ enum PlannerVoiceAPI {
             throw Failure(message: "The task was not saved")
         }
         return Created(id: id, title: (task?["title"] as? String) ?? title)
+    }
+
+    /// Tasks by what they are called, from anywhere in the workspace and on
+    /// any date. This is what makes "the transcript ones" mean something: the
+    /// widget's snapshot only holds today, so a task dated September could
+    /// never be found without asking the server.
+    static func search(_ text: String, openOnly: Bool = true, limit: Int = 50) async throws -> Found {
+        let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard needle.count >= 2 else { throw Failure(message: "Give at least two letters to search for") }
+        guard let connection = WidgetConnection.load(), let base = connection.url else {
+            throw Failure(message: "Planner OS is not connected yet. Open the app once.")
+        }
+        var parts = URLComponents(string: base.absoluteString + "/v2/tasks/search")
+        parts?.queryItems = [
+            URLQueryItem(name: "q", value: needle),
+            URLQueryItem(name: "open", value: openOnly ? "true" : "false"),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        guard let url = parts?.url else { throw Failure(message: "That search cannot be made") }
+        var ask = URLRequest(url: url)
+        ask.timeoutInterval = 10
+        ask.setValue(connection.key, forHTTPHeaderField: "X-App-Key")
+        let json = try await send(ask)
+        let data = json["data"] as? [String: Any] ?? [:]
+        let rows = (data["tasks"] as? [[String: Any]]) ?? []
+        let tasks = rows.compactMap(VoiceTask.init(row:))
+        return Found(tasks: tasks, total: (data["total"] as? Int) ?? tasks.count)
+    }
+
+    /// Move a pile of tasks to one day, untimed, in a single request. The same
+    /// call the apps' bulk move uses, so a broken deadline travels with the
+    /// task and an overrun milestone is pushed out by the server.
+    static func move(_ ids: [String], to day: String) async throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        let body: [String: Any] = ["task_ids": ids, "action": "move", "to_date": day]
+        _ = try await send(try request("/v2/day/tasks/triage", "POST", body))
+        return ids.count
     }
 
     /// Give the day's loose ends times that do not clash. The server does the

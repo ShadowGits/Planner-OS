@@ -29,45 +29,74 @@ struct PlannerTaskEntity: AppEntity, Identifiable, Hashable {
 
     var id: String
     var title: String
-    var start: Int
-    var done: Bool
+    var subtitle: String
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(
-            title: "\(title)",
-            subtitle: "\(done ? "Done" : PlannerVoice.spokenClock(start))"
-        )
+        DisplayRepresentation(title: "\(title)", subtitle: "\(subtitle)")
     }
 
-    init(_ item: PlannerSnapshot.Item) {
-        id = item.id
-        title = item.title
-        start = item.start
-        done = item.done
+    init(_ task: VoiceTask, today: String) {
+        id = task.id
+        title = task.title
+        subtitle = PlannerVoice.describe(task, today: today)
+    }
+
+    init(_ item: PlannerSnapshot.Item, today: String) {
+        self.init(
+            VoiceTask(id: item.id, title: item.title, date: today,
+                      time: PlannerVoice.clockText(item.start), minutes: item.minutes, done: item.done),
+            today: today
+        )
     }
 }
 
+/// How Siri finds the task you named.
+///
+/// It asks the server, not the widget's snapshot: the snapshot holds today
+/// only, so a task dated September — or any of the hundreds not on today —
+/// could never be matched from it. With no signal it falls back to today,
+/// which is better than refusing outright.
 struct PlannerTaskQuery: EntityStringQuery {
+    private var today: String { PlannerVoice.dayStamp(Date()) }
+
     private var nowMinutes: Int {
         let parts = Calendar.current.dateComponents([.hour, .minute], from: Date())
         return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
     }
 
     func entities(for identifiers: [String]) async throws -> [PlannerTaskEntity] {
+        let stamp = today
         let snapshot = PlannerSnapshot.load()
-        return (snapshot?.tasks ?? []).filter { identifiers.contains($0.id) }.map(PlannerTaskEntity.init)
+        let known = (snapshot?.tasks ?? [])
+            .filter { identifiers.contains($0.id) }
+            .map { PlannerTaskEntity($0, today: stamp) }
+        if known.count == identifiers.count { return known }
+        // Something is not on today. Find the rest by name, which is all the
+        // server lets us search by, then keep the ids that were asked for.
+        var found = known
+        for id in identifiers where !found.contains(where: { $0.id == id }) {
+            if let hit = try? await PlannerVoiceAPI.search(id, limit: 1).tasks.first, hit.id == id {
+                found.append(PlannerTaskEntity(hit, today: stamp))
+            }
+        }
+        return found
     }
 
     /// What Siri offers when it has to ask "which one?".
     func entities(matching string: String) async throws -> [PlannerTaskEntity] {
-        PlannerVoice.candidates(PlannerSnapshot.load(), matching: string, at: nowMinutes)
-            .map(PlannerTaskEntity.init)
+        let stamp = today
+        if let found = try? await PlannerVoiceAPI.search(string, limit: 25) {
+            return found.tasks.map { PlannerTaskEntity($0, today: stamp) }
+        }
+        return PlannerVoice.candidates(PlannerSnapshot.load(), matching: string, at: nowMinutes)
+            .map { PlannerTaskEntity($0, today: stamp) }
     }
 
     func suggestedEntities() async throws -> [PlannerTaskEntity] {
-        PlannerVoice.candidates(PlannerSnapshot.load(), matching: "", at: nowMinutes)
+        let stamp = today
+        return PlannerVoice.candidates(PlannerSnapshot.load(), matching: "", at: nowMinutes)
             .prefix(8)
-            .map(PlannerTaskEntity.init)
+            .map { PlannerTaskEntity($0, today: stamp) }
     }
 }
 
@@ -215,6 +244,138 @@ struct CompleteTaskIntent: AppIntent {
     }
 }
 
+/// "Which tasks mention transcripts?"
+///
+/// Also the first half of anything bulk: it hands back the tasks themselves,
+/// so the assistant can pass them straight into a move without being told
+/// twice. "Move all the transcript ones and the Shashank sir ones to today"
+/// is this intent twice over and then one move.
+struct FindTasksIntent: AppIntent {
+    static var title: LocalizedStringResource = "Find tasks"
+    static var description = IntentDescription(
+        "Finds tasks by a word in their name, anywhere in the planner and on any date."
+    )
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Word", requestValueDialog: "What should I look for?")
+    var text: String
+
+    @Parameter(title: "Include finished", default: false)
+    var includeDone: Bool
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Find tasks matching \(\.$text)")
+    }
+
+    func perform() async throws -> some IntentResult & ReturnsValue<[PlannerTaskEntity]> & ProvidesDialog {
+        let today = PlannerVoice.dayStamp(Date())
+        do {
+            let found = try await PlannerVoiceAPI.search(text, openOnly: !includeDone)
+            let said = PlannerVoice.foundSentence(count: found.tasks.count, total: found.total, query: text)
+            return .result(
+                value: found.tasks.map { PlannerTaskEntity($0, today: today) },
+                dialog: IntentDialog(stringLiteral: said)
+            )
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(value: [], dialog: IntentDialog(stringLiteral: failure.message))
+        }
+    }
+}
+
+/// "Move all the transcript tasks to today."
+///
+/// Always asks first, however it was reached. A word heard wrongly should not
+/// silently move forty tasks, and the question names the count so the mistake
+/// is obvious before it happens rather than after.
+struct MoveTasksIntent: AppIntent {
+    static var title: LocalizedStringResource = "Move tasks to a day"
+    static var description = IntentDescription("Moves tasks to a day, keeping them untimed.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Tasks")
+    var tasks: [PlannerTaskEntity]
+
+    @Parameter(title: "Day", requestValueDialog: "Which day?")
+    var when: Date
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Move \(\.$tasks) to \(\.$when)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let today = PlannerVoice.dayStamp(Date())
+        let day = PlannerVoice.dayStamp(when)
+        let label = PlannerVoice.dayLabel(day, today: today)
+        guard !tasks.isEmpty else {
+            return .result(dialog: "There was nothing to move.")
+        }
+        try await requestConfirmation(
+            result: .result(dialog: IntentDialog(
+                stringLiteral: PlannerVoice.moveQuestion(count: tasks.count, to: label))),
+            confirmationActionName: .go
+        )
+        do {
+            let moved = try await PlannerVoiceAPI.move(tasks.map(\.id), to: day)
+            reloadWidget()
+            return .result(dialog: IntentDialog(
+                stringLiteral: PlannerVoice.movedSentence(count: moved, to: label)))
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(dialog: IntentDialog(stringLiteral: failure.message))
+        }
+    }
+}
+
+/// "Move all the transcript tasks to today", in one go.
+///
+/// The same two steps as finding and then moving, joined up, so plain Siri can
+/// do it in a single phrase without the assistant chaining anything. It still
+/// asks before it moves.
+struct MoveMatchingTasksIntent: AppIntent {
+    static var title: LocalizedStringResource = "Move matching tasks to a day"
+    static var description = IntentDescription(
+        "Finds every task with a word in its name and moves them all to one day."
+    )
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Word", requestValueDialog: "Which tasks? Give me a word from their names.")
+    var text: String
+
+    @Parameter(title: "Day", requestValueDialog: "Which day?")
+    var when: Date
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Move tasks matching \(\.$text) to \(\.$when)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let today = PlannerVoice.dayStamp(Date())
+        let day = PlannerVoice.dayStamp(when)
+        let label = PlannerVoice.dayLabel(day, today: today)
+        let found: PlannerVoiceAPI.Found
+        do {
+            found = try await PlannerVoiceAPI.search(text, limit: 200)
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(dialog: IntentDialog(stringLiteral: failure.message))
+        }
+        guard !found.tasks.isEmpty else {
+            return .result(dialog: IntentDialog(stringLiteral: "Nothing matches \(text)."))
+        }
+        try await requestConfirmation(
+            result: .result(dialog: IntentDialog(
+                stringLiteral: PlannerVoice.moveQuestion(count: found.tasks.count, to: label))),
+            confirmationActionName: .go
+        )
+        do {
+            let moved = try await PlannerVoiceAPI.move(found.tasks.map(\.id), to: day)
+            reloadWidget()
+            return .result(dialog: IntentDialog(
+                stringLiteral: PlannerVoice.movedSentence(count: moved, to: label)))
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(dialog: IntentDialog(stringLiteral: failure.message))
+        }
+    }
+}
+
 /// "Fix my afternoon." The server does the arithmetic, so this agrees with
 /// both apps and the dashboard by construction.
 struct FitDayIntent: AppIntent {
@@ -305,6 +466,26 @@ struct PlannerShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Complete a task",
             systemImageName: "checkmark.circle"
+        )
+        AppShortcut(
+            intent: FindTasksIntent(),
+            phrases: [
+                "Find tasks in \(.applicationName)",
+                "Search \(.applicationName)",
+                "Which \(.applicationName) tasks",
+            ],
+            shortTitle: "Find tasks",
+            systemImageName: "magnifyingglass"
+        )
+        AppShortcut(
+            intent: MoveMatchingTasksIntent(),
+            phrases: [
+                "Move tasks in \(.applicationName)",
+                "Move matching tasks in \(.applicationName)",
+                "Reschedule tasks in \(.applicationName)",
+            ],
+            shortTitle: "Move matching tasks",
+            systemImageName: "calendar.badge.clock"
         )
         AppShortcut(
             intent: FitDayIntent(),

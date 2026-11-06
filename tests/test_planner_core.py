@@ -829,6 +829,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_plan_overview",
         "core_reopen_habit_day",
         "core_reschedule_habit_day",
+        "core_search_tasks",
         "core_skip_habit_day",
         "core_sync_calendar",
         "core_today",

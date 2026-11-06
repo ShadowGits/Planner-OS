@@ -247,6 +247,17 @@ def register_core_tools(server: Any) -> None:
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.triage_tasks(task_ids, action, to_date)
 
+    @server.tool(name="core_search_tasks")
+    def core_search_tasks(
+        text: str,
+        open_only: bool = True,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> dict:
+        """Find tasks by what they are called, anywhere in the workspace and on any date — the only way to ask for "the transcript ones" or "Shashank sir", since core_list_tasks can only filter by status and project. Case-insensitive match on any part of the title, soonest first. Returns total as well as the tasks, so you can see when more matched than came back. Pair it with core_triage_tasks to move or drop everything that matched."""
+        tasks, _, _, _, _ = _core_for_current_user()
+        return tasks.search_tasks(text, open_only=open_only, project_id=project_id, limit=limit)
+
     @server.tool(name="core_fit_day")
     def core_fit_day(
         on_date: str | None = None,

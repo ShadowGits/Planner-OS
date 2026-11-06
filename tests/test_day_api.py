@@ -907,3 +907,95 @@ def test_fit_reports_how_full_the_day_is(client) -> None:
     data = answer.json()["data"]
     assert data["booked_minutes"] == 120
     assert data["free_minutes"] == 6 * 60
+
+
+# --- Finding tasks by what they are called --------------------------------
+
+
+def test_search_requires_app_key(client) -> None:
+    assert client.get("/v2/tasks/search?q=transcript").status_code == 401
+
+
+def test_search_finds_tasks_by_part_of_the_name(client) -> None:
+    _make(client, "Order transcripts from college")
+    _make(client, "Email Shashank sir about the LOR")
+    _make(client, "Buy milk")
+    found = client.get("/v2/tasks/search?q=transcript", headers=APP_KEY)
+    assert found.status_code == 200, found.text
+    data = found.json()["data"]
+    assert [one["title"] for one in data["tasks"]] == ["Order transcripts from college"]
+    assert data["total"] == 1
+
+
+def test_search_ignores_case(client) -> None:
+    _make(client, "Email Shashank sir about the LOR")
+    for query in ("shashank", "SHASHANK", "Shashank Sir"):
+        found = client.get(f"/v2/tasks/search?q={query}", headers=APP_KEY)
+        assert len(found.json()["data"]["tasks"]) == 1, query
+
+
+def test_search_finds_every_match_not_just_todays(client) -> None:
+    _make(client, "Transcript request one", date="2026-07-22")
+    _make(client, "Transcript request two", date="2026-09-30")
+    _make(client, "Transcript request three")
+    found = client.get("/v2/tasks/search?q=transcript", headers=APP_KEY)
+    assert found.json()["data"]["total"] == 3
+
+
+def test_search_leaves_out_finished_tasks_by_default(client) -> None:
+    done = _make(client, "Transcript already sorted")
+    _make(client, "Transcript still to do")
+    client.patch(f"/v2/day/tasks/{done}", json={"done": True}, headers=APP_KEY)
+    open_only = client.get("/v2/tasks/search?q=transcript", headers=APP_KEY)
+    assert [one["title"] for one in open_only.json()["data"]["tasks"]] == ["Transcript still to do"]
+    everything = client.get("/v2/tasks/search?q=transcript&open=false", headers=APP_KEY)
+    assert everything.json()["data"]["total"] == 2
+
+
+def test_search_puts_the_soonest_first(client) -> None:
+    _make(client, "Transcript later", date="2026-09-30")
+    _make(client, "Transcript sooner", date="2026-07-22")
+    found = client.get("/v2/tasks/search?q=transcript", headers=APP_KEY)
+    assert [one["title"] for one in found.json()["data"]["tasks"]] == [
+        "Transcript sooner",
+        "Transcript later",
+    ]
+
+
+def test_search_caps_what_comes_back_and_says_so(client) -> None:
+    for n in range(5):
+        _make(client, f"Transcript {n}")
+    found = client.get("/v2/tasks/search?q=transcript&limit=2", headers=APP_KEY)
+    data = found.json()["data"]
+    assert len(data["tasks"]) == 2
+    assert data["total"] == 5 and data["truncated"] is True
+
+
+def test_search_refuses_one_letter(client) -> None:
+    assert client.get("/v2/tasks/search?q=t", headers=APP_KEY).status_code == 422
+
+
+def test_search_then_move_everything_it_found(client) -> None:
+    """Both spoken halves of "move all the transcript tasks to today"."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    _make(client, "Transcript one", date="2026-07-20")
+    _make(client, "Transcript two", date="2026-07-20")
+    _make(client, "Something else", date="2026-07-20")
+
+    found = client.get("/v2/tasks/search?q=transcript", headers=APP_KEY)
+    ids = [one["id"] for one in found.json()["data"]["tasks"]]
+    assert len(ids) == 2
+
+    moved = client.post(
+        "/v2/day/tasks/triage",
+        json={"task_ids": ids, "action": "move", "to_date": today},
+        headers=APP_KEY,
+    )
+    assert moved.status_code == 200, moved.text
+    titles = set(_times(client, today).keys())
+    assert {"Transcript one", "Transcript two"} <= titles
+    # And only what matched moved.
+    assert "Something else" not in titles
