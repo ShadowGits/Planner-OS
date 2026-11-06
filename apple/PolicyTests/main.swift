@@ -354,14 +354,14 @@ check(PlannerVoice.clockText(1530), "25:30", "and writes a small-hours slot the 
 // "What am I doing?"
 check(PlannerVoice.nowSentence(voiceDay, at: 9 * 60 + 31), "Deep work, 29 minutes left.", "what is under way")
 check(PlannerVoice.nowSentence(voiceDay, at: 10 * 60 + 30), "Next is Standup at 11:00 am.", "nothing on, so what is next")
-check(PlannerVoice.nowSentence(voiceDay, at: 22 * 60), "Nothing more is scheduled today.", "past the last task")
+check(PlannerVoice.nowSentence(voiceDay, at: 22 * 60), "Nothing more is scheduled today. 2 tasks are waiting in your inbox.", "past the last task, and owns up to the inbox")
 check(PlannerVoice.nowSentence(nil, at: 600), "Nothing on today.", "no snapshot at all")
 check(PlannerVoice.nowSentence(PlannerSnapshot(date: "2026-11-05", updated: Date(), tasks: [], waiting: 0), at: 600),
       "Nothing on today.", "an empty day")
 
 // "What's next?" skips whatever is already running.
 check(PlannerVoice.nextSentence(voiceDay, at: 9 * 60 + 31), "Next is Standup at 11:00 am.", "next, not now")
-check(PlannerVoice.nextSentence(voiceDay, at: 20 * 60), "Nothing more is scheduled today.", "nothing left to come")
+check(PlannerVoice.nextSentence(voiceDay, at: 20 * 60), "Nothing more is scheduled today. 2 tasks are waiting in your inbox.", "nothing left to come")
 
 // "How much is left?"
 check(PlannerVoice.remainingSentence(voiceDay, at: 600), "3 left, 1 hour 45 minutes of it.", "what is still open")
@@ -460,6 +460,72 @@ check(VoiceTask(row: ["id": "t6"]) == nil, true, "and so is one with no name")
 check(PlannerVoice.parseClock("09:30:00"), 570, "reads the server's clock")
 check(PlannerVoice.parseClock("25:30"), 1530, "and a small-hours one")
 check(PlannerVoice.parseClock(nil) == nil, true, "no time at all")
+
+// 6 November: nothing scheduled, twenty overdue. "Nothing on today" alone
+// was true and still the wrong answer.
+let emptyButBehind = PlannerSnapshot(date: "2026-11-06", updated: Date(), tasks: [], waiting: 20)
+check(PlannerVoice.nowSentence(emptyButBehind, at: 600), "Nothing on today. 20 tasks are waiting in your inbox.", "an empty day with a backlog")
+check(PlannerVoice.remainingSentence(emptyButBehind, at: 600), "Nothing on today. 20 tasks are waiting in your inbox.", "and when asked what is left")
+check(PlannerVoice.nextSentence(emptyButBehind, at: 600), "Nothing more is scheduled today. 20 tasks are waiting in your inbox.", "and when asked what is next")
+let oneBehind = PlannerSnapshot(date: "2026-11-06", updated: Date(), tasks: [], waiting: 1)
+check(PlannerVoice.nowSentence(oneBehind, at: 600), "Nothing on today. 1 task is waiting in your inbox.", "just the one waiting")
+check(PlannerVoice.nowSentence(PlannerSnapshot(date: "2026-11-06", updated: Date(), tasks: [], waiting: 0), at: 600),
+      "Nothing on today.", "a genuinely clear slate says only that")
+check(PlannerVoice.remainingSentence(allDone, at: 600), "Everything is ticked off.", "a finished day with an empty inbox")
+
+// Today as a list — the shape of 6 November: seven habits, twenty waiting.
+let friday = PlannerSnapshot(date: "2026-11-06", updated: Date(), tasks: [
+    spoken("Gym", 17 * 60 + 30, 90),
+    spoken("Skin care and health", 3 * 60, 30, done: true),
+    spoken("Shower and skin care", 11 * 60, 30),
+    spoken("IELTS prep", 12 * 60, 60),
+    spoken("Reading", 16 * 60, 60),
+    spoken("Talk to mom", 22 * 60 + 30, 30),
+    spoken("Research internship search", 23 * 60, 60),
+], waiting: 20)
+let at1230 = PlannerVoice.todayRows(friday, at: 12 * 60 + 30)
+check(at1230.count, 7, "every habit is on the list, not only the current one")
+check(at1230.map { $0.title }, ["Skin care and health", "Shower and skin care", "IELTS prep", "Reading", "Gym",
+                                "Talk to mom", "Research internship search"], "in time order")
+check(at1230.map { $0.state }, [.done, .missed, .now, .next, .later, .later, .later], "each marked")
+check(at1230[0].time, "3:00 am", "times read like a clock")
+check(at1230[4].time, "5:30 pm", "an evening time")
+check(PlannerVoice.todaySummary(friday, at: 12 * 60 + 30),
+      "7 on today, 1 done. Now: IELTS prep. 20 tasks are waiting in your inbox.", "the line said above the list")
+check(PlannerVoice.todaySummary(friday, at: 14 * 60),
+      "7 on today, 1 done. Next: Reading at 4:00 pm. 20 tasks are waiting in your inbox.", "nothing under way, so what is next")
+check(PlannerVoice.todayRows(nil, at: 600).isEmpty, true, "no copy, no rows")
+check(PlannerVoice.todaySummary(emptyButBehind, at: 600), "Nothing on today. 20 tasks are waiting in your inbox.",
+      "an empty day still owns up to the inbox")
+
+// The copy the app left must be today's, or it is not believed.
+check(PlannerVoice.isFresh(friday, today: "2026-11-06"), true, "today's copy is believed")
+check(PlannerVoice.isFresh(friday, today: "2026-11-07"), false, "yesterday's copy is not")
+check(PlannerVoice.isFresh(nil, today: "2026-11-06"), false, "nor is no copy at all")
+check(PlannerVoice.logicalDay(moment("2026-11-07 01:30"), calendar: voiceCal), "2026-11-06",
+      "half past one at night is still the evening before")
+check(PlannerVoice.logicalDay(moment("2026-11-07 04:00"), calendar: voiceCal), "2026-11-07", "four is the new day")
+check(PlannerVoice.logicalMinute(moment("2026-11-07 01:30"), calendar: voiceCal), 25 * 60 + 30,
+      "and counts as 25:30, after the evening's tasks")
+check(PlannerVoice.logicalMinute(moment("2026-11-06 17:30"), calendar: voiceCal), 17 * 60 + 30, "a daytime minute")
+
+// The server's day, read into the same shape.
+let serverDay: [String: Any] = ["date": "2026-11-06", "items": [
+    ["id": "habit:gym:2026-11-06", "title": "Gym", "start_time": "17:30:00", "estimated_minutes": 90, "done": false],
+    ["id": "t1", "title": "Untimed", "start_time": NSNull(), "done": false],
+    ["id": "t2", "title": "Late", "start_time": "25:30:00", "done": true],
+    ["title": "No id", "start_time": "09:00:00"],
+]]
+let fromServer = PlannerVoice.snapshot(fromDay: serverDay, waiting: 20)
+check(fromServer?.date, "2026-11-06", "the day the server answered for")
+check(fromServer?.tasks.map { $0.id }, ["habit:gym:2026-11-06", "t2"], "timed items only, habits included")
+check(fromServer?.tasks.first?.start, 17 * 60 + 30, "the habit's time")
+check(fromServer?.tasks.last?.start, 25 * 60 + 30, "a small-hours slot kept as tonight")
+check(fromServer?.tasks.last?.done, true, "ticked state")
+check(fromServer?.waiting, 20, "the inbox count carried over")
+check(fromServer?.tasks.first?.palette, PlannerVoice.paletteSlot("Gym"), "the timeline's colour")
+check(PlannerVoice.paletteSlot("Yoga"), paletteIndex(task("Yoga"), count: 8), "the same colour rule as the app")
+check(PlannerVoice.snapshot(fromDay: ["items": []], waiting: 0) == nil, true, "no date, no day")
 
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)
