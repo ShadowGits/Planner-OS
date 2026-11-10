@@ -259,8 +259,8 @@ def register_core_tools(server: Any) -> None:
         return tasks.search_tasks(text, open_only=open_only, project_id=project_id, limit=limit)
 
     @server.tool(name="core_open_tasks")
-    def core_open_tasks(limit: int = 300) -> dict:
-        """Every unfinished task in the workspace, on any date or none, soonest first, up to limit (1-500). Returns total as well, so you can see when more exist than came back. To find tasks by name use core_search_tasks instead."""
+    def core_open_tasks(limit: int = 1000) -> dict:
+        """Every unfinished task in the workspace, on any date or none, soonest first, up to limit (1-2000). Returns total as well, so you can see when more exist than came back. To find tasks by name use core_search_tasks instead."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.open_tasks(limit=limit)
 

@@ -555,5 +555,16 @@ check(PlannerVoice.addedSentence("Transcripts", date: "2026-11-11", time: nil, t
 check(PlannerVoice.addedSentence("APS", date: "2026-11-30", time: nil, today: slotToday),
       "Added APS on 30 November, with no set time.", "a day further off")
 
+// A calendar event is an appointment: never a loose end, timed or not.
+var festival = task("festival"); festival.source = "apple_calendar"
+var danceClass = task("class", time: "09:00"); danceClass.source = "apple_calendar"
+check(looseEnds([festival, danceClass, task("own")], now: 13 * 60).map { $0.id }, ["own"],
+      "calendar events are left out, so the button's count matches what Fit moves")
+let sourced = try! JSONDecoder().decode(PlannerTask.self, from: Data(
+    #"{"id":"e1","title":"Dance","source":"apple_calendar","start_time":"18:30:00"}"#.utf8))
+check(sourced.fromCalendar, true, "the day view says where an item came from")
+check(try! JSONDecoder().decode(PlannerTask.self, from: Data(#"{"id":"t1","title":"Own","source":null}"#.utf8)).fromCalendar,
+      false, "and an ordinary task did not come from one")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

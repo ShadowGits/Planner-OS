@@ -477,7 +477,7 @@ enum PlannerVoiceAPI {
 
     /// Every unfinished task, soonest first: what Siri chooses from when it has
     /// to find the task a person named and has no word to search by.
-    static func openTasks(limit: Int = 300) async throws -> [VoiceTask] {
+    static func openTasks(limit: Int = 1000) async throws -> [VoiceTask] {
         guard let connection = WidgetConnection.load(), let base = connection.url else {
             throw Failure(message: "Planner OS is not connected yet. Open the app once.")
         }

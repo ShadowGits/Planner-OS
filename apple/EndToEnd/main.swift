@@ -223,6 +223,85 @@ func run() async {
                              now: Civil.instant(today, "12:00", in: zone)!, timeZone: zone)
     check(both.filter { $0.title == "Night owl" }.map(\.fire), [Civil.instant(tomorrow, "01:20", in: zone)!], "one reminder after midnight, at its real time")
 
+    // A day well ahead, so the clock has no say and nothing above is on it.
+    let fitDay = Civil.add(today, days: 5)
+    let moveDay = Civil.add(today, days: 6)
+
+    print("Fit the day, from the app")
+    check(await store.create(title: "Appointment", date: fitDay, time: "07:00", minutes: 60, notes: nil, starred: false), true, "add something fixed")
+    check(await store.create(title: "Loose end", date: fitDay, time: nil, minutes: 30, notes: nil, starred: false), true, "add a task with no time")
+    await settle()
+    store.selectedDate = fitDay
+    await store.loadDay(fitDay)
+    check(looseEnds(store.days[fitDay]?.items ?? [], now: nil).map(\.title), ["Loose end"], "the button would say one")
+    store.toast = nil
+    await store.fitDay()
+    await settle()
+    check(await onServer("Loose end", fitDay)?.time, "08:00", "the server gave it the first time that does not clash")
+    check(onScreen("Loose end", fitDay)?.time, "08:00", "and the screen shows it without being asked")
+    check(await onServer("Appointment", fitDay)?.time, "07:00", "what was already there did not move")
+    check(store.toast, "Moved Loose end to 8:00 am.", "and it says what it did, in the server's words")
+    check(looseEnds(store.days[fitDay]?.items ?? [], now: nil).isEmpty, true, "nothing is left to fit")
+    store.selectedDate = today
+
+    print("What Siri does, against the server")
+    WidgetConnection.save(server: base.absoluteString, key: connection.key)
+    do {
+        let timed = try await PlannerVoiceAPI.create(title: "Call Shashank sir", on: moveDay, at: 14 * 60, lasting: 45)
+        check(timed.title, "Call Shashank sir", "a task said with a day and a time is added")
+        check(await onServer("Call Shashank sir", moveDay)?.time, "14:00", "at that time")
+        check(await onServer("Call Shashank sir", moveDay)?.minutes, 45, "for that long")
+
+        let untimed = try await PlannerVoiceAPI.create(title: "Sort the transcripts", on: moveDay, at: nil, lasting: nil)
+        let saved = await onServer("Sort the transcripts", moveDay)
+        check(saved != nil, true, "a task said with only a day lands on that day")
+        check(saved?.time, nil, "with no time filled in")
+
+        let found = try await PlannerVoiceAPI.search("TRANSCRIPT")
+        check(found.tasks.map(\.title), ["Sort the transcripts"], "search finds a task by part of its name, whatever the case")
+        check(found.tasks.first?.date, moveDay, "and knows its day, though it is not today")
+        check(found.total, 1, "and how many there are in all")
+        check((try await PlannerVoiceAPI.search("no such thing")).tasks.isEmpty, true, "nothing matching finds nothing")
+
+        let open = try await PlannerVoiceAPI.openTasks()
+        check(open.contains { $0.id == untimed.id } && open.contains { $0.id == timed.id }, true,
+              "the list Siri chooses from has tasks from other days")
+        check(open.contains { $0.done }, false, "and nothing already finished")
+
+        let landing = Civil.add(today, days: 7)
+        check(try await PlannerVoiceAPI.move(found.tasks.map(\.id), to: landing), 1, "what was found can be moved in one go")
+        check(await onServer("Sort the transcripts", landing) != nil, true, "it is on the new day")
+        check(await onServer("Sort the transcripts", moveDay), nil, "and gone from the old one")
+
+        let fitted = try await PlannerVoiceAPI.fit(on: landing, after: nil)
+        check(fitted.placed, 1, "fit my day places it")
+        check(fitted.spoken, "Moved Sort the transcripts to 7:00 am.", "and says so in one sentence")
+        check(await onServer("Sort the transcripts", landing)?.time, "07:00", "the server has the time")
+
+        let read = try await PlannerVoiceAPI.today(moveDay, waiting: 4)
+        check(read.date, moveDay, "a day read straight from the server is the day asked for")
+        check(read.tasks.map(\.title), ["Call Shashank sir"], "with its timed tasks")
+        check(read.waiting, 4, "and the inbox count carried over")
+        check(PlannerSnapshot.load()?.date, moveDay, "and it is saved, so the widget catches up")
+        check(PlannerVoice.todaySummary(read, at: 9 * 60), "1 on today, 0 done. Next: Call Shashank sir at 2:00 pm. 4 tasks are waiting in your inbox.",
+              "which is what Siri says above the list")
+    } catch {
+        failures += 1; print("  FAIL a voice call threw: \(error)")
+    }
+    // Leave the widget's copy as the app would have it.
+    await store.refreshAll(quiet: true)
+
+    do {
+        WidgetConnection.save(server: base.absoluteString, key: "wrong-key")
+        _ = try await PlannerVoiceAPI.create(title: "Should not exist", on: moveDay, at: nil, lasting: nil)
+        failures += 1; print("  FAIL a refused add looked like it worked")
+    } catch let refused as PlannerVoiceAPI.Failure {
+        check(refused.message.isEmpty, false, "a refused add says why instead of claiming it worked")
+    } catch {
+        failures += 1; print("  FAIL a refused add threw something unreadable: \(error)")
+    }
+    WidgetConnection.save(server: base.absoluteString, key: connection.key)
+
     print(failures == 0 ? "iPhone app store: all end-to-end checks passed" : "iPhone app store: \(failures) checks failed")
 }
 

@@ -85,6 +85,21 @@ def _local_today(timezone: str) -> date:
     return datetime.now(ZoneInfo(timezone)).date()
 
 
+CALENDAR_SOURCES = {"apple_calendar"}
+
+
+def _from_calendar(task: Mapping[str, Any]) -> bool:
+    """Whether a task is an event pulled in from a calendar.
+
+    An event is an appointment, not a piece of work: it happens at its time
+    whether or not anyone ticks it. So it is never overdue once it has passed,
+    never sits in the Inbox, and is never moved to make room for something.
+    """
+    # Reads that must stay small select just `source`; full rows carry it
+    # inside metadata. Either is believed.
+    return (task.get("source") or (task.get("metadata") or {}).get("source")) in CALENDAR_SOURCES
+
+
 def _is_overdue(task: Mapping[str, Any], today: date) -> bool:
     """Whether an open task needs attention now rather than later.
 
@@ -94,7 +109,10 @@ def _is_overdue(task: Mapping[str, Any], today: date) -> bool:
     and treating it as overdue is the only way it gets tracked instead of
     silently floating. A date in the future is genuinely not-yet-due and is
     never overdue. Shared by TaskService.today and MetricsService so both
-    agree."""
+    agree. An event from a calendar is never overdue: once its time has passed
+    it is over, not late."""
+    if _from_calendar(task):
+        return False
     due = _parse_date(task.get("due_date"))
     if due is not None:
         return due < today
@@ -1030,12 +1048,21 @@ class TaskService:
             "task_completions",
             extra_filters={"completed_on": today_str},
         )
+        # Habits have no task row, so without this a day of seven habits reads
+        # as "0 scheduled" — true of the tasks and a wrong picture of the day.
+        try:
+            habits = self.habits.occurrences(today, today)
+        except Exception as error:  # the day's tasks still matter if habits fail
+            logger.warning("Habits unreadable for today: %s", error)
+            habits = []
         return _envelope(
             True,
-            f"{len(scheduled)} scheduled, {len(due)} due, {len(overdue)} overdue, {len(completions)} completed today",
+            f"{len(scheduled)} scheduled, {len(habits)} habits, {len(due)} due, "
+            f"{len(overdue)} overdue, {len(completions)} completed today",
             {
                 "date": today.isoformat(),
                 "scheduled": scheduled,
+                "habits": habits,
                 "due_today": due,
                 "overdue": sorted(
                     overdue,
@@ -1343,7 +1370,9 @@ class TaskService:
         rows = self.repository.list_rows(
             "planner_tasks",
             {"status": sorted(OPEN_TASK_STATUSES)},
-            columns=columns,
+            # Only where the task came from, to tell calendar events apart.
+            # Never the whole metadata: an import can leave it enormous.
+            columns=columns + ",source:metadata->>source",
             query_string=(
                 f"or=(due_date.lt.{stamp},scheduled_date.lte.{stamp},"
                 f"and(scheduled_date.is.null,or(due_date.is.null,due_date.lte.{stamp})))"
@@ -1360,6 +1389,10 @@ class TaskService:
         items = []
         for row in rows:
             if row.get("status") not in OPEN_TASK_STATUSES or str(row["id"]) in umbrellas:
+                continue
+            # A festival or a class that has gone by is over, not overdue, and
+            # was never something to triage. It stays on its day's timeline.
+            if _from_calendar(row):
                 continue
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
@@ -1424,7 +1457,7 @@ class TaskService:
         )
         all_rows = self.repository.list_rows(
             "planner_tasks",
-            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,milestone_id,parent_task_id,starred",
+            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,milestone_id,parent_task_id,starred,source:metadata->>source",
             query_string=qs,
             strict=strict,
         )
@@ -1483,6 +1516,9 @@ class TaskService:
                     "parent_task_id": row.get("parent_task_id"),
                     # One of the few tasks this day is being judged by.
                     "starred": bool(row.get("starred")),
+                    # "apple_calendar" for an event pulled in from a calendar,
+                    # so the apps and Fit can treat it as fixed.
+                    "source": row.get("source") or (row.get("metadata") or {}).get("source"),
                     **{
                         key: value
                         for key, value in slot_context.get(str(row["id"]), {}).items()
@@ -1658,15 +1694,15 @@ class TaskService:
             },
         )
 
-    def open_tasks(self, *, limit: int = 300) -> dict[str, Any]:
+    def open_tasks(self, *, limit: int = 1000) -> dict[str, Any]:
         """Every unfinished task, soonest first, for an assistant to choose from.
 
         Siri finds the task a person named by asking the app for the tasks it
         has; search needs a word, so this is the list it is offered when it
         has none. Same order and shape as search_tasks.
         """
-        if limit < 1 or limit > 500:
-            raise PlannerCoreError("A list returns between 1 and 500 tasks")
+        if limit < 1 or limit > 2000:
+            raise PlannerCoreError("A list returns between 1 and 2000 tasks")
         rows = self.repository.list_rows(
             "planner_tasks",
             {},
@@ -1702,28 +1738,39 @@ class TaskService:
 
         task_ids names what to place; left out, it takes everything unfinished
         that has no time yet or whose slot has already gone by — "I am running
-        late, sort out the rest of my day". after="now" starts from the clock,
-        which only means anything on today. A habit stays where it is: it is a
-        standing commitment, not a loose end.
+        late, sort out the rest of my day". On today nothing is placed before
+        the present minute, whatever `after` says; a future day starts at the
+        top of its window. A habit or a calendar event stays where it is: a
+        standing commitment or an appointment, not a loose end.
 
         dry_run works out the same answer and saves nothing, so a voice
         assistant or a screen can say what it would do before doing it.
         """
-        target = _parse_date(on_date) or _local_today(self.timezone)
+        now = datetime.now(ZoneInfo(self.timezone))
+        target = _parse_date(on_date) or now.date()
         day = self.day_view(target.isoformat())["data"]
         items = day["items"]
 
+        # Where the clock stands on the day being fitted, when it bears on it
+        # at all: today, or — before four in the morning — yesterday, whose
+        # evening is still running and counts on past 24:00.
+        clock: int | None = None
+        if target == now.date():
+            clock = now.hour * 60 + now.minute
+        elif target == now.date() - timedelta(days=1) and now.hour < 4:
+            clock = (now.hour + 24) * 60 + now.minute
+
         floor: int | None = None
-        if after == "now":
-            # The clock only bears on the day being looked at. Fitting out a
-            # future day starts at the top of its window, not at this minute.
-            if target == _local_today(self.timezone):
-                now = datetime.now(ZoneInfo(self.timezone))
-                floor = now.hour * 60 + now.minute
-        elif after:
+        if after and after != "now":
             floor = fitting.parse_clock(after)
             if floor is None:
                 raise PlannerCoreError(f"Not a time: {after}")
+        # Nothing is ever given a time that has already gone by, whatever was
+        # asked for: a task "fitted" into this morning at three in the
+        # afternoon has only been hidden. A future day has no clock and starts
+        # at the top of its window.
+        if clock is not None:
+            floor = clock if floor is None else max(floor, clock)
 
         bounds = {}
         for name, value in (("window_start", window_start), ("window_end", window_end)):
@@ -1742,7 +1789,10 @@ class TaskService:
             move_ids=task_ids,
             after=floor,
             gap=gap,
-            is_fixed=lambda item: parse_habit_item_id(str(item.get("id"))) is not None,
+            # A habit is a standing commitment and a calendar event is an
+            # appointment: neither is a loose end, and neither is moved.
+            is_fixed=lambda item: parse_habit_item_id(str(item.get("id"))) is not None
+            or _from_calendar(item),
             **bounds,
         )
 

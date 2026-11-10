@@ -287,3 +287,18 @@ class TestSentence:
         ]
         sentence = fit_sentence(fit_day(items))
         assert "would not fit" in sentence
+
+
+class TestStartsOnAFiveMinuteMark:
+    def test_a_ragged_minute_is_rounded_up_never_back(self):
+        result = fit_day([task("1", "Write", minutes=30)], after=15 * 60 + 7)
+        assert result["placements"][0]["start_time"] == "15:10"
+
+    def test_a_clean_minute_is_left_alone(self):
+        result = fit_day([task("1", "Write", minutes=30)], after=15 * 60 + 5)
+        assert result["placements"][0]["start_time"] == "15:05"
+
+    def test_what_has_slipped_is_still_judged_by_the_real_minute(self):
+        # Ends at 15:09; at 15:07 it is still running, whatever the rounding.
+        items = [task("now", "Call", start="14:39", minutes=30)]
+        assert fit_day(items, after=15 * 60 + 7)["placements"] == []

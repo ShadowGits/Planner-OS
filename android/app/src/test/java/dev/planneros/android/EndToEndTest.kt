@@ -33,6 +33,27 @@ class EndToEndTest {
     }
     @After fun disconnect(){SecureConfig.testConnection=null}
 
+    /** The Fit button: the server finds the loose end a time, and nothing already there moves. */
+    @Test fun fitGivesALooseEndATimeThatDoesNotClash()=runBlocking{
+        val repo=PlannerRepository(RuntimeEnvironment.getApplication())
+        // A day well ahead, so the clock has no say and no other test is on it.
+        val day=logicalToday(ZonedDateTime.now(ZoneId.of("Asia/Kolkata"))).plusDays(9)
+        val run=UUID.randomUUID().toString().take(6)
+        suspend fun mine()=repo.day(day).tasks.filter{it.title.endsWith(run)}
+        suspend fun on(title:String)=mine().firstOrNull{it.title=="$title $run"}
+
+        repo.create("Appointment $run",day,"07:00",60)
+        repo.create("Loose end $run",day,null,30)
+        assertEquals("the button would say one",listOf("Loose end $run"),looseEnds(mine(),null).map{it.title})
+
+        val said=repo.fitDay(day,fromNow=false)
+
+        assertEquals("the first time that does not clash","08:00",on("Loose end")?.time?.take(5))
+        assertEquals("what was already there did not move","07:00",on("Appointment")?.time?.take(5))
+        assertEquals("it says what it did, in the server's words","Moved Loose end $run to 8:00 am.",said)
+        assertTrue("nothing is left to fit",looseEnds(mine(),null).isEmpty())
+    }
+
     @Test fun everyActionReachesTheServer()=runBlocking{
         val repo=PlannerRepository(RuntimeEnvironment.getApplication())
         val today=logicalToday(ZonedDateTime.now(ZoneId.of("Asia/Kolkata")));val tomorrow=today.plusDays(1)

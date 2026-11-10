@@ -47,7 +47,7 @@ echo "== Apple: Focus and timeline rules"
 echo "== Apple: every action against the API"
 "$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
     $APPLE/PlannerStore.swift $APPLE/WidgetBridge.swift apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift \
-    apple/EndToEnd/StandIns.swift apple/EndToEnd/main.swift -o "$BUILD/e2e"
+    apple/Shared/PlannerVoice.swift apple/EndToEnd/StandIns.swift apple/EndToEnd/main.swift -o "$BUILD/e2e"
 "$BUILD/e2e" "$URL"
 
 echo "== Android: unit, touch and end-to-end tests"

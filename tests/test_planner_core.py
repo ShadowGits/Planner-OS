@@ -518,6 +518,31 @@ def test_today_buckets_scheduled_due_and_overdue(services) -> None:
     assert "Scheduled today" in [row["title"] for row in data["scheduled"]]
 
 
+def test_today_counts_habits_so_the_day_does_not_read_as_empty(services, repo) -> None:
+    """Seven habits and no tasks used to report "0 scheduled": true of the
+    tasks, and a wrong picture of the day."""
+    tasks, _, _, _ = services
+    HabitService(repo, TZ).add_habit("Gym", start_time="17:30", start_date="2026-01-01")
+
+    result = tasks.today()
+
+    assert [habit["title"] for habit in result["data"]["habits"]] == ["Gym"]
+    assert "1 habits" in result["message"]
+
+
+def test_today_does_not_call_a_passed_calendar_event_overdue(services) -> None:
+    """A festival last week is over, not late."""
+    tasks, _, _, _ = services
+    tasks.create_task(
+        "Festival", scheduled_date="2026-01-01", metadata={"source": "apple_calendar", "apple_uid": "u1"}
+    )
+    tasks.create_task("Real work", scheduled_date="2026-01-01")
+
+    overdue = [row["title"] for row in tasks.today()["data"]["overdue"]]
+
+    assert overdue == ["Real work"]
+
+
 def test_today_surfaces_past_scheduled_tasks_as_overdue(services) -> None:
     """A timed block planned for a past day with no due date must still resurface
     so replan can push it forward instead of silently losing it."""

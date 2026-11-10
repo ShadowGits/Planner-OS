@@ -456,7 +456,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
 
     @api.get("/v2/tasks/open")
     def open_tasks_endpoint(
-        limit: int = Query(default=300, ge=1, le=500),
+        limit: int = Query(default=1000, ge=1, le=2000),
         x_app_key: str | None = Header(default=None),
     ):
         """Every unfinished task, soonest first — what Siri chooses from when

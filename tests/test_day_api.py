@@ -1023,3 +1023,118 @@ def test_open_tasks_caps_and_says_so(client) -> None:
     data = client.get("/v2/tasks/open?limit=2", headers=APP_KEY).json()["data"]
     assert len(data["tasks"]) == 2 and data["total"] == 4 and data["truncated"] is True
     assert client.get("/v2/tasks/open?limit=0", headers=APP_KEY).status_code == 422
+
+
+# --- What Fit must never do: place into the past, or move an appointment ---
+
+
+def _freeze(monkeypatch, year, month, day, hour, minute=0):
+    """Pin the planner's clock, so 'now' means the same thing on every run."""
+    import planner_core.services as services
+    from datetime import datetime as real
+
+    class Frozen(real):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(year, month, day, hour, minute, tzinfo=tz)
+
+    monkeypatch.setattr(services, "datetime", Frozen)
+
+
+def _from_calendar(runtime, title):
+    """Mark a task as an event pulled in from the calendar."""
+    for row in runtime.service_client.tables["planner_tasks"]:
+        if row["title"] == title:
+            row["metadata"] = {"source": "apple_calendar", "apple_uid": f"uid-{title}"}
+
+
+def test_fit_never_gives_today_a_time_that_has_gone_by(client, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 22, 15, 7)
+    _make(client, "Write the brief", estimated_minutes=60)
+    data = client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY).json()["data"]
+    # Asked at 15:07 with no "after" at all: not 07:00 this morning, and not
+    # 15:07 either — the next five-minute mark.
+    assert data["placements"][0]["start_time"] == "15:10"
+    assert _times(client)["Write the brief"] == "15:10"
+
+
+def test_fit_ignores_an_after_that_is_already_behind_the_clock(client, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 22, 15, 0)
+    _make(client, "Write the brief", estimated_minutes=60)
+    client.post("/v2/day/fit", json={"date": "2026-07-22", "after": "09:00"}, headers=APP_KEY)
+    assert _times(client)["Write the brief"] == "15:00"
+
+
+def test_fit_still_honours_an_after_that_is_ahead_of_the_clock(client, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 22, 10, 0)
+    _make(client, "This evening", estimated_minutes=60)
+    client.post("/v2/day/fit", json={"date": "2026-07-22", "after": "18:00"}, headers=APP_KEY)
+    assert _times(client)["This evening"] == "18:00"
+
+
+def test_fit_leaves_a_future_day_starting_at_the_top_of_its_window(client, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 21, 15, 0)
+    _make(client, "Tomorrow's task", estimated_minutes=60)
+    client.post("/v2/day/fit", json={"date": "2026-07-22", "after": "now"}, headers=APP_KEY)
+    assert _times(client)["Tomorrow's task"] == "07:00"
+
+
+def test_fit_after_midnight_does_not_reach_back_into_the_evening(client, monkeypatch) -> None:
+    # One in the morning: the app is still showing the 22nd, the day that runs
+    # to four. Nothing may land at seven on a morning that is long gone.
+    _freeze(monkeypatch, 2026, 7, 23, 1, 0)
+    _make(client, "Loose end", estimated_minutes=60)
+    data = client.post(
+        "/v2/day/fit", json={"date": "2026-07-22", "after": "now"}, headers=APP_KEY
+    ).json()["data"]
+    assert data["placements"] == []
+    assert [one["title"] for one in data["unplaced"]] == ["Loose end"]
+    assert _times(client)["Loose end"] is None
+
+
+def test_fit_never_moves_a_calendar_event(client, runtime, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 22, 15, 0)
+    _make(client, "Dance class", start_time="09:00", estimated_minutes=50)
+    _make(client, "Festival")
+    _make(client, "Real loose end", estimated_minutes=30)
+    _from_calendar(runtime, "Dance class")
+    _from_calendar(runtime, "Festival")
+    data = client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY).json()["data"]
+    assert [one["title"] for one in data["placements"]] == ["Real loose end"]
+    times = _times(client)
+    # The class went by unticked and the festival has no time: both are
+    # appointments, and neither is anyone's to reschedule.
+    assert times["Dance class"] == "09:00"
+    assert times["Festival"] is None
+
+
+def test_fit_says_why_a_named_calendar_event_will_not_move(client, runtime) -> None:
+    event = _make(client, "Dance class", start_time="09:00")
+    _from_calendar(runtime, "Dance class")
+    data = client.post(
+        "/v2/day/fit", json={"date": "2026-07-22", "task_ids": [event]}, headers=APP_KEY
+    ).json()["data"]
+    assert data["unplaced"][0]["reason"] == "fixed"
+
+
+def test_day_says_which_items_came_from_the_calendar(client, runtime) -> None:
+    _make(client, "Dance class", start_time="09:00")
+    _make(client, "Own task", start_time="10:00")
+    _from_calendar(runtime, "Dance class")
+    items = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    sources = {item["title"]: item["source"] for item in items}
+    assert sources == {"Dance class": "apple_calendar", "Own task": None}
+    # And the rest of the metadata stays on the server.
+    assert all("metadata" not in item for item in items)
+
+
+def test_a_calendar_event_that_has_passed_is_not_overdue(client, runtime, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 25, 12, 0)
+    _make(client, "Festival")
+    _make(client, "Dance class", start_time="18:30")
+    _make(client, "Real missed task", start_time="09:00")
+    _from_calendar(runtime, "Festival")
+    _from_calendar(runtime, "Dance class")
+    inbox = client.get("/v2/day/inbox", headers=APP_KEY).json()["data"]["items"]
+    # Three days on, only the piece of work is waiting. The events are over.
+    assert [item["title"] for item in inbox] == ["Real missed task"]

@@ -214,14 +214,18 @@ def fit_day(
 
     moving = {str(item.get("id")) for item in chosen}
     busy = busy_spans(items, moving)
-    gaps = free_gaps(busy, window_start, window_end, after)
+    # Start on a five-minute mark: nobody wants a task at 15:07 because that
+    # happened to be the minute they asked. What has slipped is still judged
+    # by the real minute, above.
+    start_from = None if after is None else -(-after // 5) * 5
+    gaps = free_gaps(busy, window_start, window_end, start_from)
     placements: list[dict[str, Any]] = []
 
     for item in placement_order(chosen):
         minutes = item_minutes(item)
         for index, (start, end) in enumerate(gaps):
             # A gap that follows something else owes it the breathing space.
-            offset = gap if (start > window_start and (after is None or start > after)) else 0
+            offset = gap if (start > window_start and (start_from is None or start > start_from)) else 0
             begin = start + offset
             if begin + minutes <= end:
                 placements.append(
@@ -249,7 +253,7 @@ def fit_day(
             )
 
     booked = sum(end - start for start, end in busy if end > window_start and start < window_end)
-    span = max(window_end - max(window_start, after or window_start), 0)
+    span = max(window_end - max(window_start, start_from or window_start), 0)
     return {
         "placements": placements,
         "unplaced": unplaced,
