@@ -454,6 +454,18 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             ) from error
         return _envelope(True, result["message"], result["data"])
 
+    @api.get("/v2/tasks/open")
+    def open_tasks_endpoint(
+        limit: int = Query(default=300, ge=1, le=500),
+        x_app_key: str | None = Header(default=None),
+    ):
+        """Every unfinished task, soonest first — what Siri chooses from when
+        it has to find the task a person named."""
+        _authorize(x_app_key)
+        core = _core()
+        result = core.tasks.open_tasks(limit=limit)
+        return _envelope(True, result["message"], result["data"])
+
     @api.post("/v2/day/fit")
     def fit_day_endpoint(body: FitDayRequest, x_app_key: str | None = Header(default=None)):
         """Find each loose end a time that does not clash.

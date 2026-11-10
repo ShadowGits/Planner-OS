@@ -527,5 +527,33 @@ check(fromServer?.tasks.first?.palette, PlannerVoice.paletteSlot("Gym"), "the ti
 check(PlannerVoice.paletteSlot("Yoga"), paletteIndex(task("Yoga"), count: 8), "the same colour rule as the app")
 check(PlannerVoice.snapshot(fromDay: ["items": []], waiting: 0) == nil, true, "no date, no day")
 
+// Adding a task said out loud: "add call Shashank sir tomorrow at 2pm".
+for (said, minutes) in [("14:00", 840), ("2 pm", 840), ("2pm", 840), ("2:30pm", 870), ("2:30 p.m.", 870),
+                        ("12 pm", 720), ("12am", 0), ("noon", 720), ("midnight", 0), ("09:05", 545), ("9", 540)] {
+    check(PlannerVoice.parseSpokenTime(said), minutes, "reads \(said)")
+}
+for bad in ["", "13pm", "0am", "25:00", "9:75", "later", "2:3:4", nil] as [String?] {
+    check(PlannerVoice.parseSpokenTime(bad) == nil, true, "refuses \(bad ?? "nothing")")
+}
+// Both halves optional, as asked: a day only fills the date and leaves the time empty.
+let slotToday = "2026-11-10"
+check(PlannerVoice.taskSlot(day: "2026-11-11", time: 840, today: slotToday, nowMinute: 600).date, "2026-11-11", "day and time: the day")
+check(PlannerVoice.taskSlot(day: "2026-11-11", time: 840, today: slotToday, nowMinute: 600).time, "14:00", "day and time: the time")
+check(PlannerVoice.taskSlot(day: "2026-11-11", time: nil, today: slotToday, nowMinute: 600).date, "2026-11-11", "a day alone: that day")
+check(PlannerVoice.taskSlot(day: "2026-11-11", time: nil, today: slotToday, nowMinute: 600).time == nil, true, "a day alone: no time")
+check(PlannerVoice.taskSlot(day: nil, time: nil, today: slotToday, nowMinute: 600).date, slotToday, "neither: today")
+check(PlannerVoice.taskSlot(day: nil, time: nil, today: slotToday, nowMinute: 600).time == nil, true, "neither: no time")
+check(PlannerVoice.taskSlot(day: nil, time: 840, today: slotToday, nowMinute: 600).date, slotToday, "a time alone: today")
+check(PlannerVoice.taskSlot(day: nil, time: 60, today: slotToday, nowMinute: 21 * 60).date, "2026-11-11",
+      "1 am said in the evening means tonight, on tomorrow's date")
+check(PlannerVoice.taskSlot(day: nil, time: 60, today: slotToday, nowMinute: 24 * 60 + 30).date, "2026-11-11",
+      "and said after midnight, still the coming small hours")
+check(PlannerVoice.addedSentence("Call Shashank sir", date: "2026-11-11", time: "14:00", today: slotToday),
+      "Added Call Shashank sir tomorrow at 2:00 pm.", "says what it added and when")
+check(PlannerVoice.addedSentence("Transcripts", date: "2026-11-11", time: nil, today: slotToday),
+      "Added Transcripts tomorrow, with no set time.", "and says when there is no time")
+check(PlannerVoice.addedSentence("APS", date: "2026-11-30", time: nil, today: slotToday),
+      "Added APS on 30 November, with no set time.", "a day further off")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

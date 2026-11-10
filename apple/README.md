@@ -146,7 +146,18 @@ already shares with the widget, so it is instant and works with no signal;
 anything that changes something waits for the server, because Siri must not
 say "done" before it is true.
 
-Nothing here needs an entitlement, a paid account or a beta OS.
+Siri AI (the 27.3 developer preview) understands requests in any words, but
+only uses actions marked `@AppIntent(.tool)`, and picks between them — and
+fills their parameters — from the description on each action, parameter and
+entity property. Without the marker it answers "Planner OS can't be used for
+this". `e2e/swift_intents.py` refuses an action without the marker or a
+description, so that cannot quietly come back.
+
+Building needs **Xcode with the 27.3 beta SDK**, because the macro is new
+there. The app still runs on iOS 17: the macro adds the tool conformance with
+the 27.3 availability by itself. Siri AI works in development-signed builds
+like this one; Apple does not offer it to App Store or external TestFlight
+builds during the preview. No entitlement or paid account is needed.
 
 ## Checking both apps together
 

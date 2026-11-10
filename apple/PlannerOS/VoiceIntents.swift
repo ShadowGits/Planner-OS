@@ -5,30 +5,53 @@ import AppIntents
 import WidgetKit
 #endif
 
-/// The menu Planner OS puts out front.
+/// What Siri can do in Planner OS.
 ///
-/// Siri cannot look at a screen and press things. What an app can do by voice
-/// is whatever it writes down here, where the system can read it — and the
-/// same list serves Siri, the Shortcuts app, Spotlight, the Action button and
-/// Siri on the Mac, all from this one file.
+/// Siri cannot look at a screen and press things. It can only use the actions
+/// an app writes down here, and since the 27.3 Siri AI preview it uses them in
+/// two ways:
 ///
-/// Every one of these is a thin wrapper. What to do and what to say back lives
-/// in PlannerVoice, which is plain Foundation and is tested on every run; none
-/// of it waits on Xcode to be checked. The reading intents answer from the
-/// snapshot the app shares with the widget, so they are instant and work with
-/// no signal. The ones that change something go to the server and wait for it,
-/// because Siri must not say "done" before it is true.
+/// - Siri AI understands what was said in any words and picks the actions that
+///   fit. It only considers actions marked `@AppIntent(.tool)`, and it tells
+///   them apart — and fills in their parameters — from the title and
+///   description on each action and on every parameter. Those descriptions are
+///   written for a model that has never seen Planner OS, because that is what
+///   reads them. Without the marker, Siri AI cannot see an action at all: it
+///   answers "Planner OS can't be used for this".
+/// - Plain Siri, the Shortcuts app, Spotlight and the Action button use the
+///   fixed phrases in `PlannerShortcuts` at the bottom.
+///
+/// Every action is a thin wrapper. What to do and what to say back lives in
+/// PlannerVoice, which is plain Foundation and is tested on every run.
+/// `e2e/swift_intents.py` refuses an action without the marker, or a parameter
+/// or property without a description, so neither can go missing again.
+///
+/// Apple's rules: developer.apple.com/documentation/appintents/
+/// bringing-custom-actions-and-content-to-siri
 
 // MARK: - The task Siri is talking about
 
 /// A task as Siri sees it, so "mark the gym done" can be narrowed to one
 /// thing, and so Siri can ask which when a phrase fits more than one.
-struct PlannerTaskEntity: AppEntity, Identifiable, Hashable {
-    static var typeDisplayRepresentation: TypeDisplayRepresentation { "Task" }
-    static var defaultQuery = PlannerTaskQuery()
+struct PlannerTaskEntity: AppEntity, Identifiable {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Task"
+    static let defaultQuery = PlannerTaskQuery()
 
     var id: String
+
+    @Property(title: "Name", description: "The task's name as it appears on the person's plan.")
     var title: String
+
+    @Property(title: "Day", description: "The day the task is planned for, as yyyy-MM-dd. Empty when it has no day yet.")
+    var day: String
+
+    @Property(title: "Start time", description: "When the task starts, as 24-hour HH:mm. Empty when it has no set time.")
+    var time: String
+
+    @Property(title: "Done", description: "Whether the task has been ticked off.")
+    var done: Bool
+
+    /// What a list of tasks shows under each name: "tomorrow, 2:00 pm".
     var subtitle: String
 
     var displayRepresentation: DisplayRepresentation {
@@ -37,8 +60,11 @@ struct PlannerTaskEntity: AppEntity, Identifiable, Hashable {
 
     init(_ task: VoiceTask, today: String) {
         id = task.id
-        title = task.title
         subtitle = PlannerVoice.describe(task, today: today)
+        title = task.title
+        day = task.date ?? ""
+        time = PlannerVoice.parseClock(task.time).map(PlannerVoice.clockText) ?? ""
+        done = task.done
     }
 
     init(_ item: PlannerSnapshot.Item, today: String) {
@@ -50,36 +76,37 @@ struct PlannerTaskEntity: AppEntity, Identifiable, Hashable {
     }
 }
 
-/// How Siri finds the task you named.
+/// How Siri finds the task someone named.
 ///
-/// It asks the server, not the widget's snapshot: the snapshot holds today
-/// only, so a task dated September — or any of the hundreds not on today —
-/// could never be matched from it. With no signal it falls back to today,
-/// which is better than refusing outright.
-struct PlannerTaskQuery: EntityStringQuery {
-    private var today: String { PlannerVoice.dayStamp(Date()) }
+/// Apple's rule is that Siri finds an app's entities through Spotlight or an
+/// `EnumerableEntityQuery`; this is the second. It lists every open task from
+/// the server — not the widget's copy, which holds today alone, so a task
+/// dated September could never be found from it — and searches by name when
+/// there is a word to go on. With no signal it falls back to today.
+struct PlannerTaskQuery: EnumerableEntityQuery, EntityStringQuery {
+    private var today: String { PlannerVoice.logicalDay(Date()) }
+    private var nowMinutes: Int { PlannerVoice.logicalMinute(Date()) }
 
-    private var nowMinutes: Int {
-        let parts = Calendar.current.dateComponents([.hour, .minute], from: Date())
-        return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+    func allEntities() async throws -> [PlannerTaskEntity] {
+        let stamp = today
+        if let open = try? await PlannerVoiceAPI.openTasks() {
+            return open.map { PlannerTaskEntity($0, today: stamp) }
+        }
+        return (PlannerSnapshot.load()?.tasks ?? []).map { PlannerTaskEntity($0, today: stamp) }
     }
 
     func entities(for identifiers: [String]) async throws -> [PlannerTaskEntity] {
         let stamp = today
-        let snapshot = PlannerSnapshot.load()
-        let known = (snapshot?.tasks ?? [])
+        let known = (PlannerSnapshot.load()?.tasks ?? [])
             .filter { identifiers.contains($0.id) }
             .map { PlannerTaskEntity($0, today: stamp) }
         if known.count == identifiers.count { return known }
-        // Something is not on today. Find the rest by name, which is all the
-        // server lets us search by, then keep the ids that were asked for.
-        var found = known
-        for id in identifiers where !found.contains(where: { $0.id == id }) {
-            if let hit = try? await PlannerVoiceAPI.search(id, limit: 1).tasks.first, hit.id == id {
-                found.append(PlannerTaskEntity(hit, today: stamp))
-            }
-        }
-        return found
+        // Something is not on today: look the rest up among the open tasks.
+        let wanted = Set(identifiers).subtracting(known.map(\.id))
+        let rest = ((try? await PlannerVoiceAPI.openTasks()) ?? [])
+            .filter { wanted.contains($0.id) }
+            .map { PlannerTaskEntity($0, today: stamp) }
+        return known + rest
     }
 
     /// What Siri offers when it has to ask "which one?".
@@ -106,9 +133,8 @@ private func minutesNow() -> Int { PlannerVoice.logicalMinute(Date()) }
 /// Today, and never another day passed off as today.
 ///
 /// The app leaves a copy for the widget, but only writes it while it runs, so
-/// the copy is often from yesterday. Reading that as today is how Siri came to
-/// give wrong answers. When the copy is not today's, ask the server; when the
-/// server cannot be reached either, say so rather than guess.
+/// the copy is often from yesterday. When it is not today's, ask the server;
+/// when the server cannot be reached either, say so rather than guess.
 private func currentDay() async -> PlannerSnapshot? {
     let today = PlannerVoice.logicalDay(Date())
     let saved = PlannerSnapshot.load()
@@ -124,14 +150,14 @@ private let unreachable: IntentDialog =
 /// "What's on today?" — the whole day, shown as a list.
 ///
 /// The list is the answer, so Siri shows it rather than reading it out; the
-/// line it says is only what the list adds up to. Habits and ticked tasks are
-/// on it, in time order, the way the timeline has them.
+/// line it says is only what the list adds up to.
+@AppIntent(.tool)
 struct ShowTodayIntent: AppIntent {
-    static var title: LocalizedStringResource = "Show today"
-    static var description = IntentDescription(
-        "Shows everything on today's plan as a list: tasks and habits, done and still to do, with what is under way and what is next. Use this for any question about what is on today."
+    static let title: LocalizedStringResource = "Show today's plan"
+    static let description = IntentDescription(
+        "Shows everything on the person's Planner OS plan for today as a list: tasks and habits, done and still to do, in time order, marking what is under way, what is next and what was missed, and how many tasks are waiting in the inbox. Use this for any question about what is on today, what the day looks like, or what is planned."
     )
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
         guard let day = await currentDay() else {
@@ -148,13 +174,13 @@ struct ShowTodayIntent: AppIntent {
 }
 
 /// "What am I doing right now?" — only the one thing under way, or next.
+@AppIntent(.tool)
 struct CurrentTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "What am I doing now?"
-    static var description = IntentDescription(
-        "Says only the one task under way right now, or the next if nothing is. For the whole day, use Show today."
+    static let title: LocalizedStringResource = "What am I doing now"
+    static let description = IntentDescription(
+        "Says only the single Planner OS task under way at this moment, with how long is left, or the next one if nothing is under way. For the whole day, use Show today's plan instead."
     )
-    /// Nothing here changes anything, so there is no reason to open the app.
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let day = await currentDay() else { return .result(dialog: unreachable) }
@@ -163,10 +189,13 @@ struct CurrentTaskIntent: AppIntent {
 }
 
 /// "What's next?" — skips whatever is already running.
+@AppIntent(.tool)
 struct NextTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "What's next?"
-    static var description = IntentDescription("Says the next thing due to start today.")
-    static var openAppWhenRun = false
+    static let title: LocalizedStringResource = "What's next"
+    static let description = IntentDescription(
+        "Says the next Planner OS task or habit due to start today, and when, skipping whatever is already under way."
+    )
+    static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let day = await currentDay() else { return .result(dialog: unreachable) }
@@ -175,10 +204,13 @@ struct NextTaskIntent: AppIntent {
 }
 
 /// "How much is left today?"
+@AppIntent(.tool)
 struct RemainingTodayIntent: AppIntent {
-    static var title: LocalizedStringResource = "How much is left today?"
-    static var description = IntentDescription("Says how many tasks are still open and how long they add up to.")
-    static var openAppWhenRun = false
+    static let title: LocalizedStringResource = "How much is left today"
+    static let description = IntentDescription(
+        "Says how many of today's Planner OS tasks and habits are still not done and how long they add up to, and how many tasks are waiting in the inbox."
+    )
+    static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let day = await currentDay() else { return .result(dialog: unreachable) }
@@ -188,78 +220,97 @@ struct RemainingTodayIntent: AppIntent {
 
 // MARK: - Changing
 
-/// "Add call mom at 7pm tomorrow."
+/// "Add call Shashank sir tomorrow at 2pm."
 ///
-/// Apple turns the spoken date and time into a real one before it reaches
-/// here, so this only has to carry it over in the planner's own counting —
-/// including a small-hours slot, which belongs to the evening before.
+/// The day and the time are separate and both optional, so "tomorrow" alone
+/// puts the task on tomorrow with no set time, rather than at midnight.
+@AppIntent(.tool)
 struct AddTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "Add a task"
-    static var description = IntentDescription("Adds a task to Planner OS, with a time if you give one.")
-    static var openAppWhenRun = false
+    static let title: LocalizedStringResource = "Add a task"
+    static let description = IntentDescription(
+        "Adds one task to the person's Planner OS plan. Use it for any request to add, plan, schedule, note or remember something to do. The day and the start time are both optional: with a day only, the task goes on that day with no set time; with neither, it goes on today with no set time. For several separate things to do, add each as its own task."
+    )
+    static let openAppWhenRun = false
 
-    @Parameter(title: "Task", requestValueDialog: "What should it be called?")
-    var title: String
+    @Parameter(
+        title: "Task",
+        description: "A short name for the task in the person's own words, as they would write it on a to-do list — for example \"Call Shashank sir about the transcripts\". Leave out the day, the time and the duration; those have their own parameters.",
+        requestValueDialog: "What should the task be called?"
+    )
+    var name: String
 
-    @Parameter(title: "When")
-    var when: Date?
+    @Parameter(
+        title: "Day",
+        description: "The day the task is for, such as today, tomorrow or a date. Only the date is used. Leave empty when no day was said; the task then goes on today."
+    )
+    var day: Date?
 
-    @Parameter(title: "Minutes")
+    @Parameter(
+        title: "Start time",
+        description: "When the task starts, only if a time was said, written as 24-hour HH:mm — for example 14:00 for 2 pm. Leave empty when no time was said; the task then has no set time."
+    )
+    var time: String?
+
+    @Parameter(
+        title: "Minutes",
+        description: "How long the task takes, in whole minutes, for example 30. Leave empty when no duration was said."
+    )
     var minutes: Int?
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Add \(\.$title) at \(\.$when)")
+        Summary("Add \(\.$name) on \(\.$day) at \(\.$time)")
     }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else {
-            return .result(dialog: "A task needs a name.")
-        }
-        var day: String?
+        let taskName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !taskName.isEmpty else { return .result(dialog: "A task needs a name.") }
         var clock: Int?
-        if let when {
-            day = PlannerVoice.dayStamp(when)
-            clock = PlannerVoice.minutes(from: when, on: day ?? "")
-            // Past midnight counts as the evening before, the way the
-            // timeline shows it, so the date steps back with it.
-            if let clock, clock >= 24 * 60, let stamped = day {
-                day = Self.dayBefore(stamped) ?? stamped
+        if let time, !time.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let read = PlannerVoice.parseSpokenTime(time) else {
+                return .result(dialog: IntentDialog(stringLiteral: "I couldn't read \(time) as a time."))
             }
+            clock = read
         }
+        let today = PlannerVoice.logicalDay(Date())
+        let slot = PlannerVoice.taskSlot(
+            day: day.map { PlannerVoice.dayStamp($0) },
+            time: clock,
+            today: today,
+            nowMinute: minutesNow()
+        )
         do {
-            let made = try await PlannerVoiceAPI.create(title: name, on: day, at: clock, lasting: minutes)
+            let made = try await PlannerVoiceAPI.create(
+                title: taskName, on: slot.date, at: PlannerVoice.parseClock(slot.time), lasting: minutes)
             reloadWidget()
-            if let clock {
-                return .result(dialog: "Added \(made.title) at \(PlannerVoice.spokenClock(clock)).")
-            }
-            return .result(dialog: "Added \(made.title). It is in today's tray with no time yet.")
+            return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.addedSentence(
+                made.title, date: slot.date, time: slot.time, today: today)))
         } catch let failure as PlannerVoiceAPI.Failure {
             return .result(dialog: IntentDialog(stringLiteral: failure.message))
         }
     }
-
-    private static func dayBefore(_ stamp: String) -> String? {
-        var parts = DateComponents()
-        let pieces = stamp.split(separator: "-").compactMap { Int($0) }
-        guard pieces.count == 3 else { return nil }
-        parts.year = pieces[0]; parts.month = pieces[1]; parts.day = pieces[2]
-        guard let date = Calendar.current.date(from: parts),
-              let earlier = Calendar.current.date(byAdding: .day, value: -1, to: date) else { return nil }
-        return PlannerVoice.dayStamp(earlier)
-    }
 }
 
 /// "Mark the gym done." Siri asks which when a phrase fits more than one.
+@AppIntent(.tool)
 struct CompleteTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "Complete a task"
-    static var description = IntentDescription("Ticks a task off, or puts it back.")
-    static var openAppWhenRun = false
+    static let title: LocalizedStringResource = "Complete a task"
+    static let description = IntentDescription(
+        "Ticks one Planner OS task or habit off as done, or puts a ticked one back to not done."
+    )
+    static let openAppWhenRun = false
 
-    @Parameter(title: "Task", requestValueDialog: "Which task?")
+    @Parameter(
+        title: "Task",
+        description: "The task or habit to tick off, found by its name.",
+        requestValueDialog: "Which task?"
+    )
     var task: PlannerTaskEntity
 
-    @Parameter(title: "Done", default: true)
+    @Parameter(
+        title: "Done",
+        description: "True to mark it done, false to put it back to not done.",
+        default: true
+    )
     var done: Bool
 
     static var parameterSummary: some ParameterSummary {
@@ -288,20 +339,28 @@ struct CompleteTaskIntent: AppIntent {
 /// "Which tasks mention transcripts?"
 ///
 /// Also the first half of anything bulk: it hands back the tasks themselves,
-/// so the assistant can pass them straight into a move without being told
-/// twice. "Move all the transcript ones and the Shashank sir ones to today"
-/// is this intent twice over and then one move.
+/// so Siri can pass them straight into a move. "Move all the transcript ones
+/// and the Shashank sir ones to today" is this twice and then one move.
+@AppIntent(.tool)
 struct FindTasksIntent: AppIntent {
-    static var title: LocalizedStringResource = "Find tasks"
-    static var description = IntentDescription(
-        "Finds tasks by a word in their name, anywhere in the planner and on any date."
+    static let title: LocalizedStringResource = "Find tasks"
+    static let description = IntentDescription(
+        "Finds Planner OS tasks whose name contains a word or phrase, across the whole plan and on any date, soonest first, and returns them so they can be passed to another action such as moving them."
     )
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
-    @Parameter(title: "Word", requestValueDialog: "What should I look for?")
+    @Parameter(
+        title: "Word",
+        description: "A word or short phrase from the tasks' names, for example \"transcripts\" or \"Shashank sir\". Case does not matter. At least two letters.",
+        requestValueDialog: "What should I look for?"
+    )
     var text: String
 
-    @Parameter(title: "Include finished", default: false)
+    @Parameter(
+        title: "Include finished",
+        description: "True to include tasks already done or dropped; false for only those still to do.",
+        default: false
+    )
     var includeDone: Bool
 
     static var parameterSummary: some ParameterSummary {
@@ -309,7 +368,7 @@ struct FindTasksIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult & ReturnsValue<[PlannerTaskEntity]> & ProvidesDialog {
-        let today = PlannerVoice.dayStamp(Date())
+        let today = PlannerVoice.logicalDay(Date())
         do {
             let found = try await PlannerVoiceAPI.search(text, openOnly: !includeDone)
             let said = PlannerVoice.foundSentence(count: found.tasks.count, total: found.total, query: text)
@@ -323,20 +382,27 @@ struct FindTasksIntent: AppIntent {
     }
 }
 
-/// "Move all the transcript tasks to today."
-///
-/// Always asks first, however it was reached. A word heard wrongly should not
-/// silently move forty tasks, and the question names the count so the mistake
-/// is obvious before it happens rather than after.
+/// "Move these to today." Always asks first and names the count: a word heard
+/// wrongly should not quietly move forty tasks.
+@AppIntent(.tool)
 struct MoveTasksIntent: AppIntent {
-    static var title: LocalizedStringResource = "Move tasks to a day"
-    static var description = IntentDescription("Moves tasks to a day, keeping them untimed.")
-    static var openAppWhenRun = false
+    static let title: LocalizedStringResource = "Move tasks to a day"
+    static let description = IntentDescription(
+        "Moves the given Planner OS tasks to one day, with no set time on that day. Asks the person to confirm first, saying how many tasks will move."
+    )
+    static let openAppWhenRun = false
 
-    @Parameter(title: "Tasks")
+    @Parameter(
+        title: "Tasks",
+        description: "The tasks to move, for example the ones Find tasks returned."
+    )
     var tasks: [PlannerTaskEntity]
 
-    @Parameter(title: "Day", requestValueDialog: "Which day?")
+    @Parameter(
+        title: "Day",
+        description: "The day to move them to, such as today, tomorrow or a date. Only the date is used. It has to be today or later.",
+        requestValueDialog: "Which day?"
+    )
     var when: Date
 
     static var parameterSummary: some ParameterSummary {
@@ -344,12 +410,10 @@ struct MoveTasksIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let today = PlannerVoice.dayStamp(Date())
+        let today = PlannerVoice.logicalDay(Date())
         let day = PlannerVoice.dayStamp(when)
         let label = PlannerVoice.dayLabel(day, today: today)
-        guard !tasks.isEmpty else {
-            return .result(dialog: "There was nothing to move.")
-        }
+        guard !tasks.isEmpty else { return .result(dialog: "There was nothing to move.") }
         try await requestConfirmation(
             result: .result(dialog: IntentDialog(
                 stringLiteral: PlannerVoice.moveQuestion(count: tasks.count, to: label))),
@@ -358,30 +422,35 @@ struct MoveTasksIntent: AppIntent {
         do {
             let moved = try await PlannerVoiceAPI.move(tasks.map(\.id), to: day)
             reloadWidget()
-            return .result(dialog: IntentDialog(
-                stringLiteral: PlannerVoice.movedSentence(count: moved, to: label)))
+            return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.movedSentence(count: moved, to: label)))
         } catch let failure as PlannerVoiceAPI.Failure {
             return .result(dialog: IntentDialog(stringLiteral: failure.message))
         }
     }
 }
 
-/// "Move all the transcript tasks to today", in one go.
-///
-/// The same two steps as finding and then moving, joined up, so plain Siri can
-/// do it in a single phrase without the assistant chaining anything. It still
+/// "Move all the transcript tasks to today", in one go, for plain Siri. Still
 /// asks before it moves.
+@AppIntent(.tool)
 struct MoveMatchingTasksIntent: AppIntent {
-    static var title: LocalizedStringResource = "Move matching tasks to a day"
-    static var description = IntentDescription(
-        "Finds every task with a word in its name and moves them all to one day."
+    static let title: LocalizedStringResource = "Move matching tasks to a day"
+    static let description = IntentDescription(
+        "Finds every unfinished Planner OS task whose name contains a word or phrase and moves them all to one day, with no set time. Asks the person to confirm first, saying how many tasks will move."
     )
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
-    @Parameter(title: "Word", requestValueDialog: "Which tasks? Give me a word from their names.")
+    @Parameter(
+        title: "Word",
+        description: "A word or short phrase from the tasks' names, for example \"transcripts\". Case does not matter. At least two letters.",
+        requestValueDialog: "Which tasks? Give me a word from their names."
+    )
     var text: String
 
-    @Parameter(title: "Day", requestValueDialog: "Which day?")
+    @Parameter(
+        title: "Day",
+        description: "The day to move them to, such as today, tomorrow or a date. Only the date is used. It has to be today or later.",
+        requestValueDialog: "Which day?"
+    )
     var when: Date
 
     static var parameterSummary: some ParameterSummary {
@@ -389,7 +458,7 @@ struct MoveMatchingTasksIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let today = PlannerVoice.dayStamp(Date())
+        let today = PlannerVoice.logicalDay(Date())
         let day = PlannerVoice.dayStamp(when)
         let label = PlannerVoice.dayLabel(day, today: today)
         let found: PlannerVoiceAPI.Found
@@ -409,8 +478,7 @@ struct MoveMatchingTasksIntent: AppIntent {
         do {
             let moved = try await PlannerVoiceAPI.move(found.tasks.map(\.id), to: day)
             reloadWidget()
-            return .result(dialog: IntentDialog(
-                stringLiteral: PlannerVoice.movedSentence(count: moved, to: label)))
+            return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.movedSentence(count: moved, to: label)))
         } catch let failure as PlannerVoiceAPI.Failure {
             return .result(dialog: IntentDialog(stringLiteral: failure.message))
         }
@@ -419,14 +487,19 @@ struct MoveMatchingTasksIntent: AppIntent {
 
 /// "Fix my afternoon." The server does the arithmetic, so this agrees with
 /// both apps and the dashboard by construction.
+@AppIntent(.tool)
 struct FitDayIntent: AppIntent {
-    static var title: LocalizedStringResource = "Fit my day"
-    static var description = IntentDescription(
-        "Gives everything without a time, and every slot already gone by, a time that does not clash."
+    static let title: LocalizedStringResource = "Fit my day"
+    static let description = IntentDescription(
+        "Gives today's Planner OS tasks that have no time, and tasks whose time has already passed without being done, the earliest free times that do not clash with anything else, between 7 am and 10 pm. Never double-books and never moves habits. Use it for requests to sort out, fix, replan or catch up on the day."
     )
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
-    @Parameter(title: "From now on", default: true)
+    @Parameter(
+        title: "From now on",
+        description: "True to only use time from now on; false to use the whole day's free time.",
+        default: true
+    )
     var fromNow: Bool
 
     static var parameterSummary: some ParameterSummary {
@@ -450,13 +523,11 @@ private func reloadWidget() {
     #endif
 }
 
-// MARK: - What you can actually say
+// MARK: - Fixed phrases, for plain Siri, Shortcuts and Spotlight
 
-/// The phrases Siri listens for without the app having been opened first.
-///
-/// Each one names the app, because that is what plain Siri wants: it matches
-/// phrases rather than understanding them. More ways of saying the same thing
-/// cost nothing, so the obvious ones are all here.
+/// The phrases plain Siri listens for. Siri AI does not need these — it reads
+/// the descriptions above — but Shortcuts, Spotlight, the Action button and
+/// Siri without the AI preview still do. Apple allows ten.
 struct PlannerShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -506,6 +577,7 @@ struct PlannerShortcuts: AppShortcutsProvider {
             phrases: [
                 "Add a task to \(.applicationName)",
                 "Add to \(.applicationName)",
+                "Add an item to \(.applicationName)",
                 "New task in \(.applicationName)",
             ],
             shortTitle: "Add a task",
@@ -526,7 +598,6 @@ struct PlannerShortcuts: AppShortcutsProvider {
             phrases: [
                 "Find tasks in \(.applicationName)",
                 "Search \(.applicationName)",
-                "Which \(.applicationName) tasks",
             ],
             shortTitle: "Find tasks",
             systemImageName: "magnifyingglass"
@@ -535,7 +606,6 @@ struct PlannerShortcuts: AppShortcutsProvider {
             intent: MoveMatchingTasksIntent(),
             phrases: [
                 "Move tasks in \(.applicationName)",
-                "Move matching tasks in \(.applicationName)",
                 "Reschedule tasks in \(.applicationName)",
             ],
             shortTitle: "Move matching tasks",
@@ -546,7 +616,6 @@ struct PlannerShortcuts: AppShortcutsProvider {
             phrases: [
                 "Fit my day in \(.applicationName)",
                 "Fix my day in \(.applicationName)",
-                "Sort out my day in \(.applicationName)",
                 "Replan \(.applicationName)",
             ],
             shortTitle: "Fit my day",

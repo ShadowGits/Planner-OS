@@ -29,6 +29,9 @@ python3 "$ROOT/e2e/xcode_project.py"
 echo "== Apple: every task field the screens read exists"
 python3 "$ROOT/e2e/swift_fields.py"
 
+echo "== Apple: every Siri action is a tool Siri AI can see, with every description it reads"
+python3 "$ROOT/e2e/swift_intents.py"
+
 echo "== Apple: no tap gesture or drag sits on top of a button"
 python3 "$ROOT/e2e/swift_gestures.py"
 

@@ -999,3 +999,27 @@ def test_search_then_move_everything_it_found(client) -> None:
     assert {"Transcript one", "Transcript two"} <= titles
     # And only what matched moved.
     assert "Something else" not in titles
+
+
+def test_open_tasks_requires_app_key(client) -> None:
+    assert client.get("/v2/tasks/open").status_code == 401
+
+
+def test_open_tasks_lists_every_unfinished_task_soonest_first(client) -> None:
+    _make(client, "Later", date="2026-09-30")
+    _make(client, "Sooner", date="2026-07-22")
+    done = _make(client, "Finished", date="2026-07-21")
+    client.patch(f"/v2/day/tasks/{done}", json={"done": True}, headers=APP_KEY)
+    listed = client.get("/v2/tasks/open", headers=APP_KEY)
+    assert listed.status_code == 200, listed.text
+    data = listed.json()["data"]
+    assert [one["title"] for one in data["tasks"]] == ["Sooner", "Later"]
+    assert data["total"] == 2
+
+
+def test_open_tasks_caps_and_says_so(client) -> None:
+    for n in range(4):
+        _make(client, f"Task {n}")
+    data = client.get("/v2/tasks/open?limit=2", headers=APP_KEY).json()["data"]
+    assert len(data["tasks"]) == 2 and data["total"] == 4 and data["truncated"] is True
+    assert client.get("/v2/tasks/open?limit=0", headers=APP_KEY).status_code == 422
