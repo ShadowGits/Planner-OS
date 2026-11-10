@@ -197,6 +197,61 @@ enum PlannerVoice {
         String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 
+    // MARK: - Adding a task said out loud
+
+    /// A time as Siri passes it on: "14:00", "2 pm", "2:30pm", "noon".
+    ///
+    /// The model fills this in from what was said, so it is read leniently —
+    /// but nothing outside a real clock is accepted, because a wrong time is
+    /// worse than none.
+    static func parseSpokenTime(_ text: String?) -> Int? {
+        guard var spoken = text?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
+              !spoken.isEmpty else { return nil }
+        if spoken == "noon" || spoken == "midday" { return 12 * 60 }
+        if spoken == "midnight" { return 0 }
+        spoken = spoken.replacingOccurrences(of: ".", with: "").replacingOccurrences(of: " ", with: "")
+        var half: String?
+        for suffix in ["am", "pm"] where spoken.hasSuffix(suffix) {
+            half = suffix
+            spoken.removeLast(2)
+        }
+        let parts = spoken.split(separator: ":", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count), let hour = Int(parts[0]) else { return nil }
+        let minute = parts.count == 2 ? Int(parts[1]) : 0
+        guard let minute, (0...59).contains(minute) else { return nil }
+        if let half {
+            guard (1...12).contains(hour) else { return nil }
+            let base = hour % 12
+            return (half == "pm" ? base + 12 : base) * 60 + minute
+        }
+        guard (0...23).contains(hour) else { return nil }
+        return hour * 60 + minute
+    }
+
+    /// Where a task said out loud lands. Both the day and the time are
+    /// optional: a day alone puts it on that day with no set time; neither
+    /// puts it on today with no set time; a time with no day means today —
+    /// or, said in the evening for the small hours, tonight, which is
+    /// tomorrow's date.
+    static func taskSlot(day: String?, time: Int?, today: String, nowMinute: Int) -> (date: String, time: String?) {
+        guard let time else { return (day ?? today, nil) }
+        if let day { return (day, clockText(time)) }
+        if time < 4 * 60, nowMinute >= 4 * 60 { return (shift(today, by: 1), clockText(time)) }
+        return (today, clockText(time))
+    }
+
+    /// "Added Call Shashank sir tomorrow at 2:00 pm."
+    static func addedSentence(_ title: String, date: String, time: String?, today: String) -> String {
+        let day = dayLabel(date, today: today)
+        guard let clock = parseClock(time) else { return "Added \(title) \(onDay(day)), with no set time." }
+        return "Added \(title) \(onDay(day)) at \(spokenClock(clock))."
+    }
+
+    /// "today" and "tomorrow" stand alone; "30 November" wants an "on".
+    private static func onDay(_ label: String) -> String {
+        ["today", "tomorrow", "yesterday"].contains(label) ? label : "on \(label)"
+    }
+
     // MARK: - Finding the task someone named
 
     /// The tasks worth offering when Siri has to ask "which one?".
@@ -418,6 +473,23 @@ enum PlannerVoiceAPI {
         let rows = (data["tasks"] as? [[String: Any]]) ?? []
         let tasks = rows.compactMap(VoiceTask.init(row:))
         return Found(tasks: tasks, total: (data["total"] as? Int) ?? tasks.count)
+    }
+
+    /// Every unfinished task, soonest first: what Siri chooses from when it has
+    /// to find the task a person named and has no word to search by.
+    static func openTasks(limit: Int = 300) async throws -> [VoiceTask] {
+        guard let connection = WidgetConnection.load(), let base = connection.url else {
+            throw Failure(message: "Planner OS is not connected yet. Open the app once.")
+        }
+        var parts = URLComponents(string: base.absoluteString + "/v2/tasks/open")
+        parts?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        guard let url = parts?.url else { throw Failure(message: "The task list cannot be read") }
+        var ask = URLRequest(url: url)
+        ask.timeoutInterval = 10
+        ask.setValue(connection.key, forHTTPHeaderField: "X-App-Key")
+        let json = try await send(ask)
+        let rows = ((json["data"] as? [String: Any])?["tasks"] as? [[String: Any]]) ?? []
+        return rows.compactMap(VoiceTask.init(row:))
     }
 
     /// Today straight from the server, for when the copy the app left is from

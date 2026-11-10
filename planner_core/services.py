@@ -1658,6 +1658,36 @@ class TaskService:
             },
         )
 
+    def open_tasks(self, *, limit: int = 300) -> dict[str, Any]:
+        """Every unfinished task, soonest first, for an assistant to choose from.
+
+        Siri finds the task a person named by asking the app for the tasks it
+        has; search needs a word, so this is the list it is offered when it
+        has none. Same order and shape as search_tasks.
+        """
+        if limit < 1 or limit > 500:
+            raise PlannerCoreError("A list returns between 1 and 500 tasks")
+        rows = self.repository.list_rows(
+            "planner_tasks",
+            {},
+            columns="id,title,status,start_time,estimated_minutes,due_date,scheduled_date,"
+            "project_id,milestone_id,starred,priority",
+        )
+        found = [row for row in rows if row.get("status") not in CLOSED_TASK_STATUSES]
+        found.sort(
+            key=lambda row: (
+                str(row.get("scheduled_date") or row.get("due_date") or "9999-12-31"),
+                str(row.get("start_time") or "99:99"),
+                str(row.get("title") or ""),
+            )
+        )
+        kept = found[:limit]
+        return _envelope(
+            True,
+            f"{len(found)} open {'task' if len(found) == 1 else 'tasks'}",
+            {"tasks": kept, "total": len(found), "truncated": len(found) > len(kept)},
+        )
+
     def fit_day(
         self,
         on_date: str | None = None,

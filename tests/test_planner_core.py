@@ -826,6 +826,7 @@ def test_core_tools_register_on_a_fastmcp_server() -> None:
         "core_log_expense",
         "core_log_income",
         "core_metrics",
+        "core_open_tasks",
         "core_plan_overview",
         "core_reopen_habit_day",
         "core_reschedule_habit_day",
