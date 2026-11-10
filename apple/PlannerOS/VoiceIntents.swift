@@ -100,24 +100,65 @@ struct PlannerTaskQuery: EntityStringQuery {
     }
 }
 
-private func minutesNow() -> Int {
-    let parts = Calendar.current.dateComponents([.hour, .minute], from: Date())
-    return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+/// Minutes into the planner's day, which runs to four in the morning.
+private func minutesNow() -> Int { PlannerVoice.logicalMinute(Date()) }
+
+/// Today, and never another day passed off as today.
+///
+/// The app leaves a copy for the widget, but only writes it while it runs, so
+/// the copy is often from yesterday. Reading that as today is how Siri came to
+/// give wrong answers. When the copy is not today's, ask the server; when the
+/// server cannot be reached either, say so rather than guess.
+private func currentDay() async -> PlannerSnapshot? {
+    let today = PlannerVoice.logicalDay(Date())
+    let saved = PlannerSnapshot.load()
+    if PlannerVoice.isFresh(saved, today: today) { return saved }
+    return try? await PlannerVoiceAPI.today(today, waiting: saved?.waiting ?? 0)
 }
+
+private let unreachable: IntentDialog =
+    "I can't reach Planner OS right now, and the copy on this phone isn't from today. Open the app once."
 
 // MARK: - Asking
 
-/// "What am I doing?" — answered from the shared snapshot, so it is instant
-/// and still right with no signal.
+/// "What's on today?" — the whole day, shown as a list.
+///
+/// The list is the answer, so Siri shows it rather than reading it out; the
+/// line it says is only what the list adds up to. Habits and ticked tasks are
+/// on it, in time order, the way the timeline has them.
+struct ShowTodayIntent: AppIntent {
+    static var title: LocalizedStringResource = "Show today"
+    static var description = IntentDescription(
+        "Shows everything on today's plan as a list: tasks and habits, done and still to do, with what is under way and what is next. Use this for any question about what is on today."
+    )
+    static var openAppWhenRun = false
+
+    func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        guard let day = await currentDay() else {
+            return .result(dialog: unreachable, view: TodaySnippet(rows: [], more: 0, waiting: 0))
+        }
+        let minute = minutesNow()
+        let rows = PlannerVoice.todayRows(day, at: minute)
+        let shown = Array(rows.prefix(TodaySnippet.limit))
+        return .result(
+            dialog: IntentDialog(stringLiteral: PlannerVoice.todaySummary(day, at: minute)),
+            view: TodaySnippet(rows: shown, more: rows.count - shown.count, waiting: day.waiting)
+        )
+    }
+}
+
+/// "What am I doing right now?" — only the one thing under way, or next.
 struct CurrentTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "What am I doing?"
-    static var description = IntentDescription("Says what is under way, or what is next.")
+    static var title: LocalizedStringResource = "What am I doing now?"
+    static var description = IntentDescription(
+        "Says only the one task under way right now, or the next if nothing is. For the whole day, use Show today."
+    )
     /// Nothing here changes anything, so there is no reason to open the app.
     static var openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let line = PlannerVoice.nowSentence(PlannerSnapshot.load(), at: minutesNow())
-        return .result(dialog: IntentDialog(stringLiteral: line))
+        guard let day = await currentDay() else { return .result(dialog: unreachable) }
+        return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.nowSentence(day, at: minutesNow())))
     }
 }
 
@@ -128,8 +169,8 @@ struct NextTaskIntent: AppIntent {
     static var openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let line = PlannerVoice.nextSentence(PlannerSnapshot.load(), at: minutesNow())
-        return .result(dialog: IntentDialog(stringLiteral: line))
+        guard let day = await currentDay() else { return .result(dialog: unreachable) }
+        return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.nextSentence(day, at: minutesNow())))
     }
 }
 
@@ -140,8 +181,8 @@ struct RemainingTodayIntent: AppIntent {
     static var openAppWhenRun = false
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let line = PlannerVoice.remainingSentence(PlannerSnapshot.load(), at: minutesNow())
-        return .result(dialog: IntentDialog(stringLiteral: line))
+        guard let day = await currentDay() else { return .result(dialog: unreachable) }
+        return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.remainingSentence(day, at: minutesNow())))
     }
 }
 
@@ -419,10 +460,23 @@ private func reloadWidget() {
 struct PlannerShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
+            intent: ShowTodayIntent(),
+            phrases: [
+                "What's on in \(.applicationName)",
+                "What's on today in \(.applicationName)",
+                "Show today in \(.applicationName)",
+                "Show my day in \(.applicationName)",
+                "What do I have today in \(.applicationName)",
+                "\(.applicationName) today",
+            ],
+            shortTitle: "Show today",
+            systemImageName: "list.bullet.rectangle"
+        )
+        AppShortcut(
             intent: CurrentTaskIntent(),
             phrases: [
                 "What am I doing in \(.applicationName)",
-                "What's on in \(.applicationName)",
+                "What am I doing now in \(.applicationName)",
                 "\(.applicationName) now",
             ],
             shortTitle: "What am I doing?",

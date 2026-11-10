@@ -18,15 +18,115 @@ enum PlannerVoice {
 
     // MARK: - Answering out loud
 
+    // MARK: - Today as a list
+
+    /// One line of today's list as Siri shows it.
+    struct TodayRow: Equatable, Identifiable {
+        enum State: Equatable { case done, now, next, later, missed }
+        var id: String
+        var title: String
+        var time: String
+        var state: State
+        var palette: Int
+    }
+
+    /// The planner's day runs to four in the morning, so at half past midnight
+    /// "today" is still the evening before.
+    static func logicalDay(_ now: Date, calendar: Calendar = .current) -> String {
+        dayStamp(now.addingTimeInterval(-4 * 3600), calendar: calendar)
+    }
+
+    /// Minutes into the planner's day: half past midnight is 24:30, so it can
+    /// be compared with the evening's tasks rather than mistaken for morning.
+    static func logicalMinute(_ now: Date, calendar: Calendar = .current) -> Int {
+        let parts = calendar.dateComponents([.hour, .minute], from: now)
+        let hour = parts.hour ?? 0, minute = parts.minute ?? 0
+        return (hour < 4 ? hour + 24 : hour) * 60 + minute
+    }
+
+    /// Whether the copy the app left is of the day being asked about. The app
+    /// only writes it while it runs, so a copy from yesterday is normal — and
+    /// reading it as today is how Siri came to say the wrong thing.
+    static func isFresh(_ snapshot: PlannerSnapshot?, today: String) -> Bool {
+        snapshot?.date == today
+    }
+
+    /// Everything on today, in time order, each marked done, under way, next,
+    /// missed or later — habits included, ticked ones included, so it reads
+    /// like the timeline rather than a summary of it.
+    static func todayRows(_ snapshot: PlannerSnapshot?, at minute: Int) -> [TodayRow] {
+        guard let snapshot else { return [] }
+        let ordered = snapshot.tasks.sorted { ($0.start, $0.title) < ($1.start, $1.title) }
+        let current = snapshot.current(at: minute)?.id
+        let next = ordered.first { !$0.done && $0.start >= minute && $0.id != current }?.id
+        return ordered.map { item in
+            let state: TodayRow.State
+            if item.done { state = .done }
+            else if item.id == current { state = .now }
+            else if item.id == next { state = .next }
+            else if item.end <= minute { state = .missed }
+            else { state = .later }
+            return TodayRow(id: item.id, title: item.title, time: spokenClock(item.start),
+                            state: state, palette: item.palette)
+        }
+    }
+
+    /// The one line said aloud above the list: the list is the answer, this
+    /// only says what it adds up to.
+    static func todaySummary(_ snapshot: PlannerSnapshot?, at minute: Int) -> String {
+        guard let snapshot, !snapshot.tasks.isEmpty else { return "Nothing on today." + inboxTail(snapshot) }
+        let total = snapshot.tasks.count
+        let done = total - snapshot.remaining
+        var line = "\(total) on today, \(done) done."
+        if let current = snapshot.current(at: minute) {
+            line += " Now: \(current.title)."
+        } else if let next = snapshot.upcoming(after: minute).first {
+            line += " Next: \(next.title) at \(spokenClock(next.start))."
+        }
+        return line + inboxTail(snapshot)
+    }
+
+    /// The same colour slot the app gives a task, so a list read from the
+    /// server matches the timeline.
+    static func paletteSlot(_ title: String, count: Int = 8) -> Int {
+        var hash: UInt64 = 5381
+        for scalar in title.unicodeScalars { hash = (hash &* 33) &+ UInt64(scalar.value) }
+        return Int(hash % UInt64(max(count, 1)))
+    }
+
+    /// The server's day, in the shape the widget and the voice menu read.
+    /// Only timed items, like the copy the app writes; an untimed task has no
+    /// place in a list ordered by the clock.
+    static func snapshot(fromDay data: [String: Any], waiting: Int, now: Date = Date()) -> PlannerSnapshot? {
+        guard let date = data["date"] as? String, let rows = data["items"] as? [[String: Any]] else { return nil }
+        let items: [PlannerSnapshot.Item] = rows.compactMap { row in
+            guard let id = row["id"] as? String, let title = row["title"] as? String,
+                  let start = parseClock(row["start_time"] as? String) else { return nil }
+            let minutes = max((row["estimated_minutes"] as? Int) ?? 30, 1)
+            return PlannerSnapshot.Item(id: id, title: title, start: start, minutes: minutes,
+                                        done: (row["done"] as? Bool) ?? false, palette: paletteSlot(title))
+        }
+        return PlannerSnapshot(date: date, updated: now, tasks: items, waiting: waiting)
+    }
+
+    /// What is waiting in the Inbox — overdue or never given a day — added
+    /// whenever the day itself has nothing to say. "Nothing on today" with
+    /// twenty overdue behind it is true and still the wrong answer.
+    static func inboxTail(_ snapshot: PlannerSnapshot?) -> String {
+        guard let waiting = snapshot?.waiting, waiting > 0 else { return "" }
+        return waiting == 1 ? " 1 task is waiting in your inbox." : " \(waiting) tasks are waiting in your inbox."
+    }
+
     /// "Deep work, 29 minutes left." — what is happening right now.
     static func nowSentence(_ snapshot: PlannerSnapshot?, at minute: Int) -> String {
-        guard let snapshot, !snapshot.tasks.isEmpty else { return "Nothing on today." }
+        guard let snapshot, !snapshot.tasks.isEmpty else { return "Nothing on today." + inboxTail(snapshot) }
         if let current = snapshot.current(at: minute) {
             let left = current.end - minute
             return "\(current.title), \(left) \(left == 1 ? "minute" : "minutes") left."
         }
         guard let next = snapshot.upcoming(after: minute).first else {
-            return snapshot.remaining == 0 ? "That is the day done." : "Nothing more is scheduled today."
+            return (snapshot.remaining == 0 ? "That is the day done." : "Nothing more is scheduled today.")
+                + inboxTail(snapshot)
         }
         return "Next is \(next.title) at \(spokenClock(next.start))."
     }
@@ -35,16 +135,16 @@ enum PlannerVoice {
     static func nextSentence(_ snapshot: PlannerSnapshot?, at minute: Int) -> String {
         guard let snapshot else { return "Nothing on today." }
         guard let next = snapshot.upcoming(after: minute).first else {
-            return "Nothing more is scheduled today."
+            return "Nothing more is scheduled today." + inboxTail(snapshot)
         }
         return "Next is \(next.title) at \(spokenClock(next.start))."
     }
 
     /// "3 left, 2 hours 30 minutes of it." — how much of the day is still ahead.
     static func remainingSentence(_ snapshot: PlannerSnapshot?, at minute: Int) -> String {
-        guard let snapshot, !snapshot.tasks.isEmpty else { return "Nothing on today." }
+        guard let snapshot, !snapshot.tasks.isEmpty else { return "Nothing on today." + inboxTail(snapshot) }
         let open = snapshot.tasks.filter { !$0.done }
-        if open.isEmpty { return "Everything is ticked off." }
+        if open.isEmpty { return "Everything is ticked off." + inboxTail(snapshot) }
         let minutes = open.reduce(0) { $0 + max($1.minutes, 1) }
         return "\(open.count) left, \(durationSpoken(minutes)) of it."
     }
@@ -318,6 +418,27 @@ enum PlannerVoiceAPI {
         let rows = (data["tasks"] as? [[String: Any]]) ?? []
         let tasks = rows.compactMap(VoiceTask.init(row:))
         return Found(tasks: tasks, total: (data["total"] as? Int) ?? tasks.count)
+    }
+
+    /// Today straight from the server, for when the copy the app left is from
+    /// another day. Saved back, so the widget catches up too.
+    static func today(_ day: String, waiting: Int) async throws -> PlannerSnapshot {
+        guard let connection = WidgetConnection.load(), let base = connection.url else {
+            throw Failure(message: "Planner OS is not connected yet. Open the app once.")
+        }
+        var parts = URLComponents(string: base.absoluteString + "/v2/day")
+        parts?.queryItems = [URLQueryItem(name: "date", value: day)]
+        guard let url = parts?.url else { throw Failure(message: "That day cannot be read") }
+        var ask = URLRequest(url: url)
+        ask.timeoutInterval = 10
+        ask.setValue(connection.key, forHTTPHeaderField: "X-App-Key")
+        let json = try await send(ask)
+        guard let data = json["data"] as? [String: Any],
+              let snapshot = PlannerVoice.snapshot(fromDay: data, waiting: waiting) else {
+            throw Failure(message: "The server's answer could not be read")
+        }
+        PlannerSnapshot.save(snapshot)
+        return snapshot
     }
 
     /// Move a pile of tasks to one day, untimed, in a single request. The same
