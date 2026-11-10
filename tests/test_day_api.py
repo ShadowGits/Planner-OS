@@ -158,6 +158,12 @@ def client(monkeypatch, runtime):
     monkeypatch.setenv("PWA_ACCESS_KEY", "app-secret")
     monkeypatch.delenv("MCP_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    # Fit's arithmetic is tested on one plain stretch, 07:00 to 22:00. The
+    # standing hours — noon to nine, breaks kept, the office hour — have
+    # their own tests, which set them back.
+    monkeypatch.setenv("PLANNER_FIT_HOURS", "07:00-22:00")
+    monkeypatch.setenv("PLANNER_FIT_BREAK_MINUTES", "0")
+    monkeypatch.setenv("PLANNER_FIT_OFFICE", "")
     return TestClient(create_app(runtime=runtime, verifier=FakeVerifier()))
 
 
@@ -1138,3 +1144,121 @@ def test_a_calendar_event_that_has_passed_is_not_overdue(client, runtime, monkey
     inbox = client.get("/v2/day/inbox", headers=APP_KEY).json()["data"]["items"]
     # Three days on, only the piece of work is waiting. The events are over.
     assert [item["title"] for item in inbox] == ["Real missed task"]
+
+
+# --- The standing hours, and clearing the overdue pile ---------------------
+
+
+def _standing_hours(monkeypatch):
+    """Put back the hours Fit really runs with: noon to nine, three hours of
+    break kept, and one hour inside the office."""
+    for name in ("PLANNER_FIT_HOURS", "PLANNER_FIT_BREAK_MINUTES", "PLANNER_FIT_OFFICE", "PLANNER_FIT_OFFICE_MINUTES"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_fit_plans_between_noon_and_nine_and_stops_at_six_hours(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    for n in range(9):
+        _make(client, f"Task {n}", estimated_minutes=60)
+    data = client.post("/v2/day/fit", json={"date": "2026-07-22"}, headers=APP_KEY).json()["data"]
+    starts = sorted(one["start_time"] for one in data["placements"])
+    # Six hours from noon, then the one hour allowed in office time.
+    assert starts == ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "21:00"]
+    assert len(data["unplaced"]) == 2
+    assert data["window"] == {"start": "12:00", "end": "21:00"}
+
+
+def test_fit_with_named_hours_uses_exactly_those(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _make(client, "Early bird", estimated_minutes=60)
+    client.post(
+        "/v2/day/fit",
+        json={"date": "2026-07-22", "window_start": "08:00", "window_end": "10:00"},
+        headers=APP_KEY,
+    )
+    assert _times(client)["Early bird"] == "08:00"
+
+
+def test_spread_requires_app_key(client) -> None:
+    assert client.post("/v2/day/spread", json={}).status_code == 401
+
+
+def test_spread_plans_the_overdue_pile_over_the_coming_days(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _freeze(monkeypatch, 2026, 7, 22, 9, 0)
+    for n in range(9):
+        _make(client, f"Late {n}", date="2026-07-10", start_time="10:00", estimated_minutes=120)
+
+    data = client.post("/v2/day/spread", json={}, headers=APP_KEY).json()["data"]
+
+    assert data["overdue_count"] == 9 and data["placed_count"] == 9
+    # Two-hour tasks: three fit in a six-hour day, so nine take three days.
+    assert [day["date"] for day in data["days"]] == ["2026-07-22", "2026-07-23", "2026-07-24"]
+    assert all(len(day["placements"]) == 3 for day in data["days"])
+    assert data["spoken"] == "Planned 9 overdue tasks over 3 days."
+    today = _times(client, "2026-07-22")
+    assert sorted(time for time in today.values()) == ["12:00", "14:00", "16:00"]
+    # Nothing is left behind on the day they were missed, or in the inbox.
+    assert _times(client, "2026-07-10") == {}
+    inbox = client.get("/v2/day/inbox", headers=APP_KEY).json()["data"]["items"]
+    assert [item for item in inbox if item["overdue"]] == []
+
+
+def test_spread_goes_round_what_each_day_already_has(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _freeze(monkeypatch, 2026, 7, 22, 9, 0)
+    _make(client, "Already planned", start_time="12:00", estimated_minutes=240)
+    _make(client, "Late one", date="2026-07-10", estimated_minutes=120)
+    _make(client, "Late two", date="2026-07-10", estimated_minutes=120)
+    client.post("/v2/day/spread", json={}, headers=APP_KEY)
+    today = _times(client, "2026-07-22")
+    # Four of today's six hours were taken, so one fits today and one tomorrow.
+    assert today["Already planned"] == "12:00"
+    assert len([title for title in today if title.startswith("Late")]) == 1
+    assert len(_times(client, "2026-07-23")) == 1
+
+
+def test_spread_starts_from_now_on_today(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _freeze(monkeypatch, 2026, 7, 22, 17, 0)
+    _make(client, "Late", date="2026-07-10", estimated_minutes=60)
+    client.post("/v2/day/spread", json={}, headers=APP_KEY)
+    assert _times(client, "2026-07-22")["Late"] == "17:00"
+
+
+def test_spread_moves_a_broken_deadline_with_its_task(client, runtime, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _freeze(monkeypatch, 2026, 7, 22, 9, 0)
+    _make(client, "Deadline passed", date="2026-07-10", estimated_minutes=60)
+    for row in runtime.service_client.tables["planner_tasks"]:
+        row["due_date"] = "2026-07-12"
+    client.post("/v2/day/spread", json={}, headers=APP_KEY)
+    row = runtime.service_client.tables["planner_tasks"][0]
+    assert row["scheduled_date"] == "2026-07-22" and row["due_date"] == "2026-07-22"
+    assert str(row["start_time"]).startswith("12:00")
+
+
+def test_spread_dry_run_changes_nothing(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _freeze(monkeypatch, 2026, 7, 22, 9, 0)
+    _make(client, "Late", date="2026-07-10", start_time="10:00", estimated_minutes=60)
+    data = client.post("/v2/day/spread", json={"dry_run": True}, headers=APP_KEY).json()["data"]
+    assert data["placed_count"] == 1 and data["dry_run"] is True
+    assert _times(client, "2026-07-10") == {"Late": "10:00"}
+
+
+def test_spread_says_what_would_not_fit_in_the_days_given(client, monkeypatch) -> None:
+    _standing_hours(monkeypatch)
+    _freeze(monkeypatch, 2026, 7, 22, 9, 0)
+    for n in range(5):
+        _make(client, f"Late {n}", date="2026-07-10", estimated_minutes=120)
+    data = client.post("/v2/day/spread", json={"days": 1}, headers=APP_KEY).json()["data"]
+    assert data["placed_count"] == 3
+    assert len(data["unplaced"]) == 2
+    assert data["spoken"] == "Planned 3 overdue tasks over 1 day. 2 would not fit."
+
+
+def test_spread_with_nothing_overdue_says_so(client, monkeypatch) -> None:
+    _freeze(monkeypatch, 2026, 7, 22, 9, 0)
+    data = client.post("/v2/day/spread", json={}, headers=APP_KEY).json()["data"]
+    assert data["spoken"] == "Nothing is overdue."

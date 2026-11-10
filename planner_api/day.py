@@ -86,6 +86,12 @@ class FitDayRequest(BaseModel):
     dry_run: bool = False
 
 
+class SpreadOverdueRequest(BaseModel):
+    """Plan the overdue pile over the coming days, within the standing hours."""
+    days: int = Field(default=7, ge=1, le=30)
+    dry_run: bool = False
+
+
 class TaskTriageRequest(BaseModel):
     task_ids: list[str] = Field(min_length=1, max_length=500)
     action: str
@@ -489,6 +495,20 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(
                 status_code=400, detail={"code": "FIT_INVALID", "message": str(error)}
+            ) from error
+        return _envelope(True, result["message"], result["data"])
+
+    @api.post("/v2/day/spread")
+    def spread_overdue_endpoint(body: SpreadOverdueRequest, x_app_key: str | None = Header(default=None)):
+        """Give every overdue task a real time over the coming days, each day
+        filled only as far as the standing hours allow."""
+        _authorize(x_app_key)
+        core = _core()
+        try:
+            result = core.tasks.spread_overdue(days=body.days, dry_run=body.dry_run)
+        except (PlannerCoreError, ValueError) as error:
+            raise HTTPException(
+                status_code=400, detail={"code": "SPREAD_INVALID", "message": str(error)}
             ) from error
         return _envelope(True, result["message"], result["data"])
 

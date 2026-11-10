@@ -302,3 +302,124 @@ class TestStartsOnAFiveMinuteMark:
         # Ends at 15:09; at 15:07 it is still running, whatever the rounding.
         items = [task("now", "Call", start="14:39", minutes=30)]
         assert fit_day(items, after=15 * 60 + 7)["placements"] == []
+
+
+from planner_core.fitting import Window, default_windows, spread_sentence  # noqa: E402
+
+
+def habit(id, title, start, minutes):
+    return task(f"habit:{id}", title, start=start, minutes=minutes)
+
+
+def is_habit(item):
+    return str(item["id"]).startswith("habit:")
+
+
+NOON_TO_NINE = Window(12 * 60, 21 * 60, cap=6 * 60, keep_free=3 * 60)
+OFFICE = Window(21 * 60, 27 * 60 + 30, cap=60, through=True)
+
+
+def worked(result, window):
+    return sum(
+        one["minutes"]
+        for one in result["placements"]
+        if window.start <= one["start_minutes"] < window.end
+    )
+
+
+class TestStandingHours:
+    def test_nothing_lands_before_noon_or_after_nine(self):
+        items = [task(str(n), f"Task {n}", minutes=60) for n in range(4)]
+        result = fit_day(items, windows=[NOON_TO_NINE])
+        assert [one["start_time"] for one in result["placements"]] == ["12:00", "13:00", "14:00", "15:00"]
+
+    def test_work_stops_at_six_hours_however_much_is_waiting(self):
+        items = [task(str(n), f"Task {n}", minutes=60) for n in range(10)]
+        result = fit_day(items, windows=[NOON_TO_NINE])
+        assert worked(result, NOON_TO_NINE) == 6 * 60
+        assert len(result["unplaced"]) == 4
+
+    def test_work_already_on_the_day_counts_towards_the_six_hours(self):
+        items = [task("there", "Already planned", start="12:00", minutes=120)]
+        items += [task(str(n), f"Task {n}", minutes=60) for n in range(10)]
+        result = fit_day(items, windows=[NOON_TO_NINE])
+        assert worked(result, NOON_TO_NINE) == 4 * 60
+
+    def test_reading_and_the_gym_count_as_break_and_lunch_is_still_left(self):
+        items = [habit("read", "Reading", "16:00", 60), habit("gym", "Gym", "17:30", 90)]
+        items += [task(str(n), f"Task {n}", minutes=60) for n in range(10)]
+        result = fit_day(items, windows=[NOON_TO_NINE], is_fixed=is_habit)
+        spans = [(one["start_minutes"], one["start_minutes"] + one["minutes"]) for one in result["placements"]]
+        # Nine hours, less two and a half of habits, less the half hour of
+        # break the habits do not cover: six hours of work.
+        assert worked(result, NOON_TO_NINE) == 6 * 60
+        for start, end in spans:
+            assert not (start < 17 * 60 and end > 16 * 60), "nothing over Reading"
+            assert not (start < 19 * 60 and end > 17 * 60 + 30), "nothing over the Gym"
+
+    def test_a_day_whose_habits_already_fill_the_break_is_not_docked_twice(self):
+        items = [habit("a", "Long walk", "12:00", 240)]
+        items += [task(str(n), f"Task {n}", minutes=60) for n in range(10)]
+        result = fit_day(items, windows=[NOON_TO_NINE], is_fixed=is_habit)
+        assert worked(result, NOON_TO_NINE) == 5 * 60  # all that is left of the nine hours
+
+    def test_one_hour_goes_inside_office_hours_once_the_day_is_full(self):
+        office = habit("office", "Office", "21:00", 390)
+        items = [office] + [task(str(n), f"Task {n}", minutes=60) for n in range(8)]
+        result = fit_day(items, windows=[NOON_TO_NINE, OFFICE], is_fixed=is_habit)
+        assert worked(result, NOON_TO_NINE) == 6 * 60
+        # The office block fills its hours; the hour of work sits inside it.
+        assert worked(result, OFFICE) == 60
+        assert len(result["unplaced"]) == 1
+
+    def test_the_office_hour_goes_round_the_breaks_inside_office_time(self):
+        items = [
+            habit("office", "Office", "21:00", 390),
+            habit("break", "Office break 1", "21:00", 45),
+            task("one", "Only task", minutes=60),
+        ]
+        result = fit_day(items, windows=[Window(12 * 60, 12 * 60), OFFICE], is_fixed=is_habit)
+        assert result["placements"][0]["start_time"] == "21:45"
+
+    def test_never_more_than_one_hour_in_office_time(self):
+        items = [habit("office", "Office", "21:00", 390)]
+        items += [task(str(n), f"Task {n}", minutes=30) for n in range(6)]
+        result = fit_day(items, windows=[Window(12 * 60, 12 * 60), OFFICE], is_fixed=is_habit)
+        assert worked(result, OFFICE) == 60
+
+    def test_a_task_longer_than_what_is_left_of_the_day_waits(self):
+        items = [task("long", "Three hours", minutes=180), task("there", "Planned", start="12:00", minutes=240)]
+        result = fit_day(items, windows=[NOON_TO_NINE])
+        assert result["placements"] == []  # only two of the six hours are left
+
+
+class TestTheHoursAreSettings:
+    def test_the_defaults_are_noon_to_nine_with_three_hours_of_break_and_an_office_hour(self, monkeypatch):
+        for name in ("PLANNER_FIT_HOURS", "PLANNER_FIT_BREAK_MINUTES", "PLANNER_FIT_OFFICE", "PLANNER_FIT_OFFICE_MINUTES"):
+            monkeypatch.delenv(name, raising=False)
+        assert default_windows() == [NOON_TO_NINE, OFFICE]
+
+    def test_they_can_be_changed_without_a_release(self, monkeypatch):
+        monkeypatch.setenv("PLANNER_FIT_HOURS", "11:00-21:00")
+        monkeypatch.setenv("PLANNER_FIT_BREAK_MINUTES", "120")
+        monkeypatch.setenv("PLANNER_FIT_OFFICE", "")
+        assert default_windows() == [Window(11 * 60, 21 * 60, cap=8 * 60, keep_free=120)]
+
+    def test_nonsense_falls_back_rather_than_breaking_fit(self, monkeypatch):
+        monkeypatch.setenv("PLANNER_FIT_HOURS", "teatime")
+        monkeypatch.setenv("PLANNER_FIT_BREAK_MINUTES", "lots")
+        assert default_windows()[0] == NOON_TO_NINE
+
+
+class TestSpreadSentence:
+    def test_says_how_many_over_how_long(self):
+        assert spread_sentence(12, 4, 0) == "Planned 12 overdue tasks over 4 days."
+
+    def test_owns_up_to_what_would_not_fit(self):
+        assert spread_sentence(12, 7, 2) == "Planned 12 overdue tasks over 7 days. 2 would not fit."
+
+    def test_nothing_overdue(self):
+        assert spread_sentence(0, 0, 0) == "Nothing is overdue."
+
+    def test_one(self):
+        assert spread_sentence(1, 1, 0) == "Planned 1 overdue task over 1 day."

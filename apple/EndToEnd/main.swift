@@ -288,6 +288,38 @@ func run() async {
     } catch {
         failures += 1; print("  FAIL a voice call threw: \(error)")
     }
+    do {
+        let moving = try await PlannerVoiceAPI.search("Shashank").tasks.first!
+        let saturday = Civil.add(today, days: 8)
+        try await PlannerVoiceAPI.reschedule(moving.id, day: saturday, time: 18 * 60)
+        check(await onServer("Call Shashank sir", saturday)?.time, "18:00", "one task moved to a new day and time")
+        try await PlannerVoiceAPI.reschedule(moving.id, day: nil, time: 9 * 60 + 30)
+        check(await onServer("Call Shashank sir", saturday)?.time, "09:30", "a time alone keeps its day")
+        let sunday = Civil.add(today, days: 9)
+        try await PlannerVoiceAPI.reschedule(moving.id, day: sunday, time: nil)
+        check(await onServer("Call Shashank sir", sunday)?.time, "09:30", "a day alone keeps its time")
+
+        try await PlannerVoiceAPI.delete(moving.id)
+        check(await onServer("Call Shashank sir", sunday), nil, "a deleted task is gone from the server")
+        check((try await PlannerVoiceAPI.search("Shashank")).tasks.isEmpty, true, "and cannot be found any more")
+
+        let before = await serverDay(today).map { "\($0.title) \($0.time ?? "-")" }
+        let trial = try await PlannerVoiceAPI.spread(dryRun: true)
+        check(await serverDay(today).map { "\($0.title) \($0.time ?? "-")" }, before, "a trial run of planning the overdue pile changes nothing")
+        let real = try await PlannerVoiceAPI.spread(dryRun: false)
+        check(real.placed, trial.placed, "the real run does what the trial said it would")
+        check(real.spoken.isEmpty, false, "and says so in a sentence")
+        check((try await PlannerVoiceAPI.spread(dryRun: true)).placed <= real.left, true, "afterwards only what would not fit is still overdue")
+    } catch {
+        failures += 1; print("  FAIL a voice change threw: \(error)")
+    }
+
+    print("Plan the overdue pile, from the app")
+    store.toast = nil
+    await store.spreadOverdue()
+    await settle()
+    check(store.toast?.isEmpty, false, "it answers in the server's words")
+
     // Leave the widget's copy as the app would have it.
     await store.refreshAll(quiet: true)
 

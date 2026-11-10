@@ -362,6 +362,26 @@ final class PlannerStore {
         }
     }
 
+    /// Plans every overdue task over the coming days, inside the standing
+    /// hours, so the pile is spread out rather than dumped on one day. The
+    /// server decides and words it, as with fitting a day.
+    func spreadOverdue() async {
+        guard let api else { return }
+        writesInFlight += 1
+        defer { writesInFlight -= 1 }
+        revision += 1
+        do {
+            let data = try await api.send("POST", "/v2/day/spread", body: ["dry_run": false])
+            revision += 1
+            await refreshAll(quiet: true)
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let said = (json?["data"] as? [String: Any])?["spoken"] as? String
+            show(said ?? json?["message"] as? String ?? "The overdue tasks were planned.")
+        } catch {
+            failed("plan the overdue tasks", error)
+        }
+    }
+
     /// Saves an edited task, sending only the fields that changed.
     @discardableResult
     func update(_ task: PlannerTask, to edited: PlannerTask) async -> Bool {

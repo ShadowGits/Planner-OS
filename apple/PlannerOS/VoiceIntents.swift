@@ -485,13 +485,136 @@ struct MoveMatchingTasksIntent: AppIntent {
     }
 }
 
+/// "Move the CV to Saturday at 6 pm." One task, to a new day, a new time, or
+/// both. A day alone keeps the task's time; a time alone keeps its day.
+@AppIntent(.tool)
+struct RescheduleTaskIntent: AppIntent {
+    static let title: LocalizedStringResource = "Reschedule a task"
+    static let description = IntentDescription(
+        "Moves one Planner OS task to a different day, a different start time, or both. With a day only, the task keeps its time; with a time only, it keeps its day. Use it for requests to move, reschedule, postpone or bring forward a single task."
+    )
+    static let openAppWhenRun = false
+
+    @Parameter(
+        title: "Task",
+        description: "The task to move, found by its name.",
+        requestValueDialog: "Which task?"
+    )
+    var task: PlannerTaskEntity
+
+    @Parameter(
+        title: "Day",
+        description: "The new day, such as today, tomorrow or a date. Only the date is used. Leave empty to keep the task on its current day."
+    )
+    var day: Date?
+
+    @Parameter(
+        title: "Start time",
+        description: "The new start time, only if a time was said, written as 24-hour HH:mm — for example 18:00 for 6 pm. Leave empty to keep the task's current time."
+    )
+    var time: String?
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Move \(\.$task) to \(\.$day) at \(\.$time)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        var clock: Int?
+        if let time, !time.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let read = PlannerVoice.parseSpokenTime(time) else {
+                return .result(dialog: IntentDialog(stringLiteral: "I couldn't read \(time) as a time."))
+            }
+            clock = read
+        }
+        let stamp = day.map { PlannerVoice.dayStamp($0) }
+        let today = PlannerVoice.logicalDay(Date())
+        guard stamp != nil || clock != nil else {
+            return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.rescheduledSentence(
+                task.title, day: nil, time: nil, today: today)))
+        }
+        do {
+            try await PlannerVoiceAPI.reschedule(task.id, day: stamp, time: clock)
+            reloadWidget()
+            return .result(dialog: IntentDialog(stringLiteral: PlannerVoice.rescheduledSentence(
+                task.title, day: stamp, time: clock, today: today)))
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(dialog: IntentDialog(stringLiteral: failure.message))
+        }
+    }
+}
+
+/// "Delete the dentist task." Asks first: a deletion cannot be taken back.
+@AppIntent(.tool)
+struct DeleteTaskIntent: AppIntent {
+    static let title: LocalizedStringResource = "Delete a task"
+    static let description = IntentDescription(
+        "Deletes one Planner OS task permanently. Asks the person to confirm first. To mark a task as finished instead, use Complete a task."
+    )
+    static let openAppWhenRun = false
+
+    @Parameter(
+        title: "Task",
+        description: "The task to delete, found by its name.",
+        requestValueDialog: "Which task?"
+    )
+    var task: PlannerTaskEntity
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Delete \(\.$task)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        try await requestConfirmation(
+            result: .result(dialog: IntentDialog(stringLiteral: "Delete \(task.title)? This cannot be undone.")),
+            confirmationActionName: .go
+        )
+        do {
+            try await PlannerVoiceAPI.delete(task.id)
+            reloadWidget()
+            return .result(dialog: IntentDialog(stringLiteral: "Deleted \(task.title)."))
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(dialog: IntentDialog(stringLiteral: failure.message))
+        }
+    }
+}
+
+/// "Plan my overdue tasks." Works the plan out first, reads it back, and only
+/// saves it once confirmed: it moves many tasks at once.
+@AppIntent(.tool)
+struct PlanOverdueIntent: AppIntent {
+    static let title: LocalizedStringResource = "Plan overdue tasks"
+    static let description = IntentDescription(
+        "Gives every overdue Planner OS task a start time over the next seven days: today first, then each day after, only in free time between 12 pm and 9 pm, at most six hours a day, plus one hour inside office hours. Never double-books. Asks the person to confirm first, saying how many tasks and days. Use it for requests to clear, catch up on, spread out or replan overdue work or the backlog."
+    )
+    static let openAppWhenRun = false
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        do {
+            let trial = try await PlannerVoiceAPI.spread(dryRun: true)
+            guard trial.placed > 0 else {
+                return .result(dialog: IntentDialog(stringLiteral: trial.spoken))
+            }
+            try await requestConfirmation(
+                result: .result(dialog: IntentDialog(stringLiteral: PlannerVoice.spreadQuestion(
+                    placed: trial.placed, days: trial.days, left: trial.left))),
+                confirmationActionName: .go
+            )
+            let done = try await PlannerVoiceAPI.spread(dryRun: false)
+            reloadWidget()
+            return .result(dialog: IntentDialog(stringLiteral: done.spoken))
+        } catch let failure as PlannerVoiceAPI.Failure {
+            return .result(dialog: IntentDialog(stringLiteral: failure.message))
+        }
+    }
+}
+
 /// "Fix my afternoon." The server does the arithmetic, so this agrees with
 /// both apps and the dashboard by construction.
 @AppIntent(.tool)
 struct FitDayIntent: AppIntent {
     static let title: LocalizedStringResource = "Fit my day"
     static let description = IntentDescription(
-        "Gives today's Planner OS tasks that have no time, and tasks whose time has already passed without being done, the earliest free times that do not clash with anything else, between 7 am and 10 pm. Never double-books and never moves habits. Use it for requests to sort out, fix, replan or catch up on the day."
+        "Gives today's Planner OS tasks that have no time, and tasks whose time has already passed without being done, the earliest free times that do not clash with anything else: between 12 pm and 9 pm, at most six hours of work, plus one hour inside office hours. Never double-books, never places anything in the past, and never moves habits or calendar events. Use it for requests to plan, sort out, fix or replan today."
     )
     static let openAppWhenRun = false
 
@@ -610,6 +733,16 @@ struct PlannerShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Move matching tasks",
             systemImageName: "calendar.badge.clock"
+        )
+        AppShortcut(
+            intent: PlanOverdueIntent(),
+            phrases: [
+                "Plan my overdue tasks in \(.applicationName)",
+                "Clear my overdue in \(.applicationName)",
+                "Catch up in \(.applicationName)",
+            ],
+            shortTitle: "Plan overdue",
+            systemImageName: "tray.and.arrow.down"
         )
         AppShortcut(
             intent: FitDayIntent(),

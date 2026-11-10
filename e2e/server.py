@@ -21,6 +21,10 @@ from test_day_api import USER_ID, FakeRuntime, FakeVerifier  # noqa: E402
 
 os.environ["MCP_USER_ID"] = str(USER_ID)
 os.environ["PWA_ACCESS_KEY"] = "app-secret"
+# The apps' Fit checks are written against one plain stretch of the day.
+os.environ["PLANNER_FIT_HOURS"] = "07:00-22:00"
+os.environ["PLANNER_FIT_BREAK_MINUTES"] = "0"
+os.environ["PLANNER_FIT_OFFICE"] = ""
 for name in ("MCP_API_KEY", "TELEGRAM_BOT_TOKEN"):
     os.environ.pop(name, None)
 

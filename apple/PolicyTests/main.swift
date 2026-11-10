@@ -566,5 +566,21 @@ check(sourced.fromCalendar, true, "the day view says where an item came from")
 check(try! JSONDecoder().decode(PlannerTask.self, from: Data(#"{"id":"t1","title":"Own","source":null}"#.utf8)).fromCalendar,
       false, "and an ordinary task did not come from one")
 
+// Moving one task, and planning the overdue pile, said out loud.
+check(PlannerVoice.rescheduleBody(day: "2026-11-14", time: 18 * 60) ?? [:], ["scheduled_date": "2026-11-14", "start_time": "18:00"], "a day and a time")
+check(PlannerVoice.rescheduleBody(day: "2026-11-14", time: nil) ?? [:], ["scheduled_date": "2026-11-14"], "a day alone leaves the time untouched")
+check(PlannerVoice.rescheduleBody(day: nil, time: 18 * 60) ?? [:], ["start_time": "18:00"], "a time alone leaves the day untouched")
+check(PlannerVoice.rescheduleBody(day: nil, time: nil) == nil, true, "neither is nothing to change")
+check(PlannerVoice.rescheduledSentence("Master CV", day: "2026-11-14", time: 18 * 60, today: "2026-11-11"),
+      "Moved Master CV to 14 November at 6:00 pm.", "says the new day and time")
+check(PlannerVoice.rescheduledSentence("Master CV", day: "2026-11-12", time: nil, today: "2026-11-11"),
+      "Moved Master CV to tomorrow.", "says the new day")
+check(PlannerVoice.rescheduledSentence("Master CV", day: nil, time: 18 * 60, today: "2026-11-11"),
+      "Moved Master CV to 6:00 pm.", "says the new time")
+check(PlannerVoice.spreadQuestion(placed: 14, days: 4, left: 0), "Plan 14 overdue tasks over 4 days?", "asks before planning the pile")
+check(PlannerVoice.spreadQuestion(placed: 12, days: 7, left: 2), "Plan 12 overdue tasks over 7 days, leaving 2 that will not fit?",
+      "and owns up to what will be left")
+check(PlannerVoice.spreadQuestion(placed: 1, days: 1, left: 0), "Plan 1 overdue task over 1 day?", "just the one")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

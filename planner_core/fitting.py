@@ -12,6 +12,9 @@ timeline already shows it. The planner's day runs to four in the morning.
 """
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
+
 from typing import Any, Callable, Iterable
 
 # The planner's day ends at 04:00 the next morning.
@@ -165,6 +168,72 @@ def placement_order(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+@dataclass(frozen=True)
+class Window:
+    """A stretch of the day Fit may fill, and how full it may make it.
+
+    cap is the most work — tasks, not habits or appointments — the stretch
+    may hold once Fit has finished, counting what is already there. keep_free
+    is break time that must be left over; habits already in the stretch (the
+    gym, reading) count towards it, so only the rest is held back. through
+    lets a stretch sit inside a block that fills most of it: an hour of work
+    placed "in office hours" is meant to overlap the office, not avoid it.
+    """
+
+    start: int
+    end: int
+    cap: int | None = None
+    keep_free: int = 0
+    through: bool = False
+
+
+def _overlap(span: tuple[int, int], window: Window) -> int:
+    return max(min(span[1], window.end) - max(span[0], window.start), 0)
+
+
+def _span_setting(name: str, fallback: str) -> tuple[int, int] | None:
+    """"12:00-21:00" from the environment, or None when it is switched off."""
+    raw = os.environ.get(name, fallback).strip()
+    if not raw:
+        return None
+    left, _, right = raw.partition("-")
+    start, end = parse_clock(left), parse_clock(right)
+    if start is None or end is None or end <= start:
+        return None
+    return start, min(end, DAY_END)
+
+
+def default_windows() -> list[Window]:
+    """The hours Fit plans into when nobody names any.
+
+    Work goes between noon and nine in the evening, with three hours of that
+    kept for lunch, reading and the gym — six hours of work at most. One more
+    hour may go inside office hours, nine to half past three. Each can be
+    changed without a release through the environment:
+
+        PLANNER_FIT_HOURS=12:00-21:00      PLANNER_FIT_BREAK_MINUTES=180
+        PLANNER_FIT_OFFICE=21:00-27:30     PLANNER_FIT_OFFICE_MINUTES=60
+
+    An empty PLANNER_FIT_OFFICE switches the office hour off.
+    """
+    def number(name: str, fallback: int) -> int:
+        try:
+            return max(int(os.environ.get(name, fallback)), 0)
+        except ValueError:
+            return fallback
+
+    hours = _span_setting("PLANNER_FIT_HOURS", "12:00-21:00") or (12 * 60, 21 * 60)
+    breaks = min(number("PLANNER_FIT_BREAK_MINUTES", 180), hours[1] - hours[0])
+    windows = [
+        Window(hours[0], hours[1], cap=(hours[1] - hours[0]) - breaks if breaks else None, keep_free=breaks)
+    ]
+    office = _span_setting("PLANNER_FIT_OFFICE", "21:00-27:30")
+    office_minutes = number("PLANNER_FIT_OFFICE_MINUTES", 60)
+    if office and office_minutes:
+        windows.append(Window(office[0], office[1], cap=office_minutes, through=True))
+    return windows
+
+
 def fit_day(
     items: list[dict[str, Any]],
     *,
@@ -174,6 +243,7 @@ def fit_day(
     window_end: int = DEFAULT_WINDOW_END,
     gap: int = 0,
     is_fixed: Callable[[dict[str, Any]], bool] | None = None,
+    windows: list[Window] | None = None,
 ) -> dict[str, Any]:
     """Work out where the day's loose ends should go.
 
@@ -182,10 +252,15 @@ def fit_day(
     calls true — a habit, an appointment — stays where it is, and so does
     anything already finished.
 
+    windows are the stretches it may fill, tried in order for each task; left
+    out, it is the one stretch from window_start to window_end with no limit
+    on how full it gets.
+
     Returns the placements, whatever would not fit and why, and how full the
-    window is, but changes nothing.
+    first window is, but changes nothing.
     """
-    window_end = min(window_end, DAY_END)
+    if not windows:
+        windows = [Window(window_start, min(window_end, DAY_END))]
     fixed = is_fixed or (lambda item: False)
     by_id = {str(item.get("id")): item for item in items}
     chosen: list[dict[str, Any]] = []
@@ -213,36 +288,74 @@ def fit_day(
                 chosen.append(item)
 
     moving = {str(item.get("id")) for item in chosen}
-    busy = busy_spans(items, moving)
     # Start on a five-minute mark: nobody wants a task at 15:07 because that
     # happened to be the minute they asked. What has slipped is still judged
     # by the real minute, above.
     start_from = None if after is None else -(-after // 5) * 5
-    gaps = free_gaps(busy, window_start, window_end, start_from)
-    placements: list[dict[str, Any]] = []
+    staying = [
+        (item, span)
+        for item in items
+        if str(item.get("id")) not in moving and (span := item_span(item)) is not None
+    ]
 
+    # For each stretch: the gaps in it, and how much more work it may take.
+    rooms: list[dict[str, Any]] = []
+    for window in windows:
+        length = window.end - window.start
+        in_the_way = [
+            (item, span)
+            for item, span in staying
+            # A block filling most of the stretch is what the stretch sits in.
+            if not (window.through and _overlap(span, window) * 2 >= length)
+        ]
+        gaps = free_gaps(merge_spans(span for _, span in in_the_way), window.start, window.end, start_from)
+        work = sum(_overlap(span, window) for item, span in in_the_way if not fixed(item))
+        routine = sum(_overlap(span, window) for item, span in in_the_way if fixed(item))
+        budget = None if window.cap is None else max(window.cap - work, 0)
+        if window.keep_free:
+            held_back = max(window.keep_free - routine, 0)
+            spare = max(sum(end - start for start, end in gaps) - held_back, 0)
+            budget = spare if budget is None else min(budget, spare)
+        rooms.append({"window": window, "gaps": gaps, "budget": budget})
+
+    placements: list[dict[str, Any]] = []
     for item in placement_order(chosen):
         minutes = item_minutes(item)
-        for index, (start, end) in enumerate(gaps):
-            # A gap that follows something else owes it the breathing space.
-            offset = gap if (start > window_start and (start_from is None or start > start_from)) else 0
-            begin = start + offset
-            if begin + minutes <= end:
-                placements.append(
-                    {
-                        "id": str(item.get("id")),
-                        "title": item.get("title"),
-                        "start_time": format_clock(begin),
-                        "start_minutes": begin,
-                        "minutes": minutes,
-                        "was": item.get("start_time"),
-                    }
-                )
-                gaps[index] = (begin + minutes, end)
-                gaps = [one for one in gaps if one[1] > one[0]]
+        placed = False
+        for room in rooms:
+            if room["budget"] is not None and minutes > room["budget"]:
+                continue
+            window = room["window"]
+            for index, (start, end) in enumerate(room["gaps"]):
+                # A gap that follows something else owes it the breathing space.
+                offset = gap if (start > window.start and (start_from is None or start > start_from)) else 0
+                begin = start + offset
+                if begin + minutes <= end:
+                    placements.append(
+                        {
+                            "id": str(item.get("id")),
+                            "title": item.get("title"),
+                            "start_time": format_clock(begin),
+                            "start_minutes": begin,
+                            "minutes": minutes,
+                            "was": item.get("start_time"),
+                        }
+                    )
+                    room["gaps"][index] = (begin + minutes, end)
+                    room["gaps"] = [one for one in room["gaps"] if one[1] > one[0]]
+                    if room["budget"] is not None:
+                        room["budget"] -= minutes
+                    placed = True
+                    break
+            if placed:
                 break
-        else:
-            room_left = sum(one[1] - one[0] for one in gaps)
+        if not placed:
+            room_left = sum(
+                one[1] - one[0]
+                for room in rooms
+                if room["budget"] is None or room["budget"] > 0
+                for one in room["gaps"]
+            )
             unplaced.append(
                 {
                     "id": str(item.get("id")),
@@ -252,16 +365,29 @@ def fit_day(
                 }
             )
 
-    booked = sum(end - start for start, end in busy if end > window_start and start < window_end)
-    span = max(window_end - max(window_start, start_from or window_start), 0)
+    first = windows[0]
+    booked = sum(_overlap(span, first) for span in merge_spans(span for _, span in staying))
+    span = max(first.end - max(first.start, start_from or first.start), 0)
     return {
         "placements": placements,
         "unplaced": unplaced,
-        "window": {"start": format_clock(window_start), "end": format_clock(window_end)},
+        "window": {"start": format_clock(first.start), "end": format_clock(first.end)},
         "booked_minutes": booked,
         "free_minutes": max(span - booked, 0),
         "considered": len(chosen),
     }
+
+
+def spread_sentence(placed: int, days: int, left: int) -> str:
+    """What clearing the overdue pile did, in one line."""
+    if not placed and not left:
+        return "Nothing is overdue."
+    if not placed:
+        return f"None of the {left} overdue tasks would fit in the coming days."
+    line = f"Planned {placed} overdue {'task' if placed == 1 else 'tasks'} over {days} {'day' if days == 1 else 'days'}"
+    if left:
+        line += f". {left} would not fit"
+    return line + "."
 
 
 def fit_sentence(result: dict[str, Any]) -> str:

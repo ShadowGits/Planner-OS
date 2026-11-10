@@ -311,6 +311,33 @@ enum PlannerVoice {
         count == 1 ? "Moved 1 task to \(label)." : "Moved \(count) tasks to \(label)."
     }
 
+    /// What Siri asks before planning the overdue pile, from a trial run.
+    static func spreadQuestion(placed: Int, days: Int, left: Int) -> String {
+        var line = "Plan \(placed) overdue \(placed == 1 ? "task" : "tasks") over \(days) \(days == 1 ? "day" : "days")"
+        if left > 0 { line += ", leaving \(left) that will not fit" }
+        return line + "?"
+    }
+
+    /// What to send to give one task a new day, a new time, or both. A day
+    /// alone keeps the task's own time; a time alone keeps its day. Nil when
+    /// neither was said, because then there is nothing to change.
+    static func rescheduleBody(day: String?, time: Int?) -> [String: String]? {
+        var body: [String: String] = [:]
+        if let day { body["scheduled_date"] = day }
+        if let time { body["start_time"] = clockText(time) }
+        return body.isEmpty ? nil : body
+    }
+
+    /// "Moved Master CV to Saturday… " — said back after a reschedule.
+    static func rescheduledSentence(_ title: String, day: String?, time: Int?, today: String) -> String {
+        switch (day, time) {
+        case let (day?, time?): return "Moved \(title) to \(dayLabel(day, today: today)) at \(spokenClock(time))."
+        case let (day?, nil): return "Moved \(title) to \(dayLabel(day, today: today))."
+        case let (nil, time?): return "Moved \(title) to \(spokenClock(time))."
+        default: return "Say a day or a time to move \(title) to."
+        }
+    }
+
     /// What came back from a search, said out loud.
     static func foundSentence(count: Int, total: Int, query: String) -> String {
         if count == 0 { return "Nothing matches \(query)." }
@@ -521,6 +548,47 @@ enum PlannerVoiceAPI {
         let body: [String: Any] = ["task_ids": ids, "action": "move", "to_date": day]
         _ = try await send(try request("/v2/day/tasks/triage", "POST", body))
         return ids.count
+    }
+
+    struct Spread: Equatable {
+        var spoken: String
+        var placed: Int
+        var days: Int
+        var left: Int
+    }
+
+    /// Plan every overdue task over the coming days, inside the standing
+    /// hours. A trial run works out the same answer and saves nothing, which
+    /// is what Siri reads back before asking whether to go ahead.
+    static func spread(dryRun: Bool) async throws -> Spread {
+        let json = try await send(try request("/v2/day/spread", "POST", ["dry_run": dryRun]))
+        let data = json["data"] as? [String: Any] ?? [:]
+        return Spread(
+            spoken: (data["spoken"] as? String) ?? (json["message"] as? String) ?? "Done.",
+            placed: (data["placed_count"] as? Int) ?? 0,
+            days: ((data["days"] as? [[String: Any]]) ?? []).count,
+            left: ((data["unplaced"] as? [[String: Any]]) ?? []).count
+        )
+    }
+
+    private static func taskPath(_ id: String) -> String {
+        "/v2/day/tasks/" + (id.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? id)
+    }
+
+    /// Give one task a new day, a new time, or both.
+    static func reschedule(_ id: String, day: String?, time: Int?) async throws {
+        guard let body = PlannerVoice.rescheduleBody(day: day, time: time) else {
+            throw Failure(message: "Say a day or a time to move it to.")
+        }
+        _ = try await send(try request(taskPath(id), "PATCH", body))
+    }
+
+    /// Delete one task for good.
+    static func delete(_ id: String) async throws {
+        var ask = try request(taskPath(id), "DELETE", [:])
+        ask.httpBody = nil
+        _ = try await send(ask)
     }
 
     /// Give the day's loose ends times that do not clash. The server does the

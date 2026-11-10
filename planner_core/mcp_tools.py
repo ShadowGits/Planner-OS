@@ -258,6 +258,12 @@ def register_core_tools(server: Any) -> None:
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.search_tasks(text, open_only=open_only, project_id=project_id, limit=limit)
 
+    @server.tool(name="core_spread_overdue")
+    def core_spread_overdue(days: int = 7, dry_run: bool = False) -> dict:
+        """Give every overdue task a real start time over the coming days (1-30, default 7), today first from the present minute. Each day is filled only within the standing hours — noon to 9 pm with three hours kept for breaks, so six hours of work at most, plus one hour inside office hours — and never over anything already booked, so the pile is spread out rather than dumped on one day. Starred tasks first, then the oldest deadline. A broken deadline moves with its task. Whatever will not fit is left alone and listed. Use dry_run first to show the plan before saving it."""
+        tasks, _, _, _, _ = _core_for_current_user()
+        return tasks.spread_overdue(days=days, dry_run=dry_run)
+
     @server.tool(name="core_open_tasks")
     def core_open_tasks(limit: int = 1000) -> dict:
         """Every unfinished task in the workspace, on any date or none, soonest first, up to limit (1-2000). Returns total as well, so you can see when more exist than came back. To find tasks by name use core_search_tasks instead."""
@@ -274,7 +280,7 @@ def register_core_tools(server: Any) -> None:
         gap: int = 0,
         dry_run: bool = False,
     ) -> dict:
-        """Give a day's loose ends a start time that does not clash with anything already booked. Plain arithmetic over the day's real gaps, not a judgement call: it never double-books, it never shortens a task to make it fit, and it refuses rather than cramming. task_ids names what to place; left out it takes everything unfinished on the day that has either no time at all or a slot that has already gone by. after="now" starts from the clock (today only), or pass a time like "14:00" to sort out the afternoon and leave the morning alone. window_start/window_end bound where it may put things, 07:00 to 22:00 by default; gap is minutes of breathing space between tasks. A habit is never moved, and nor is a task that is finished or under way right now. dry_run works out the same answer and saves nothing, so you can show it before doing it. Returns placements, whatever would not fit and why, and how full the window is."""
+        """Give a day's loose ends a start time that does not clash with anything already booked. Plain arithmetic over the day's real gaps, not a judgement call: it never double-books, it never shortens a task to make it fit, and it refuses rather than cramming. With no window given it plans into the standing hours: noon to 9 pm with three hours kept free for breaks (so at most six hours of work, habits such as the gym counting towards the breaks), then at most one hour inside office hours, 9 pm to 3:30 am. On today it never places anything before the present minute. task_ids names what to place; left out it takes everything unfinished on the day that has either no time at all or a slot that has already gone by. after="now" starts from the clock (today only), or pass a time like "14:00" to sort out the afternoon and leave the morning alone. window_start/window_end replace the standing hours with one plain stretch; gap is minutes of breathing space between tasks. A habit or a calendar event is never moved, and nor is a task that is finished or under way right now. dry_run works out the same answer and saves nothing, so you can show it before doing it. Returns placements, whatever would not fit and why, and how full the window is."""
         tasks, _, _, _, _ = _core_for_current_user()
         return tasks.fit_day(
             on_date=on_date,

@@ -14,6 +14,8 @@ struct FocusView: View {
     @Binding var screen: Screen
     @Binding var editor: EditorRequest?
     @State private var showAll = false
+    /// Planning the whole overdue pile moves many tasks, so it asks first.
+    @State private var confirmingSpread = false
     @State private var selecting = false
     @State private var selected: Set<String> = []
     @State private var dateTargets: [PlannerTask] = []
@@ -99,6 +101,23 @@ struct FocusView: View {
                     .foregroundStyle(overdue.isEmpty ? Color.secondary : Color.red)
                 Text(summary(overdue.count, store.focusTodayTasks.count)).font(.subheadline).foregroundStyle(.secondary)
                 Spacer()
+                if !overdue.isEmpty {
+                    // Gives every overdue task a real time over the coming
+                    // days, inside the standing hours, instead of one by one.
+                    Button("Plan all") { confirmingSpread = true }
+                        .font(.subheadline.weight(.semibold))
+                        .buttonStyle(.borderless)
+                        .tint(Palette.accent)
+                        .confirmationDialog(
+                            "Plan \(plural(overdue.count, "overdue task")) over the coming days?",
+                            isPresented: $confirmingSpread, titleVisibility: .visible
+                        ) {
+                            Button("Plan them") { Task { await store.spreadOverdue() } }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Each goes into free time between 12 pm and 9 pm, at most 6 hours a day, with 1 more hour in office time.")
+                        }
+                }
                 if overdue.count > preview {
                     Button(showAll ? "Top \(preview)" : "Show all \(overdue.count)") { showAll.toggle() }
                         .font(.subheadline)
