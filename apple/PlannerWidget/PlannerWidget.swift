@@ -55,6 +55,13 @@ struct PlannerProvider: TimelineProvider {
         let now = Date()
         let snapshot = PlannerSnapshot.load()
         let minute = PlannerEntry.minutes(now)
+        // A redraw is also a chance to send any tick still waiting; it never
+        // holds the drawing up.
+        if !PendingTicks.all().isEmpty {
+            Task.detached(priority: .utility) {
+                if await PendingTicks.flush() { WidgetCenter.shared.reloadAllTimelines() }
+            }
+        }
         var entries = [PlannerEntry(date: now, snapshot: snapshot, minute: minute)]
 
         // Redraw when a task starts or finishes, and once more at midnight so

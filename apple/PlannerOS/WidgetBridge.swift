@@ -20,12 +20,16 @@ extension PlannerStore {
         }
 
         let day = logicalToday
+        // A tick made on the widget that the server has not taken yet still
+        // shows as made, or this fresh copy would undo it on the widget.
+        let waiting = PendingTicks.all()
         let tasks = (days[day]?.items ?? [])
             .filter { $0.time != nil }
             .sorted { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }
             .map {
                 PlannerSnapshot.Item(id: $0.id, title: $0.title, start: $0.clockMinutes,
-                                     minutes: $0.minutes, done: $0.done,
+                                     minutes: $0.minutes,
+                                     done: PendingTicks.overlay($0.id, done: $0.done, pending: waiting),
                                      palette: paletteIndex($0, count: 8))
             }
         PlannerSnapshot.save(PlannerSnapshot(date: day, updated: Date(),

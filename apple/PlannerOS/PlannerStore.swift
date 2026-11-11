@@ -94,6 +94,9 @@ final class PlannerStore {
     func refreshAll(quiet: Bool = false) async {
         guard api != nil else { return }
         if !quiet { loading = true }
+        // Ticks made on the widget go up before anything is read back, so the
+        // read already includes them.
+        await PendingTicks.flush()
         async let selected: Void = loadDay(selectedDate)
         async let today: Void = loadTodayIfAway()
         async let backlog: Void = refreshInbox()

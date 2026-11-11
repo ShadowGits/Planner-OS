@@ -196,6 +196,41 @@ func run() async {
         WidgetConnection.save(server: base.absoluteString, key: connection.key)
     }
 
+    print("A tick on the widget does not wait for the server")
+    if let quick = await serverDay(today).first(where: { !$0.done && $0.time != nil }) {
+        PendingTicks.clear()
+        // What the widget's button does: its own copy, a note, and done.
+        PlannerSnapshot.mark(quick.id, done: true)
+        PendingTicks.add(quick.id, done: true)
+        check(PlannerSnapshot.load()?.tasks.first { $0.id == quick.id }?.done, true, "the widget shows it ticked before anything is sent")
+        check(await serverDay(today).first { $0.id == quick.id }?.done, false, "and the server has not heard yet")
+        check(await PendingTicks.flush(), false, "sending it takes nothing back")
+        check(await serverDay(today).first { $0.id == quick.id }?.done, true, "then the server has it")
+        check(PendingTicks.all().isEmpty, true, "and it is crossed off the waiting list")
+
+        // No answer from the server: the tick is kept and still shown.
+        PlannerSnapshot.mark(quick.id, done: false)
+        PendingTicks.add(quick.id, done: false)
+        WidgetConnection.save(server: "http://127.0.0.1:9", key: connection.key)
+        _ = await PendingTicks.flush()
+        check(PendingTicks.all().map(\.id), [quick.id], "with no answer the tick waits instead of being lost")
+        check(PlannerSnapshot.load()?.tasks.first { $0.id == quick.id }?.done, false, "and the widget keeps showing it")
+        // The app reading the server meanwhile must not undo it on the widget.
+        WidgetConnection.save(server: base.absoluteString, key: connection.key)
+        await store.refreshAll(quiet: true)
+        check(await serverDay(today).first { $0.id == quick.id }?.done, false, "the app sends it the next time it reads")
+        check(PendingTicks.all().isEmpty, true, "and the list is empty again")
+
+        // The server says no: taken back, not retried for ever.
+        PlannerSnapshot.mark(quick.id, done: true)
+        PendingTicks.add(quick.id, done: true)
+        WidgetConnection.save(server: base.absoluteString, key: "wrong-key")
+        check(await PendingTicks.flush(), true, "a refused tick reports that it was taken back")
+        check(PlannerSnapshot.load()?.tasks.first { $0.id == quick.id }?.done, false, "the widget shows it unticked again")
+        check(PendingTicks.all().isEmpty, true, "and it is not tried again")
+        WidgetConnection.save(server: base.absoluteString, key: connection.key)
+    } else { failures += 1; print("  FAIL no open timed task to tick") }
+
     print("A change made elsewhere reaches a window left open")
     check(await store.create(title: "From the phone", date: today, time: "14:00", minutes: 30, notes: nil, starred: false), true, "add a task")
     await settle()

@@ -582,5 +582,21 @@ check(PlannerVoice.spreadQuestion(placed: 12, days: 7, left: 2), "Plan 12 overdu
       "and owns up to what will be left")
 check(PlannerVoice.spreadQuestion(placed: 1, days: 1, left: 0), "Plan 1 overdue task over 1 day?", "just the one")
 
+// Ticks made on the widget, waiting to be sent.
+PendingTicks.clear()
+PendingTicks.add("a", done: true)
+PendingTicks.add("b", done: true)
+PendingTicks.add("a", done: false)
+check(PendingTicks.all().map { "\($0.id)=\($0.done)" }, ["b=true", "a=false"], "the latest tap on a task replaces the earlier one")
+check(PendingTicks.overlay("a", done: true, pending: PendingTicks.all()), false, "a waiting tick wins over what the server last said")
+check(PendingTicks.overlay("z", done: true, pending: PendingTicks.all()), true, "a task with nothing waiting reads as the server says")
+PendingTicks.remove(PendingTicks.Tick(id: "a", done: true, at: Date()))
+check(PendingTicks.all().count, 2, "an answer to an older tap does not cross off the newer one")
+PendingTicks.remove(PendingTicks.Tick(id: "a", done: false, at: Date()))
+check(PendingTicks.all().map { $0.id }, ["b"], "a delivered tick is crossed off")
+PendingTicks.add("old", done: true, now: Date().addingTimeInterval(-25 * 3600))
+check(PendingTicks.all().map { $0.id }, ["b"], "a tick nobody delivered in a day is dropped")
+PendingTicks.clear()
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)
