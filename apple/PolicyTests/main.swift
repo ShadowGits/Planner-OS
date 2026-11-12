@@ -555,5 +555,48 @@ check(PlannerVoice.addedSentence("Transcripts", date: "2026-11-11", time: nil, t
 check(PlannerVoice.addedSentence("APS", date: "2026-11-30", time: nil, today: slotToday),
       "Added APS on 30 November, with no set time.", "a day further off")
 
+// A calendar event is an appointment: never a loose end, timed or not.
+var festival = task("festival"); festival.source = "apple_calendar"
+var danceClass = task("class", time: "09:00"); danceClass.source = "apple_calendar"
+check(looseEnds([festival, danceClass, task("own")], now: 13 * 60).map { $0.id }, ["own"],
+      "calendar events are left out, so the button's count matches what Fit moves")
+let sourced = try! JSONDecoder().decode(PlannerTask.self, from: Data(
+    #"{"id":"e1","title":"Dance","source":"apple_calendar","start_time":"18:30:00"}"#.utf8))
+check(sourced.fromCalendar, true, "the day view says where an item came from")
+check(try! JSONDecoder().decode(PlannerTask.self, from: Data(#"{"id":"t1","title":"Own","source":null}"#.utf8)).fromCalendar,
+      false, "and an ordinary task did not come from one")
+
+// Moving one task, and planning the overdue pile, said out loud.
+check(PlannerVoice.rescheduleBody(day: "2026-11-14", time: 18 * 60) ?? [:], ["scheduled_date": "2026-11-14", "start_time": "18:00"], "a day and a time")
+check(PlannerVoice.rescheduleBody(day: "2026-11-14", time: nil) ?? [:], ["scheduled_date": "2026-11-14"], "a day alone leaves the time untouched")
+check(PlannerVoice.rescheduleBody(day: nil, time: 18 * 60) ?? [:], ["start_time": "18:00"], "a time alone leaves the day untouched")
+check(PlannerVoice.rescheduleBody(day: nil, time: nil) == nil, true, "neither is nothing to change")
+check(PlannerVoice.rescheduledSentence("Master CV", day: "2026-11-14", time: 18 * 60, today: "2026-11-11"),
+      "Moved Master CV to 14 November at 6:00 pm.", "says the new day and time")
+check(PlannerVoice.rescheduledSentence("Master CV", day: "2026-11-12", time: nil, today: "2026-11-11"),
+      "Moved Master CV to tomorrow.", "says the new day")
+check(PlannerVoice.rescheduledSentence("Master CV", day: nil, time: 18 * 60, today: "2026-11-11"),
+      "Moved Master CV to 6:00 pm.", "says the new time")
+check(PlannerVoice.spreadQuestion(placed: 14, days: 4, left: 0), "Plan 14 overdue tasks over 4 days?", "asks before planning the pile")
+check(PlannerVoice.spreadQuestion(placed: 12, days: 7, left: 2), "Plan 12 overdue tasks over 7 days, leaving 2 that will not fit?",
+      "and owns up to what will be left")
+check(PlannerVoice.spreadQuestion(placed: 1, days: 1, left: 0), "Plan 1 overdue task over 1 day?", "just the one")
+
+// Ticks made on the widget, waiting to be sent.
+PendingTicks.clear()
+PendingTicks.add("a", done: true)
+PendingTicks.add("b", done: true)
+PendingTicks.add("a", done: false)
+check(PendingTicks.all().map { "\($0.id)=\($0.done)" }, ["b=true", "a=false"], "the latest tap on a task replaces the earlier one")
+check(PendingTicks.overlay("a", done: true, pending: PendingTicks.all()), false, "a waiting tick wins over what the server last said")
+check(PendingTicks.overlay("z", done: true, pending: PendingTicks.all()), true, "a task with nothing waiting reads as the server says")
+PendingTicks.remove(PendingTicks.Tick(id: "a", done: true, at: Date()))
+check(PendingTicks.all().count, 2, "an answer to an older tap does not cross off the newer one")
+PendingTicks.remove(PendingTicks.Tick(id: "a", done: false, at: Date()))
+check(PendingTicks.all().map { $0.id }, ["b"], "a delivered tick is crossed off")
+PendingTicks.add("old", done: true, now: Date().addingTimeInterval(-25 * 3600))
+check(PendingTicks.all().map { $0.id }, ["b"], "a tick nobody delivered in a day is dropped")
+PendingTicks.clear()
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

@@ -65,9 +65,9 @@ enum PlannerWidgetAPI {
         }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
-        // The widget is on screen waiting: better to give up and put the tick
-        // back than to hold a frozen circle while a cold server wakes up.
-        request.timeoutInterval = 5
+        // Nothing on screen waits for this any more, so a server that has
+        // gone to sleep is given time to wake rather than being given up on.
+        request.timeoutInterval = 20
         request.setValue(connection.key, forHTTPHeaderField: "X-App-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["done": done])

@@ -824,7 +824,8 @@ internal fun taskIcon(task:Task):ImageVector {
  *
  * The same rule as the server and as the iPhone's looseEnds, so the button
  * only appears when it would do something and the count on screen matches
- * what comes back. A habit is a standing commitment, not a loose end; a task
+ * what comes back. A habit is a standing commitment and a calendar event is an
+ * appointment, so neither is a loose end; a task
  * running right now is happening, so it stays; a task whose slot finished
  * without it being ticked off has slipped and wants a new time.
  *
@@ -832,7 +833,7 @@ internal fun taskIcon(task:Task):ImageVector {
  */
 fun looseEnds(tasks:List<Task>,now:Int?):List<Task> = tasks.filter{ task ->
     when {
-        task.done || task.habit -> false
+        task.done || task.habit || task.fromCalendar -> false
         task.time == null -> true
         now == null -> false
         else -> task.clockMinutes + task.minutes.coerceAtLeast(1) <= now

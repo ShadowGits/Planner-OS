@@ -3,6 +3,9 @@ package dev.planneros.android
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The day's loose ends: what "Fit my day" finds a time for.
@@ -11,6 +14,9 @@ import org.junit.Test
  * same rule the server applies, so the count on the button matches what comes
  * back whichever app is in your hand.
  */
+// Robolectric, because reading the server's JSON needs Android's real parser.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk=[35])
 class LooseEndsTest {
     private fun task(id: String, time: String? = null, minutes: Int = 30, done: Boolean = false, habit: Boolean = false) =
         Task(id, id, time, minutes, done, false, habit, null, "2026-05-13", null, null)
@@ -42,6 +48,18 @@ class LooseEndsTest {
 
     @Test fun `a finished task is not a loose end`() {
         assertTrue(looseEnds(listOf(task("ticked", time = "08:00", done = true)), 13 * 60).isEmpty())
+    }
+
+    @Test fun `a calendar event is an appointment, timed or not`() {
+        val festival = task("festival").copy(source = "apple_calendar")
+        val danceClass = task("class", time = "09:00").copy(source = "apple_calendar")
+        assertEquals(listOf("own"), looseEnds(listOf(festival, danceClass, task("own")), 13 * 60).map { it.id })
+    }
+
+    @Test fun `the day view says where an item came from`() {
+        val event = Task.from(org.json.JSONObject("""{"id":"e1","title":"Dance","source":"apple_calendar"}"""))
+        assertTrue(event.fromCalendar)
+        assertTrue(!Task.from(org.json.JSONObject("""{"id":"t1","title":"Own"}""")).fromCalendar)
     }
 
     @Test fun `an empty day has no loose ends`() {

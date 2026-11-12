@@ -133,8 +133,8 @@ the Mac open a task when the tick was clicked.
 ## Siri, Shortcuts and Spotlight
 
 `PlannerOS/VoiceIntents.swift` is the menu the app puts out front: what is
-under way, what is next, what is left, add a task, complete a task, and fit
-the day. Siri cannot look at a screen and press things, so this list is the
+under way, what is next, what is left, add, complete, reschedule and delete a
+task, find and move tasks by name, fit the day, and plan the overdue pile. Siri cannot look at a screen and press things, so this list is the
 whole of what it can do — and the same list serves the Shortcuts app,
 Spotlight, the Action button and Siri on the Mac.
 
@@ -145,6 +145,14 @@ when someone opens Xcode. Reading is answered from the snapshot the app
 already shares with the widget, so it is instant and works with no signal;
 anything that changes something waits for the server, because Siri must not
 say "done" before it is true.
+
+**Fit** and **Plan all** use standing hours kept on the server: work goes
+between 12 pm and 9 pm with three hours of that kept for breaks (six hours of
+work a day at most; habits such as the gym count towards the breaks), plus at
+most one hour inside office hours, 9 pm to 3:30 am. Nothing is placed in the
+past, over anything already booked, or on top of a calendar event. Change them
+on the server with `PLANNER_FIT_HOURS`, `PLANNER_FIT_BREAK_MINUTES`,
+`PLANNER_FIT_OFFICE` and `PLANNER_FIT_OFFICE_MINUTES`.
 
 Siri AI (the 27.3 developer preview) understands requests in any words, but
 only uses actions marked `@AppIntent(.tool)`, and picks between them — and

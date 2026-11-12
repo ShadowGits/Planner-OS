@@ -85,6 +85,21 @@ def _local_today(timezone: str) -> date:
     return datetime.now(ZoneInfo(timezone)).date()
 
 
+CALENDAR_SOURCES = {"apple_calendar"}
+
+
+def _from_calendar(task: Mapping[str, Any]) -> bool:
+    """Whether a task is an event pulled in from a calendar.
+
+    An event is an appointment, not a piece of work: it happens at its time
+    whether or not anyone ticks it. So it is never overdue once it has passed,
+    never sits in the Inbox, and is never moved to make room for something.
+    """
+    # Reads that must stay small select just `source`; full rows carry it
+    # inside metadata. Either is believed.
+    return (task.get("source") or (task.get("metadata") or {}).get("source")) in CALENDAR_SOURCES
+
+
 def _is_overdue(task: Mapping[str, Any], today: date) -> bool:
     """Whether an open task needs attention now rather than later.
 
@@ -94,7 +109,10 @@ def _is_overdue(task: Mapping[str, Any], today: date) -> bool:
     and treating it as overdue is the only way it gets tracked instead of
     silently floating. A date in the future is genuinely not-yet-due and is
     never overdue. Shared by TaskService.today and MetricsService so both
-    agree."""
+    agree. An event from a calendar is never overdue: once its time has passed
+    it is over, not late."""
+    if _from_calendar(task):
+        return False
     due = _parse_date(task.get("due_date"))
     if due is not None:
         return due < today
@@ -498,7 +516,9 @@ class TaskService:
 
         One-directional: events become tasks, keyed by the calendar event's UID
         so re-running never creates a duplicate. Recurring events are left out —
-        they belong in the habit engine. Events outside the window (today to
+        they belong in the habit engine. All-day events are left out too, and
+        any already imported are removed: they are festivals and holidays, not
+        appointments. Events outside the window (today to
         window_days ahead) are ignored so a long feed does not flood the list.
 
         forget_deletions clears the record of events deleted here first, so a
@@ -521,12 +541,24 @@ class TaskService:
         # in the feed looks new and the import duplicates the entire calendar.
         # Failing the run is the lesser harm — the next one picks it up.
         seen: set[str] = set()
+        removed = 0
         for row in self.repository.list_rows(
-            "planner_tasks", columns="metadata", strict=True
+            "planner_tasks", columns="id,start_time,metadata", strict=True
         ):
-            uid = (row.get("metadata") or {}).get("apple_uid")
+            metadata = row.get("metadata") or {}
+            uid = metadata.get("apple_uid")
             if uid:
                 seen.add(str(uid))
+            # All-day events are festivals and holidays from subscribed
+            # calendars, and they are not wanted here at all. Any that an
+            # earlier import brought in are taken back out; deleting records
+            # the event as thrown away, so it cannot return.
+            if metadata.get("source") == "apple_calendar" and not row.get("start_time") and row.get("id"):
+                try:
+                    self.delete_task(str(row["id"]))
+                    removed += 1
+                except Exception as error:
+                    logger.warning("Could not remove all-day calendar event %s: %s", row.get("id"), error)
         # An event deleted here stays deleted. Without this the import has no
         # way of telling "never imported" from "imported, then thrown away",
         # and recreates it on the next sync. Tolerated on a database where the
@@ -542,6 +574,8 @@ class TaskService:
 
         created = 0
         skipped = 0
+        all_day = 0
+        placed_slots: set[tuple[str, date, str]] = set()
         for event in parse_ics(ics_text):
             if event.uid in seen:
                 skipped += 1
@@ -550,6 +584,17 @@ class TaskService:
             if placed is None:
                 continue
             scheduled_date, start_time, minutes = placed
+            # No festivals: an event with no time of day is never imported.
+            if start_time is None:
+                all_day += 1
+                continue
+            # The same event often sits in two subscribed calendars under two
+            # ids. One copy is enough.
+            slot = ((event.summary or "").strip().lower(), scheduled_date, start_time)
+            if slot in placed_slots:
+                skipped += 1
+                continue
+            placed_slots.add(slot)
             self.create_task(
                 event.summary or "(no title)",
                 project_id=project_id,
@@ -564,7 +609,7 @@ class TaskService:
         return _envelope(
             True,
             f"{created} imported, {skipped} already there",
-            {"created": created, "skipped": skipped},
+            {"created": created, "skipped": skipped, "all_day_ignored": all_day, "all_day_removed": removed},
         )
 
     def _settle_group(self, task: Mapping[str, Any], *, done: bool) -> None:
@@ -1030,12 +1075,21 @@ class TaskService:
             "task_completions",
             extra_filters={"completed_on": today_str},
         )
+        # Habits have no task row, so without this a day of seven habits reads
+        # as "0 scheduled" — true of the tasks and a wrong picture of the day.
+        try:
+            habits = self.habits.occurrences(today, today)
+        except Exception as error:  # the day's tasks still matter if habits fail
+            logger.warning("Habits unreadable for today: %s", error)
+            habits = []
         return _envelope(
             True,
-            f"{len(scheduled)} scheduled, {len(due)} due, {len(overdue)} overdue, {len(completions)} completed today",
+            f"{len(scheduled)} scheduled, {len(habits)} habits, {len(due)} due, "
+            f"{len(overdue)} overdue, {len(completions)} completed today",
             {
                 "date": today.isoformat(),
                 "scheduled": scheduled,
+                "habits": habits,
                 "due_today": due,
                 "overdue": sorted(
                     overdue,
@@ -1343,7 +1397,9 @@ class TaskService:
         rows = self.repository.list_rows(
             "planner_tasks",
             {"status": sorted(OPEN_TASK_STATUSES)},
-            columns=columns,
+            # Only where the task came from, to tell calendar events apart.
+            # Never the whole metadata: an import can leave it enormous.
+            columns=columns + ",source:metadata->>source",
             query_string=(
                 f"or=(due_date.lt.{stamp},scheduled_date.lte.{stamp},"
                 f"and(scheduled_date.is.null,or(due_date.is.null,due_date.lte.{stamp})))"
@@ -1360,6 +1416,10 @@ class TaskService:
         items = []
         for row in rows:
             if row.get("status") not in OPEN_TASK_STATUSES or str(row["id"]) in umbrellas:
+                continue
+            # A festival or a class that has gone by is over, not overdue, and
+            # was never something to triage. It stays on its day's timeline.
+            if _from_calendar(row):
                 continue
             planned = _parse_date(row.get("scheduled_date"))
             due = _parse_date(row.get("due_date"))
@@ -1424,7 +1484,7 @@ class TaskService:
         )
         all_rows = self.repository.list_rows(
             "planner_tasks",
-            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,milestone_id,parent_task_id,starred",
+            columns="id,title,status,start_time,estimated_minutes,priority,due_date,scheduled_date,notes,project_id,milestone_id,parent_task_id,starred,source:metadata->>source",
             query_string=qs,
             strict=strict,
         )
@@ -1483,6 +1543,9 @@ class TaskService:
                     "parent_task_id": row.get("parent_task_id"),
                     # One of the few tasks this day is being judged by.
                     "starred": bool(row.get("starred")),
+                    # "apple_calendar" for an event pulled in from a calendar,
+                    # so the apps and Fit can treat it as fixed.
+                    "source": row.get("source") or (row.get("metadata") or {}).get("source"),
                     **{
                         key: value
                         for key, value in slot_context.get(str(row["id"]), {}).items()
@@ -1658,15 +1721,15 @@ class TaskService:
             },
         )
 
-    def open_tasks(self, *, limit: int = 300) -> dict[str, Any]:
+    def open_tasks(self, *, limit: int = 1000) -> dict[str, Any]:
         """Every unfinished task, soonest first, for an assistant to choose from.
 
         Siri finds the task a person named by asking the app for the tasks it
         has; search needs a word, so this is the list it is offered when it
         has none. Same order and shape as search_tasks.
         """
-        if limit < 1 or limit > 500:
-            raise PlannerCoreError("A list returns between 1 and 500 tasks")
+        if limit < 1 or limit > 2000:
+            raise PlannerCoreError("A list returns between 1 and 2000 tasks")
         rows = self.repository.list_rows(
             "planner_tasks",
             {},
@@ -1688,6 +1751,107 @@ class TaskService:
             {"tasks": kept, "total": len(found), "truncated": len(found) > len(kept)},
         )
 
+    @staticmethod
+    def _day_clock(target: date, now: datetime) -> int | None:
+        """Where the clock stands on `target`, when it bears on it at all:
+        today, or — before four in the morning — yesterday, whose evening is
+        still running and counts on past 24:00. None for any other day."""
+        if target == now.date():
+            return now.hour * 60 + now.minute
+        if target == now.date() - timedelta(days=1) and now.hour < 4:
+            return (now.hour + 24) * 60 + now.minute
+        return None
+
+    def _save_slot(self, task_id: str, target: date, start_minutes: int) -> None:
+        """Write a fitted time. The day runs past midnight, so a slot at 25:30
+        belongs to tomorrow's date at 01:30, the way every other write does it."""
+        if start_minutes >= 24 * 60:
+            when = (target + timedelta(days=1)).isoformat()
+            clock = fitting.format_clock(start_minutes - 24 * 60)
+        else:
+            when, clock = target.isoformat(), fitting.format_clock(start_minutes)
+        self.update_task(task_id, {"start_time": clock, "scheduled_date": when})
+
+    def spread_overdue(self, days: int = 7, dry_run: bool = False) -> dict[str, Any]:
+        """Give every overdue task a real time over the coming days.
+
+        The same arithmetic as fit_day, a day at a time: today first, from the
+        present minute, then each day after, each filled only as far as the
+        standing hours allow — so the pile is spread out, not dumped on
+        tomorrow. Starred first, then the oldest deadline. Whatever will not
+        fit inside `days` is left where it is and reported.
+
+        dry_run works out the same answer and saves nothing.
+        """
+        if days < 1 or days > 30:
+            raise PlannerCoreError("Spread over between 1 and 30 days")
+        now = datetime.now(ZoneInfo(self.timezone))
+        today = now.date()
+        pending = [
+            {**item, "start_time": None}
+            for item in self.inbox_view(today.isoformat())["data"]["items"]
+            if item.get("overdue")
+        ]
+        pending_ids = {str(item["id"]) for item in pending}
+        total = len(pending)
+        plan: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        is_fixed = lambda item: parse_habit_item_id(str(item.get("id"))) is not None or _from_calendar(item)
+
+        for offset in range(days):
+            if not pending:
+                break
+            target = today + timedelta(days=offset)
+            # An overdue task may already sit on this day at a time that is
+            # late anyway; it is being replanned, so it does not block itself.
+            there = [
+                item
+                for item in self.day_view(target.isoformat())["data"]["items"]
+                if str(item.get("id")) not in pending_ids
+            ]
+            result = fitting.fit_day(
+                there + pending,
+                move_ids=[str(item["id"]) for item in pending],
+                after=self._day_clock(target, now),
+                windows=fitting.default_windows(),
+                is_fixed=is_fixed,
+            )
+            placed = result["placements"]
+            if not placed:
+                continue
+            if not dry_run:
+                try:
+                    # The bulk move carries a broken deadline along and pushes
+                    # out a milestone it overruns; the time is then set on top.
+                    self.triage_tasks([one["id"] for one in placed], "move", target.isoformat())
+                    for one in placed:
+                        self._save_slot(one["id"], target, one["start_minutes"])
+                except (PlannerCoreError, ValueError) as error:
+                    failed.append({"date": target.isoformat(), "message": str(error)})
+                    continue
+            done = {one["id"] for one in placed}
+            pending = [item for item in pending if str(item["id"]) not in done]
+            plan.append({"date": target.isoformat(), "placements": placed})
+
+        placed_count = sum(len(day["placements"]) for day in plan)
+        spoken = fitting.spread_sentence(placed_count, len(plan), len(pending))
+        return _envelope(
+            True,
+            spoken,
+            {
+                "days": plan,
+                "unplaced": [
+                    {"id": str(item["id"]), "title": item.get("title"), "minutes": fitting.item_minutes(item)}
+                    for item in pending
+                ],
+                "overdue_count": total,
+                "placed_count": placed_count,
+                "dry_run": dry_run,
+                "failed": failed,
+                "spoken": spoken,
+            },
+        )
+
     def fit_day(
         self,
         on_date: str | None = None,
@@ -1702,28 +1866,31 @@ class TaskService:
 
         task_ids names what to place; left out, it takes everything unfinished
         that has no time yet or whose slot has already gone by — "I am running
-        late, sort out the rest of my day". after="now" starts from the clock,
-        which only means anything on today. A habit stays where it is: it is a
-        standing commitment, not a loose end.
+        late, sort out the rest of my day". On today nothing is placed before
+        the present minute, whatever `after` says; a future day starts at the
+        top of its window. A habit or a calendar event stays where it is: a
+        standing commitment or an appointment, not a loose end.
 
         dry_run works out the same answer and saves nothing, so a voice
         assistant or a screen can say what it would do before doing it.
         """
-        target = _parse_date(on_date) or _local_today(self.timezone)
+        now = datetime.now(ZoneInfo(self.timezone))
+        target = _parse_date(on_date) or now.date()
         day = self.day_view(target.isoformat())["data"]
         items = day["items"]
+        clock = self._day_clock(target, now)
 
         floor: int | None = None
-        if after == "now":
-            # The clock only bears on the day being looked at. Fitting out a
-            # future day starts at the top of its window, not at this minute.
-            if target == _local_today(self.timezone):
-                now = datetime.now(ZoneInfo(self.timezone))
-                floor = now.hour * 60 + now.minute
-        elif after:
+        if after and after != "now":
             floor = fitting.parse_clock(after)
             if floor is None:
                 raise PlannerCoreError(f"Not a time: {after}")
+        # Nothing is ever given a time that has already gone by, whatever was
+        # asked for: a task "fitted" into this morning at three in the
+        # afternoon has only been hidden. A future day has no clock and starts
+        # at the top of its window.
+        if clock is not None:
+            floor = clock if floor is None else max(floor, clock)
 
         bounds = {}
         for name, value in (("window_start", window_start), ("window_end", window_end)):
@@ -1737,31 +1904,27 @@ class TaskService:
         if gap < 0 or gap > 120:
             raise PlannerCoreError("A gap between tasks has to be between 0 and 120 minutes")
 
+        # Named hours are taken as given. Otherwise it is the standing plan:
+        # the working stretch with its breaks kept, then the office hour.
+        if not bounds:
+            bounds = {"windows": fitting.default_windows()}
         result = fitting.fit_day(
             items,
             move_ids=task_ids,
             after=floor,
             gap=gap,
-            is_fixed=lambda item: parse_habit_item_id(str(item.get("id"))) is not None,
+            # A habit is a standing commitment and a calendar event is an
+            # appointment: neither is a loose end, and neither is moved.
+            is_fixed=lambda item: parse_habit_item_id(str(item.get("id"))) is not None
+            or _from_calendar(item),
             **bounds,
         )
 
         saved, failed = [], []
         if not dry_run:
             for placement in result["placements"]:
-                start = placement["start_minutes"]
-                # The day runs past midnight, so a slot at 25:30 belongs to
-                # tomorrow's date at 01:30, the way every other write does it.
-                if start >= 24 * 60:
-                    when = (target + timedelta(days=1)).isoformat()
-                    clock = fitting.format_clock(start - 24 * 60)
-                else:
-                    when, clock = target.isoformat(), placement["start_time"]
                 try:
-                    self.update_task(
-                        placement["id"],
-                        {"start_time": clock, "scheduled_date": when},
-                    )
+                    self._save_slot(placement["id"], target, placement["start_minutes"])
                     saved.append(placement["id"])
                 except (PlannerCoreError, ValueError) as error:
                     # One stubborn row must not cost the other placements.

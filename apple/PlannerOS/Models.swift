@@ -27,21 +27,27 @@ struct PlannerTask: Identifiable, Hashable, Decodable {
     /// Focus time logged against it, and what was planned (the estimate when unset).
     var workedSeconds: Int
     var plannedSeconds: Int?
+    /// "apple_calendar" for an event pulled in from a calendar: an appointment,
+    /// which happens at its time and is nobody's to reschedule.
+    var source: String?
+    var fromCalendar: Bool { source == "apple_calendar" }
 
     init(id: String, title: String, time: String? = nil, minutes: Int = 30, done: Bool = false, starred: Bool = false,
          habit: Bool = false, parent: String? = nil, date: String? = nil, notes: String? = nil, projectId: String? = nil,
          dueDate: String? = nil, milestoneId: String? = nil, priority: String? = "medium", recurrenceKey: String? = nil,
-         parentTitle: String? = nil, partIndex: Int? = nil, partCount: Int? = nil, workedSeconds: Int = 0, plannedSeconds: Int? = nil) {
+         parentTitle: String? = nil, partIndex: Int? = nil, partCount: Int? = nil, workedSeconds: Int = 0, plannedSeconds: Int? = nil,
+         source: String? = nil) {
         self.id = id; self.title = title; self.time = time.map { String($0.prefix(5)) }; self.minutes = max(1, minutes)
         self.done = done; self.starred = starred; self.habit = habit; self.parent = parent; self.date = date
         self.notes = notes; self.projectId = projectId; self.dueDate = dueDate; self.milestoneId = milestoneId
         self.priority = priority; self.recurrenceKey = recurrenceKey
         self.parentTitle = parentTitle; self.partIndex = partIndex; self.partCount = partCount
         self.workedSeconds = max(0, workedSeconds); self.plannedSeconds = plannedSeconds
+        self.source = source
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, done, starred, notes, priority, status
+        case id, title, done, starred, notes, priority, status, source
         case time = "start_time", minutes = "estimated_minutes", habit = "is_habit", parent = "parent_task_id"
         case date = "scheduled_date", projectId = "project_id", dueDate = "due_date", milestoneId = "milestone_id"
         case recurrenceKey = "recurrence_key", parentTitle = "parent_title", partIndex = "part_index", partCount = "part_total"
@@ -71,7 +77,8 @@ struct PlannerTask: Identifiable, Hashable, Decodable {
             partIndex: try? c.decodeIfPresent(Int.self, forKey: .partIndex),
             partCount: try? c.decodeIfPresent(Int.self, forKey: .partCount),
             workedSeconds: (try? c.decodeIfPresent(Int.self, forKey: .workedSeconds)) ?? 0,
-            plannedSeconds: try? c.decodeIfPresent(Int.self, forKey: .plannedSeconds)
+            plannedSeconds: try? c.decodeIfPresent(Int.self, forKey: .plannedSeconds),
+            source: c.text(.source)
         )
     }
 

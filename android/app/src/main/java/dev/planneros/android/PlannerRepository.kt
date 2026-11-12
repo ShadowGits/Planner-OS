@@ -33,13 +33,17 @@ data class Task(val id: String, val title: String, val time: String?, val minute
                 val recurrenceKey: String? = null, val parentTitle: String? = null, val partIndex: Int? = null, val partCount: Int? = null, val dueDate: String? = null,
                 val workedSeconds:Int=0,val plannedSeconds:Int?=null,val milestoneId:String?=null,
                 // Focus ranks starred and high-priority work first.
-                val priority:String?=null) {
+                val priority:String?=null,
+                // "apple_calendar" for an event pulled in from a calendar: an
+                // appointment, which is nobody's to reschedule.
+                val source:String?=null) {
+    val fromCalendar:Boolean get()=source=="apple_calendar"
     val remainingSeconds:Int get()=((plannedSeconds?:minutes*60)-workedSeconds).coerceAtLeast(0)
     val clockMinutes: Int get() = time?.split(":")?.let { it[0].toIntOrNull()?.times(60)?.plus(it.getOrNull(1)?.toIntOrNull() ?: 0) } ?: Int.MAX_VALUE
     companion object {
         fun from(j: JSONObject) = Task(j.getString("id"), j.optString("title"), j.nullString("start_time"), j.optInt("estimated_minutes",30).coerceAtLeast(1),
             j.optBoolean("done"),j.optBoolean("starred"),j.optBoolean("is_habit"),j.nullString("parent_task_id"),j.nullString("scheduled_date"),j.nullString("notes"),j.nullString("project_id"),
-            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"),j.nullString("milestone_id"),j.nullString("priority"))
+            j.nullString("recurrence_key"), j.nullString("parent_title"), j.nullInt("part_index"), j.nullInt("part_total"), j.nullString("due_date"),j.optInt("worked_seconds"),j.nullInt("planned_seconds"),j.nullString("milestone_id"),j.nullString("priority"),j.nullString("source"))
     }
 }
 fun JSONObject.nullString(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }

@@ -3,9 +3,11 @@ import WidgetKit
 
 /// Ticking a task off from the widget itself.
 ///
-/// The widget's copy changes first, so the circle fills under your finger,
-/// then the server is told. If the server refuses — no signal, the task
-/// deleted elsewhere — the tick is taken back, the same as in the app.
+/// A widget redraws only when this action has finished, so it must not wait
+/// for the server: it changes the widget's own copy, notes the tick as still
+/// to be sent, and finishes. The circle fills as fast as it does in the app.
+/// Sending happens straight afterwards and again from anywhere that gets the
+/// chance — see PendingTicks. A tick the server refuses is taken back.
 struct ToggleTaskIntent: AppIntent {
     static var title: LocalizedStringResource = "Tick off a task"
     static var description = IntentDescription("Mark a Planner OS task done, or put it back.")
@@ -24,14 +26,11 @@ struct ToggleTaskIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         guard PlannerSnapshot.mark(taskId, done: done) else { return .result() }
-        // Redraw from the new copy before going near the network, so the tick
-        // lands as fast as it does in the app rather than after a round trip.
+        PendingTicks.add(taskId, done: done)
         WidgetCenter.shared.reloadAllTimelines()
-        do {
-            try await PlannerWidgetAPI.setDone(taskId, done)
-        } catch {
-            PlannerSnapshot.mark(taskId, done: !done)
-            WidgetCenter.shared.reloadAllTimelines()
+        // Not awaited: waiting here is what kept the circle empty for seconds.
+        Task.detached(priority: .userInitiated) {
+            if await PendingTicks.flush() { WidgetCenter.shared.reloadAllTimelines() }
         }
         return .result()
     }

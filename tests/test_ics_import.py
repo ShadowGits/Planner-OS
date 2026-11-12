@@ -98,14 +98,51 @@ def test_import_creates_tasks_and_never_duplicates_on_rerun():
     tasks, _ = _service()
 
     first = tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))["data"]
-    # timed, all-day, utc, folded = 4 one-off events in window; weekly skipped
-    assert first["created"] == 4
+    # timed, utc, folded = 3 one-off events in window; the weekly one is
+    # skipped, and the all-day one is a festival and never comes in.
+    assert first["created"] == 3
     assert first["skipped"] == 0
+    assert first["all_day_ignored"] == 1
 
     # Running it again imports nothing new — the UIDs are already there.
     second = tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))["data"]
     assert second["created"] == 0
-    assert second["skipped"] == 4
+    assert second["skipped"] == 3
+
+
+def test_festivals_are_never_imported_and_old_ones_are_taken_out():
+    """All-day events are festivals and holidays. None may come in, and the
+    ones an earlier import brought in go, for good."""
+    tasks, gw = _service()
+    festival = tasks.create_task(
+        "Diwali", scheduled_date="2026-09-10", metadata={"apple_uid": "old-festival", "source": "apple_calendar"}
+    )["data"]["task"]
+    own = tasks.create_task("My own untimed task", scheduled_date="2026-09-10")["data"]["task"]
+
+    result = tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))["data"]
+
+    rows = gw.tables["planner_tasks"]
+    assert result["all_day_removed"] == 1
+    assert festival["id"] not in [row["id"] for row in rows]
+    # Only calendar events are touched: an untimed task of one's own stays.
+    assert own["id"] in [row["id"] for row in rows]
+    # Nothing all-day is left from the calendar, and timed events still are.
+    from_calendar = [row for row in rows if (row.get("metadata") or {}).get("source") == "apple_calendar"]
+    assert from_calendar and all(row.get("start_time") for row in from_calendar)
+    # And it stays gone on the next run.
+    again = tasks.import_ics(SAMPLE, window_days=60, today=date(2026, 9, 1))["data"]
+    assert again["all_day_removed"] == 0 and again["created"] == 0
+
+
+def test_the_same_event_in_two_calendars_comes_in_once():
+    tasks, gw = _service()
+    twice = SAMPLE.replace(
+        "END:VCALENDAR",
+        "BEGIN:VEVENT\nUID:copy-in-another-calendar\nSUMMARY:Dentist appointment\n"
+        "DTSTART;TZID=Asia/Kolkata:20260915T140000\nDTEND;TZID=Asia/Kolkata:20260915T150000\nEND:VEVENT\nEND:VCALENDAR",
+    )
+    tasks.import_ics(twice, window_days=60, today=date(2026, 9, 1))
+    assert [row["title"] for row in gw.tables["planner_tasks"]].count("Dentist appointment") == 1
 
 
 def test_imported_task_carries_the_event_uid_and_time():
@@ -169,7 +206,7 @@ def test_a_failed_dedup_read_aborts_rather_than_duplicating_the_calendar():
     real_select = gw.select
 
     def flaky(table, **kwargs):
-        if table == "planner_tasks" and kwargs.get("columns") == "metadata":
+        if table == "planner_tasks" and kwargs.get("columns") == "id,start_time,metadata":
             raise RuntimeError("connection reset")
         return real_select(table, **kwargs)
 

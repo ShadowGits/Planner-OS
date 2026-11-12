@@ -480,12 +480,13 @@ func editedTask(_ task: PlannerTask, from start: EditorFields, to end: EditorFie
 ///
 /// Deliberately the same rule the server applies, so the button only appears
 /// when it would actually do something, and so the count on screen matches
-/// what comes back. A habit is a standing commitment, not a loose end; a task
-/// under way right now is happening, so it is left alone; a task whose slot
-/// finished without it being ticked off has slipped and wants a new time.
+/// what comes back. A habit is a standing commitment and a calendar event is
+/// an appointment, so neither is a loose end; a task under way right now is
+/// happening, so it is left alone; a task whose slot finished without it being
+/// ticked off has slipped and wants a new time.
 func looseEnds(_ tasks: [PlannerTask], now: Int?) -> [PlannerTask] {
     tasks.filter { task in
-        guard !task.done, !task.habit else { return false }
+        guard !task.done, !task.habit, !task.fromCalendar else { return false }
         guard task.time != nil else { return true }
         guard let now else { return false }
         return task.clockMinutes + max(task.minutes, 1) <= now
