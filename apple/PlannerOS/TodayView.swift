@@ -41,6 +41,8 @@ struct TodayView: View {
     @Environment(PlannerStore.self) private var store
     @Binding var editor: EditorRequest?
     @State private var pickingDate = false
+    /// The day as a plain list instead of the timeline; remembered between launches.
+    @AppStorage("day_list") private var listView = false
     /// The time under the finger while a task is dragged over the timeline.
     @State private var hover: Int?
 
@@ -67,6 +69,12 @@ struct TodayView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 36, height: 5)
                             .frame(maxWidth: .infinity).padding(.bottom, 10)
+                        if listView {
+                            DayList(tasks: items, twentyFour: twentyFour,
+                                    onOpen: { editor = EditorRequest(task: $0) },
+                                    onToggle: { task in Task { await store.setDone(task, !task.done) } },
+                                    onStar: { task in Task { await store.toggleStar(task) } })
+                        } else {
                         if !allDay.isEmpty {
                             AllDayRow(tasks: allDay,
                                       onOpen: { editor = EditorRequest(task: $0) },
@@ -133,6 +141,7 @@ struct TodayView: View {
                             }
                         })
                         .sensoryFeedback(.selection, trigger: hover) { _, new in new != nil }
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
@@ -217,6 +226,22 @@ struct TodayView: View {
                     .tint(Palette.accent)
                     .buttonStyle(.borderless)
             }
+            // Everything else about the day lives behind one button, the same
+            // on Android: the list or the timeline, and reading it again.
+            Menu {
+                Button { withAnimation(.snappy) { listView.toggle() } } label: {
+                    Label(listView ? "Show timeline" : "Show list",
+                          systemImage: listView ? "calendar.day.timeline.left" : "list.bullet")
+                }
+                Button { Task { await store.refreshAll() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Palette.accent)
+                    .frame(width: 36, height: 36)
+            }
+            .accessibilityLabel("More")
+            .padding(.leading, 6)
         }
         .padding(.horizontal, 20)
         .padding(.top, 10)
@@ -301,6 +326,95 @@ struct WeekStrip: View {
                 onSelect(Civil.add(selected, days: dx < 0 ? 7 : -7))
             }
         )
+    }
+}
+
+/// The day as a plain list: a tick, the name, when and how long, and a star.
+/// What is done sinks under a "Completed" line, as on Android.
+@MainActor
+struct DayList: View {
+    let tasks: [PlannerTask]
+    let twentyFour: Bool
+    let onOpen: (PlannerTask) -> Void
+    let onToggle: (PlannerTask) -> Void
+    let onStar: (PlannerTask) -> Void
+
+    var body: some View {
+        let lists = dayList(tasks)
+        VStack(alignment: .leading, spacing: 0) {
+            if tasks.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "sun.horizon").font(.system(size: 40)).foregroundStyle(.secondary)
+                    Text("A clear day").font(.headline)
+                    Text("Tap + to add a task, with or without a time.").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 60)
+            }
+            ForEach(lists.open) { row($0) }
+            if !lists.done.isEmpty {
+                HStack(spacing: 10) {
+                    Text("Completed · \(lists.done.count)")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Rectangle().fill(Color.secondary.opacity(0.25)).frame(height: 1)
+                }
+                .padding(.top, 14).padding(.bottom, 4).padding(.horizontal, 8)
+                ForEach(lists.done) { row($0) }
+            }
+        }
+    }
+
+    private func detail(_ task: PlannerTask) -> String {
+        guard task.time != nil else { return "No time · \(durationWords(task.minutes))" }
+        return "\(rangeText(task.clockMinutes, task.clockMinutes + task.minutes, twentyFour: twentyFour)) · \(durationWords(task.minutes))"
+    }
+
+    // The tick and the star are siblings of the part that opens the task,
+    // never inside it, or the Mac gives their clicks to the row.
+    private func row(_ task: PlannerTask) -> some View {
+        let color = Palette.block(task)
+        return HStack(spacing: 0) {
+            Button { onToggle(task) } label: {
+                ZStack {
+                    Circle().stroke(color, lineWidth: 2)
+                    if task.done {
+                        Circle().fill(color)
+                        Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 24, height: 24)
+                .frame(width: 44, height: 48)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.system(size: 16, weight: .medium))
+                    .strikethrough(task.done)
+                    .foregroundStyle(task.done ? .secondary : .primary)
+                    .lineLimit(2)
+                HStack(spacing: 4) {
+                    Text(detail(task)).font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+                    if task.recurrenceKey != nil || task.habit {
+                        Image(systemName: "repeat").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen(task) }
+            Button { onStar(task) } label: {
+                Image(systemName: task.starred ? "star.fill" : "star")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(task.starred ? Palette.accent : Color.secondary.opacity(0.55))
+                    .frame(width: 40, height: 48)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(task.starred ? "Remove" : "Choose") \(task.title) as Top Win")
+        }
+        .opacity(task.done ? 0.65 : 1)
+        .id(task.id)
     }
 }
 

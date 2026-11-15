@@ -54,6 +54,15 @@ class EndToEndTest {
         assertTrue("nothing is left to fit",looseEnds(mine(),null).isEmpty())
     }
 
+    /** Plan all: the server answers in a sentence, and afterwards nothing is left overdue that would fit. */
+    @Test fun planAllAnswersAndLeavesNoPileBehind()=runBlocking{
+        val repo=PlannerRepository(RuntimeEnvironment.getApplication())
+        val said=repo.spreadOverdue()
+        assertTrue("it answers in the server's words",said.isNotBlank())
+        val again=repo.spreadOverdue()
+        assertTrue("a second run finds nothing more it can place",again=="Nothing is overdue."||again.startsWith("None of the"))
+    }
+
     @Test fun everyActionReachesTheServer()=runBlocking{
         val repo=PlannerRepository(RuntimeEnvironment.getApplication())
         val today=logicalToday(ZonedDateTime.now(ZoneId.of("Asia/Kolkata")));val tomorrow=today.plusDays(1)
