@@ -598,5 +598,12 @@ PendingTicks.add("old", done: true, now: Date().addingTimeInterval(-25 * 3600))
 check(PendingTicks.all().map { $0.id }, ["b"], "a tick nobody delivered in a day is dropped")
 PendingTicks.clear()
 
+// The day as a list, as on Android: open by time with untimed last, then done.
+let asList = dayList([task("untimed"), task("late", time: "19:00"), task("ticked", time: "08:00", done: true),
+                      task("early", time: "09:00"), task("also ticked", done: true)])
+check(asList.open.map { $0.id }, ["early", "late", "untimed"], "what is still to do, in time order, untimed last")
+check(asList.done.map { $0.id }, ["ticked", "also ticked"], "then what is done")
+check(dayList([]).open.isEmpty && dayList([]).done.isEmpty, true, "an empty day is an empty list")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

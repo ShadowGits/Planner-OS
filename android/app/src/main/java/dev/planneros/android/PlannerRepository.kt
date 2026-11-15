@@ -400,6 +400,18 @@ class PlannerRepository(private val context: Context) {
             ?: answer.optString("message", "The day was fitted.")
     }
 
+    /**
+     * Give every overdue task a real time over the coming days, each day
+     * filled only as far as the standing hours allow. The server decides and
+     * words it, as with fitting a day, so this agrees with the iPhone.
+     */
+    suspend fun spreadOverdue(): String {
+        val answer = request("POST", "/v2/day/spread", JSONObject().put("dry_run", false))
+        invalidateDays()
+        return answer.optJSONObject("data")?.optString("spoken")?.takeIf { it.isNotBlank() }
+            ?: answer.optString("message", "The overdue tasks were planned.")
+    }
+
     /** Focus's week, read whole in one request; the last copy stays for offline. */
     suspend fun week(anchor:LocalDate):Day=withContext(Dispatchers.IO){
         val generation=config.generation

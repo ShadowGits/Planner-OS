@@ -120,6 +120,7 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
     var inbox by rememberSaveable{mutableStateOf(false)};var timer by remember{mutableStateOf(TimerStore.read(context))};var remaining by remember{mutableLongStateOf(0L)}
     val viewPrefs=remember{context.getSharedPreferences("appearance",android.content.Context.MODE_PRIVATE)}
     var todoView by rememberSaveable{mutableStateOf(viewPrefs.getBoolean("day_todo",false))}
+    var confirmSpread by remember{mutableStateOf(false)}
     var showMilestones by rememberSaveable{mutableStateOf(false)}
     // The app opens on Focus: what needs you, ranked, before the timeline.
     var focus by rememberSaveable{mutableStateOf(false)}
@@ -449,6 +450,14 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
         scope.launch{if(FocusWorkLogs.entries(context).any{it.has("body")}&&FocusWorkLogs.syncReady(context)){refresh(true);if(inbox)refreshInbox()}}
     })
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_RESUME)latestResume() else if(event==Lifecycle.Event.ON_PAUSE)drag=null};lifecycle.lifecycle.addObserver(observer);onDispose{lifecycle.lifecycle.removeObserver(observer)}}
+    if(confirmSpread)AlertDialog(onDismissRequest={confirmSpread=false},
+        title={Text("Plan ${plural(focusOverdue.size,"overdue task")} over the coming days?")},
+        text={Text("Each goes into free time between 12 pm and 9 pm, at most 6 hours a day, with 1 more hour in office time.")},
+        confirmButton={TextButton(onClick={confirmSpread=false;scope.launch{
+            try{val said=repo.spreadOverdue();refresh(true,false,true);refreshInbox(true);refreshWeek();snackbar.showSnackbar(said)}
+            catch(e:Exception){snackbar.showSnackbar(e.message?:"The overdue tasks could not be planned")}
+        }}){Text("Plan them")}},
+        dismissButton={TextButton(onClick={confirmSpread=false}){Text("Cancel")}})
     Scaffold(containerColor=MaterialTheme.colorScheme.background,snackbarHost={SnackbarHost(snackbar)},bottomBar={
         Column{
             timer?.takeIf{TimerPreferences.enabled(context)}?.let{s->Surface(color=if(dark)Color(0xFF332A23)else Color(0xFFF2E8D9)){Column{Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically){
@@ -498,25 +507,30 @@ fun PlannerScreen(finishId:String?,finishHandled:()->Unit,requestNotification:()
                     try{val said=repo.fitDay(selected,fromNow=selected==today);refresh(true,false,true);snackbar.showSnackbar(said)}
                     catch(e:Exception){snackbar.showSnackbar(e.message?:"The day could not be fitted")}
                 }},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text("Fit ${loose.size}",fontSize=12.sp)}
+                // Plan all: every overdue task gets a real time over the coming
+                // days. It moves many tasks, so it asks first, as on the iPhone.
+                if(focus&&focusOverdue.isNotEmpty())TextButton(enabled=drag==null&&editorId==null&&!adding,onClick={confirmSpread=true},
+                    contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text("Plan all",fontSize=12.sp)}
                 if(onDay)TextButton(onClick={selectDate(today.toString());if(selected==today)jumpNow()},contentPadding=PaddingValues(horizontal=7.dp,vertical=0.dp)){Text(if(selected==today)"Now" else "Today",fontSize=12.sp)}
-                IconButton(enabled=drag==null&&editorId==null&&!adding,onClick={scope.launch{
-                    if(showMilestones)refreshMilestones(true) else refresh(true,false,true)
-                    if(inbox||focus)refreshInbox(true)
-                    if(focus){refreshWeek();refreshMilestones(true)}
-                    refreshPlanning(true)
-                }}){Icon(Icons.Rounded.Refresh,"Refresh")}
-                // Timeline or list is a view of the day, so it sits with the day
-                // rather than doubling as a tab.
-                if(onDay)IconButton(onClick={todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()}){
-                    Icon(if(todoView)Icons.Rounded.ViewTimeline else Icons.AutoMirrored.Rounded.ViewList,if(todoView)"Show timeline" else "Show list")
-                }
+                // Everything else lives behind one button, the same as on the
+                // iPhone: the header keeps only the day, Fit and Now.
                 Box{
                     IconButton(onClick={menu=true}){Icon(Icons.Rounded.MoreVert,"More")}
                     DropdownMenu(expanded=menu,onDismissRequest={menu=false}){
-                        DropdownMenuItem(text={Text("Inbox")},leadingIcon={Icon(Icons.Rounded.Inbox,null)},onClick={menu=false;drag=null;focus=false;showMilestones=false;inbox=true})
+                        // Timeline or list is a view of the day, so it is only offered on the day.
+                        if(onDay)DropdownMenuItem(text={Text(if(todoView)"Show timeline" else "Show list")},
+                            leadingIcon={Icon(if(todoView)Icons.Rounded.ViewTimeline else Icons.AutoMirrored.Rounded.ViewList,null)},
+                            onClick={menu=false;todoView=!todoView;viewPrefs.edit().putBoolean("day_todo",todoView).apply()})
+                        DropdownMenuItem(text={Text("Refresh")},leadingIcon={Icon(Icons.Rounded.Refresh,null)},
+                            enabled=drag==null&&editorId==null&&!adding,onClick={menu=false;scope.launch{
+                                if(showMilestones)refreshMilestones(true) else refresh(true,false,true)
+                                if(inbox||focus)refreshInbox(true)
+                                if(focus){refreshWeek();refreshMilestones(true)}
+                                refreshPlanning(true)
+                            }})
                         DropdownMenuItem(text={Text("Milestones")},leadingIcon={Icon(Icons.Rounded.Flag,null)},onClick={menu=false;drag=null;focus=false;inbox=false;showMilestones=true})
+                        DropdownMenuItem(text={Text("All tasks")},leadingIcon={Icon(Icons.Rounded.Inbox,null)},onClick={menu=false;drag=null;focus=false;showMilestones=false;inbox=true})
                         DropdownMenuItem(text={Text("Dashboard")},leadingIcon={Icon(Icons.Rounded.Dashboard,null)},onClick={menu=false;context.startActivity(Intent(context,DashboardActivity::class.java))})
-                        DropdownMenuItem(text={Text("Settings")},leadingIcon={Icon(Icons.Rounded.Tune,null)},onClick={menu=false;settings=true})
                     }
                 }
             }

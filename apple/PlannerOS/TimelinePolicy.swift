@@ -492,3 +492,10 @@ func looseEnds(_ tasks: [PlannerTask], now: Int?) -> [PlannerTask] {
         return task.clockMinutes + max(task.minutes, 1) <= now
     }
 }
+
+/// The day as a plain list, the way Android's list view has it: what is still
+/// to do in time order with untimed work last, then what is done.
+func dayList(_ tasks: [PlannerTask]) -> (open: [PlannerTask], done: [PlannerTask]) {
+    let ordered = tasks.sorted { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }
+    return (ordered.filter { !$0.done }, ordered.filter { $0.done })
+}
