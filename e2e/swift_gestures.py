@@ -182,16 +182,50 @@ def check(path: Path) -> list[str]:
     return problems
 
 
+def plain_buttons(path: Path) -> list[str]:
+    """`.plain` only takes a tap where the label draws something.
+
+    The tick is a hollow circle, so a tap in its middle went through to the
+    task behind it and opened the editor — on the Mac everywhere, and on the
+    iPhone wherever the tick sits on top of a task, as it does on side-by-side
+    blocks. The app uses `.hitArea`, which looks the same and takes the whole
+    frame. The widget is left alone: the system decides its hit areas.
+    """
+    if "PlannerWidget" in path.parts:
+        return []
+    clean = blank_noise(path.read_text())
+    return [
+        f"{path.relative_to(ROOT.parent)}:{clean.count(chr(10), 0, found.start()) + 1}: "
+        f".buttonStyle(.plain) takes a tap only where it draws — use .buttonStyle(.hitArea)"
+        for found in re.finditer(r"\.buttonStyle\(\s*\.plain\s*\)", clean)
+    ]
+
+
+def small_ticks(path: Path) -> list[str]:
+    """A button drawn on top of a task must be big enough not to be missed."""
+    text = path.read_text()
+    problems = []
+    for found in re.finditer(r"\.overlay\([^)]*\)\s*\{\s*Button", text):
+        body = text[found.end(): found.end() + 900]
+        sizes = [int(w) for w in re.findall(r"\.frame\(width:\s*(\d+),\s*height:\s*\d+\)", body)]
+        if sizes and max(sizes) < 44:
+            line = text.count("\n", 0, found.start()) + 1
+            problems.append(f"{path.relative_to(ROOT.parent)}:{line}: a button laid over a task is only "
+                            f"{max(sizes)} points; under 44 a tap misses it and opens the task")
+    return problems
+
+
 def main() -> int:
     problems = []
     for path in sorted(ROOT.rglob("*.swift")):
-        problems += check(path)
+        problems += check(path) + plain_buttons(path) + small_ticks(path)
     if problems:
         print("Tap gestures laid over buttons:")
         for problem in problems:
             print("  " + problem)
         return 1
-    print("swift_gestures: no tap gesture or drag source covers a button")
+    print("swift_gestures: no tap gesture covers a button, every app button takes its whole frame, "
+          "and no tick laid over a task is too small to hit")
     return 0
 
 

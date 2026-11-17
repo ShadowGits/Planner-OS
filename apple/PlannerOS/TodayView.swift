@@ -197,7 +197,7 @@ struct TodayView: View {
                     + Text(" \(Civil.year(date)) ›").foregroundStyle(Palette.accent))
                     .font(.system(size: 28, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .accessibilityHint("Pick a day")
             Spacer()
             // Only offered when there is something to fit, and it says how
@@ -300,7 +300,7 @@ struct WeekStrip: View {
                     .background(RoundedRectangle(cornerRadius: 12).fill(Palette.accent.opacity(targeted == day ? 0.22 : 0)))
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hitArea)
                 .accessibilityLabel(Civil.short(day))
                 // Drag a task here to move it to this day, keeping its time.
                 .onDrop(of: [UTType.plainText], isTargeted: Binding(
@@ -385,7 +385,7 @@ struct DayList: View {
                 .frame(width: 24, height: 24)
                 .frame(width: 44, height: 48)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
@@ -410,7 +410,7 @@ struct DayList: View {
                     .foregroundStyle(task.starred ? Palette.accent : Color.secondary.opacity(0.55))
                     .frame(width: 40, height: 48)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .accessibilityLabel("\(task.starred ? "Remove" : "Choose") \(task.title) as Top Win")
         }
         .opacity(task.done ? 0.65 : 1)
@@ -613,7 +613,7 @@ struct TimelineRow: View {
                     .foregroundStyle(task.starred ? Palette.accent : Color.secondary.opacity(0.55))
                     .frame(width: 32, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .opacity(hidden ? 0 : 1)
             .accessibilityLabel("\(task.starred ? "Remove" : "Choose") \(task.title) as Top Win")
             Button(action: onToggle) {
@@ -627,7 +627,7 @@ struct TimelineRow: View {
                 .frame(width: 24, height: 24)
                 .frame(width: 44, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .opacity(hidden ? 0 : 1)
             .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
         }
@@ -788,9 +788,12 @@ private struct OverlapBlock: View {
                     }
                 }
                 .frame(width: 18, height: 18)
-                .frame(width: 30, height: 30)
+                // The tap area is Apple's minimum, 44 points, even though the
+                // circle is small: a tick drawn on top of the block that misses
+                // the finger opens the task underneath instead.
+                .frame(width: 44, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .accessibilityLabel("\(task.done ? "Reopen" : "Complete") \(task.title)")
         }
     }
@@ -904,7 +907,7 @@ struct WinsStrip: View {
                                 .padding(.vertical, 6)
                                 .background(Palette.card, in: Capsule())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hitArea)
                             .accessibilityLabel("Top Win \(task.title), \(task.done ? "complete" : "incomplete"). Reveal task")
                         }
                     }
@@ -1067,7 +1070,7 @@ struct GapRow: View {
                             .background(Palette.accent.opacity(0.14), in: Capsule())
                             .foregroundStyle(Palette.accent)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hitArea)
                 }
             } else if minutes >= 30 {
                 Label {

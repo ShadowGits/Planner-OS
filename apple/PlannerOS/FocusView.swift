@@ -391,7 +391,7 @@ struct WeekMatrix: View {
             .frame(maxWidth: .infinity)
             .foregroundStyle(day == today ? Color.accentColor : Color.secondary)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hitArea)
     }
 
     private func cell(_ tasks: [PlannerTask], day: String) -> some View {
@@ -406,7 +406,7 @@ struct WeekMatrix: View {
             }
             .frame(maxWidth: .infinity, minHeight: 28)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hitArea)
         .accessibilityLabel("\(Civil.short(day)): \(open) open of \(tasks.count)")
     }
 }

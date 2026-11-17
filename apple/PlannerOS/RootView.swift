@@ -208,7 +208,7 @@ struct BottomBar: View {
                     .scaleEffect(overBin ? 1.12 : 1)
                     .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hitArea)
             .keyboardShortcut("n", modifiers: .command)
             .accessibilityLabel(dragging ? "Drop here to delete" : "Add task")
             .onDrop(of: [UTType.plainText], isTargeted: $overBin) { providers in
@@ -237,7 +237,7 @@ struct BottomBar: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hitArea)
         .accessibilityLabel(label)
         .accessibilityAddTraits(screen == target ? .isSelected : [])
     }
