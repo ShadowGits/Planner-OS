@@ -28,6 +28,9 @@ struct ToggleTaskIntent: AppIntent {
         guard PlannerSnapshot.mark(taskId, done: done) else { return .result() }
         PendingTicks.add(taskId, done: done)
         WidgetCenter.shared.reloadAllTimelines()
+        // Ticked means no more nags about it, and tonight's report stops
+        // calling it skipped — without waiting for the app.
+        await HarshReminders.ticked(taskId, done: done)
         // Not awaited: waiting here is what kept the circle empty for seconds.
         Task.detached(priority: .userInitiated) {
             if await PendingTicks.flush() { WidgetCenter.shared.reloadAllTimelines() }

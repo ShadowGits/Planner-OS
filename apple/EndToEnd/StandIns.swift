@@ -13,6 +13,6 @@ enum ConnectionStore {
 enum Reminders {
     static func status() async -> UNAuthorizationStatus { .denied }
     static func requestPermission() async -> Bool { false }
-    static func sync(api: PlannerAPI, timeZone: TimeZone, now: Date = Date()) async {}
+    static func sync(api: PlannerAPI, timeZone: TimeZone, overdue: [RankedTask] = [], now: Date = Date()) async {}
     static func clear() {}
 }

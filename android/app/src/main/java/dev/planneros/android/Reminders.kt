@@ -81,7 +81,7 @@ object Reminders {
     internal fun channel(c:Context):NotificationChannel? {
         val manager=c.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL,"Planner reminders",NotificationManager.IMPORTANCE_HIGH).apply{
-            description="Ten minutes before a timed task."
+            description="Ten minutes before a timed task, then until it is ticked."
             setSound(Uri.parse(soundUri(c)),
                 AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
@@ -165,7 +165,10 @@ object Reminders {
         if(day.cached||day.alarmRevision?.let{it!=revision(c)}==true)return@synchronized
         val now=System.currentTimeMillis()
         val alarms=day.tasks.filter{!it.done&&it.time!=null}.flatMap{task->
-            taskReminderAlarms(task.id,task.title,task.clockMinutes,task.minutes,day.date,day.timezone,now)
+            taskReminderAlarms(task.id,task.title,task.clockMinutes,task.minutes,day.date,day.timezone,now)+
+                // Until it is ticked. Not for calendar events: an appointment
+                // happens whether or not anyone ticks it.
+                (if(task.fromCalendar)emptyList() else taskNagAlarms(task.id,task.title,task.clockMinutes,task.minutes,day.date,day.timezone,now))
         }
         cancelAlarms(c)
         val p=prefs(c);val generation=UUID.randomUUID().toString()
@@ -201,8 +204,8 @@ object Reminders {
         return try {
             manager.notify("planner-notification-test",62,NotificationCompat.Builder(c,CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification).setContentTitle("Planner OS notifications work")
-                .setContentText("Task names appear first · reminders arrive 10 minutes before start.")
-                .setStyle(NotificationCompat.BigTextStyle().bigText("Planner OS notifications work\nTask names appear first · reminders arrive 10 minutes before start."))
+                .setContentText("10 minutes before each task, then again until you tick it.")
+                .setStyle(NotificationCompat.BigTextStyle().bigText("Planner OS notifications work\n10 minutes before each task, then again until you tick it."))
                 .setColor(WINE_ACCENT).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setAutoCancel(true).setContentIntent(open).build())
             true
         }catch(_:SecurityException){false}

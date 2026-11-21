@@ -103,13 +103,13 @@ def test_native_reminder_feed_is_scoped_to_configured_tenant(client, native_core
 
 
 def test_each_native_device_has_independent_morning_and_event_reminders(client, native_core, native_clock, runtime):
-    today = native_clock(9).date().isoformat()
-    task = native_core.tasks.create_task("Morning study", scheduled_date=today, start_time="09:10")["data"]["task"]
+    today = native_clock(11).date().isoformat()
+    task = native_core.tasks.create_task("Morning study", scheduled_date=today, start_time="11:10")["data"]["task"]
     event_kind = f"event10:{task['id']}"
     for kind in ["morning_brief", event_kind]:
         native_core.reminders.record_sent(kind, "push", {})
     log_before = list(runtime.service_client.tables["reminder_log"])
-    assert native_core.reminders.due_reminders(native_clock(9)) == [], "Global web reminders must retain their existing dedup"
+    assert native_core.reminders.due_reminders(native_clock(11)) == [], "Global web reminders must retain their existing dedup"
 
     def feed(sent):
         response = client.post("/v2/native/reminders", headers=APP_KEY, json={"sent_kinds": sent})
@@ -125,11 +125,11 @@ def test_each_native_device_has_independent_morning_and_event_reminders(client, 
     assert {item["kind"] for item in feed([])} == {"morning_brief", event_kind}, "A second device must not inherit the first device's dedup"
     assert runtime.service_client.tables["reminder_log"] == log_before, "This feed must never mutate delivery logs"
 
-    native_clock(9, 1)
+    native_clock(11, 1)
     assert feed(["morning_brief", event_kind]) == [], "An exact local alarm and the feed share the same delivery kind"
-    native_clock(9, 5)
+    native_clock(11, 5)
     assert feed(["morning_brief"]) == [], "No five-minute or starting-now task alert remains"
-    native_clock(9, 10)
+    native_clock(11, 10)
     assert feed(["morning_brief"]) == []
 
 

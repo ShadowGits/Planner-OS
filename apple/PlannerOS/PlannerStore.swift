@@ -484,11 +484,12 @@ final class PlannerStore {
     func syncReminders() {
         guard let api else { return }
         let zone = timeZone
+        let overdue = focusOverdue
         reminderSync?.cancel()
         reminderSync = Task {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
-            await Reminders.sync(api: api, timeZone: zone)
+            await Reminders.sync(api: api, timeZone: zone, overdue: overdue)
         }
     }
 

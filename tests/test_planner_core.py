@@ -614,7 +614,7 @@ def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
     tasks.create_task("Write SOP", scheduled_date=today, due_date=today)
 
     local_today = _today()
-    morning = datetime(local_today.year, local_today.month, local_today.day, 8, 0, tzinfo=ZoneInfo(TZ))
+    morning = datetime(local_today.year, local_today.month, local_today.day, 11, 0, tzinfo=ZoneInfo(TZ))
     due = reminders.due_reminders(morning)
     kinds = {item["kind"] for item in due}
     assert "morning_brief" in kinds and "deadline_alert" in kinds
@@ -623,10 +623,10 @@ def test_reminders_fire_in_windows_and_are_idempotent(services) -> None:
         reminders.record_sent(item["kind"], "telegram", {"message": item["message"]})
     assert reminders.due_reminders(morning) == []
 
-    evening = datetime(local_today.year, local_today.month, local_today.day, 20, 0, tzinfo=ZoneInfo(TZ))
+    evening = datetime(local_today.year, local_today.month, local_today.day, 21, 45, tzinfo=ZoneInfo(TZ))
     nudge = reminders.due_reminders(evening)
     assert [item["kind"] for item in nudge] == ["evening_nudge"]
-    assert "Write SOP" in nudge[0]["message"]
+    assert nudge[0]["message"] == "You did 0 of 1 today. Skipped: Write SOP."
 
 
 def test_event_reminders_fire_only_ten_minutes_before_and_keep_task_name_first(services) -> None:
@@ -639,7 +639,7 @@ def test_event_reminders_fire_only_ten_minutes_before_and_keep_task_name_first(s
     assert len(due) == 1
     assert due[0]["kind"] == f"event10:{task['id']}"
     assert due[0]["title"] == task["title"]
-    assert due[0]["message"].startswith("Starts in 10 min · 15:00")
+    assert due[0]["message"] == "In 10 min · 15:00. Wrap up what you're doing."
     assert due[0]["tag"] == f"event-{task['id']}"
     assert reminders._event_reminders(at(14, 50, 30), set())
     for hour, minute in [(14, 30), (14, 49), (14, 52), (14, 55), (15, 0), (15, 5)]:
@@ -695,14 +695,68 @@ def test_event_reminders_skip_done_and_untimed(services) -> None:
     assert reminders._event_reminders(when, set()) == []
 
 
-def test_evening_nudge_skipped_after_a_completion(services) -> None:
+def test_the_evening_report_says_so_when_nothing_was_skipped(services) -> None:
     tasks, _, _, reminders = services
     created = tasks.create_task("Anything", scheduled_date=_today().isoformat())
     tasks.complete_task(created["data"]["task"]["id"])
 
     local_today = _today()
-    evening = datetime(local_today.year, local_today.month, local_today.day, 20, 0, tzinfo=ZoneInfo(TZ))
-    assert [item["kind"] for item in reminders.due_reminders(evening)] == []
+    evening = datetime(local_today.year, local_today.month, local_today.day, 21, 45, tzinfo=ZoneInfo(TZ))
+    report = [item for item in reminders.due_reminders(evening) if item["kind"] == "evening_nudge"]
+    assert [item["message"] for item in report] == ["All 1 done today. That is how it's done."]
+
+
+def test_no_report_before_half_past_nine(services) -> None:
+    tasks, _, _, reminders = services
+    tasks.create_task("Anything", scheduled_date=_today().isoformat())
+    local_today = _today()
+    before = datetime(local_today.year, local_today.month, local_today.day, 21, 29, tzinfo=ZoneInfo(TZ))
+    assert "evening_nudge" not in {item["kind"] for item in reminders.due_reminders(before)}
+
+
+def test_the_evening_report_names_what_was_skipped_and_spares_what_is_still_to_come(services, repo) -> None:
+    tasks, _, _, reminders = services
+    today = _today().isoformat()
+    HabitService(repo, TZ).add_habit("Gym", start_time="17:30", start_date="2026-01-01")
+    read = tasks.create_task("Reading", scheduled_date=today, start_time="16:00")["data"]["task"]
+    tasks.complete_task(read["id"])
+    tasks.create_task("SOP outline", scheduled_date=today)
+    tasks.create_task("Office", scheduled_date=today, start_time="21:45")
+    tasks.create_task("Dance class", scheduled_date=today, start_time="18:30",
+                      metadata={"source": "apple_calendar", "apple_uid": "u"})
+    local_today = _today()
+    evening = datetime(local_today.year, local_today.month, local_today.day, 21, 30, tzinfo=ZoneInfo(TZ))
+
+    message = reminders._evening_nudge(evening)
+
+    # Timed first in time order, then untimed; the calendar event is not work.
+    assert message == "You did 1 of 3 today. Skipped: Gym, SOP outline. Still to come tonight: 1."
+
+
+def test_the_morning_callout_names_how_much_is_overdue_and_the_worst(services) -> None:
+    tasks, _, _, reminders = services
+    today = _today()
+    tasks.create_task("Master CV v1", due_date=(today - timedelta(days=21)).isoformat())
+    tasks.create_task("Fund estimate", due_date=(today - timedelta(days=3)).isoformat())
+    tasks.create_task("LOR: send requests", scheduled_date=today.isoformat(), start_time="12:00")
+    tasks.create_task("Untimed today", scheduled_date=today.isoformat())
+
+    assert reminders._morning_brief() == (
+        "2 overdue. Worst: Master CV v1, 3 weeks late. Today: 2 planned. First up: LOR: send requests at 12:00."
+    )
+
+
+def test_the_morning_callout_with_a_clean_slate(services) -> None:
+    tasks, _, _, reminders = services
+    tasks.create_task("One thing", scheduled_date=_today().isoformat())
+    assert reminders._morning_brief() == "Nothing overdue. Today: 1 planned."
+
+
+def test_the_morning_callout_does_not_count_a_calendar_event_as_planned(services) -> None:
+    tasks, _, _, reminders = services
+    tasks.create_task("Festival", scheduled_date=_today().isoformat(),
+                      metadata={"source": "apple_calendar", "apple_uid": "u"})
+    assert reminders._morning_brief() is None
 
 
 def test_telegram_parse_command_and_chat_extraction() -> None:

@@ -324,6 +324,7 @@ struct CompleteTaskIntent: AppIntent {
         reloadWidget()
         do {
             try await PlannerWidgetAPI.setDone(task.id, done)
+            await HarshReminders.ticked(task.id, done: done)
             return .result(dialog: done ? "\(task.title) is done." : "\(task.title) is open again.")
         } catch {
             PlannerSnapshot.mark(task.id, done: !done)

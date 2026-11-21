@@ -84,8 +84,9 @@ check(Civil.weekStart("2026-11-01"), "2026-10-26", "week start")
 let kolkata = TimeZone(identifier: "Asia/Kolkata")!
 let noon = Civil.instant("2026-10-31", "13:00", in: kolkata)!
 let plan = planReminders([view, DayView(date: "2026-11-01", items: [task("early", date: "2026-11-01", time: "08:00")])], now: noon, timeZone: kolkata)
-check(plan.map(\.title), ["gym", "cv", "early"], "reminder order")
-check(plan.first?.fire, Civil.instant("2026-10-31", "17:50", in: kolkata), "ten minutes before")
+let leads = plan.filter { !$0.id.hasSuffix("-start") && !$0.id.hasSuffix("-late") && !$0.id.hasSuffix("-end") }
+check(leads.map(\.title), ["gym", "cv", "early"], "reminder order")
+check(leads.first?.fire, Civil.instant("2026-10-31", "17:50", in: kolkata), "ten minutes before")
 
 // Decoding the API's shapes.
 let json = #"{"success":true,"data":{"date":"2026-10-31","timezone":"Asia/Kolkata","items":[{"id":"t1","title":"CV","start_time":"18:30:00","estimated_minutes":null,"done":false,"is_habit":false,"scheduled_date":"2026-10-31","due_date":null,"notes":""}]}}"#
@@ -177,8 +178,10 @@ let breakfast = PlannerTask(id: "b", title: "Breakfast", time: "08:00", minutes:
 check(shown(breakfast, on: "2026-05-13") == nil, true, "a morning task is not the evening's")
 let listed = DayView(date: "2026-05-13", items: [owlListed]), own = DayView(date: "2026-05-14", items: [owl])
 let owlReminders = planReminders([listed, own], now: Civil.instant("2026-05-13", "12:00", in: kolkata)!, timeZone: kolkata)
-check(owlReminders.count, 1, "one reminder for a task after midnight, though both days list it")
-check(owlReminders.first?.fire, Civil.instant("2026-05-14", "01:20", in: kolkata), "ten minutes before 01:30 on its date")
+let owlLeads = owlReminders.filter { !$0.id.hasSuffix("-start") && !$0.id.hasSuffix("-late") && !$0.id.hasSuffix("-end") }
+check(owlLeads.count, 1, "one warning for a task after midnight, though both days list it")
+check(owlLeads.first?.fire, Civil.instant("2026-05-14", "01:20", in: kolkata), "ten minutes before 01:30 on its date")
+check(Set(owlReminders.map(\.id)).count, owlReminders.count, "and no nag twice either")
 check(logicalMinutes(Moment(today: "2026-05-14", minutes: 9 * 60)), 9 * 60, "09:00 is 09:00")
 
 // What the old timeline showed on each task, kept.
@@ -604,6 +607,69 @@ let asList = dayList([task("untimed"), task("late", time: "19:00"), task("ticked
 check(asList.open.map { $0.id }, ["early", "late", "untimed"], "what is still to do, in time order, untimed last")
 check(asList.done.map { $0.id }, ["ticked", "also ticked"], "then what is done")
 check(dayList([]).open.isEmpty && dayList([]).done.isEmpty, true, "an empty day is an empty list")
+
+// Harsh reminders: ten minutes before, then until it is ticked.
+check(HarshReminders.leadBody(start: 9 * 60, minutes: 30), "In 10 min · 09:00 · 30 min. Wrap up what you're doing.", "the warning")
+check(HarshReminders.clock(25 * 60 + 30), "01:30", "a small-hours time reads as the clock")
+check(HarshReminders.nags(minutes: 60).map { "\($0.0.rawValue)+\($0.1)" }, ["start+0", "late+15", "end+60"], "start, fifteen in, and the end")
+check(HarshReminders.nags(minutes: 15).map { $0.0.rawValue }, ["start", "end"], "a short task skips fifteen-in, which would land after it ended")
+check(HarshReminders.nagText(.start, title: "Gym", start: 17 * 60 + 30, minutes: 90).title, "Now: Gym", "start, title")
+check(HarshReminders.nagText(.start, title: "Gym", start: 17 * 60 + 30, minutes: 90).body, "It's 17:30. You planned this. Start it.", "start, body")
+check(HarshReminders.nagText(.late, title: "Gym", start: 17 * 60 + 30, minutes: 90).title, "15 min late: Gym", "late, title")
+check(HarshReminders.nagText(.end, title: "Gym", start: 17 * 60 + 30, minutes: 90).body,
+      "This should have been finished by 19:00. Tick it, or admit you skipped it.", "end, body")
+
+let nagDay = DayView(date: "2026-10-31", items: [
+    task("Gym", date: "2026-10-31", time: "17:30", minutes: 90),
+    { var t = task("Dance class", date: "2026-10-31", time: "18:30", minutes: 50); t.source = "apple_calendar"; return t }(),
+    task("Ticked", date: "2026-10-31", time: "19:00", done: true),
+    task("Tomorrow far", date: "2026-11-01", time: "20:00"),
+])
+let nagPlan = planReminders([nagDay], now: noon, timeZone: kolkata)
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Gym")) }.map(\.title),
+      ["Gym", "Now: Gym", "15 min late: Gym", "Not done: Gym"], "a task gets its warning and three nags")
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Gym")) }.map(\.fire).last,
+      Civil.instant("2026-10-31", "19:00", in: kolkata), "the last one when it should have ended")
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Dance class")) }.map(\.title), ["Dance class"],
+      "a calendar event gets the warning and no nags")
+check(nagPlan.contains { $0.id.hasPrefix(HarshReminders.taskPrefix("Ticked")) }, false, "a ticked task gets nothing")
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Tomorrow far")) }.map(\.title), ["Tomorrow far"],
+      "a task more than twelve hours off gets its warning; its nags come with a later sync")
+check(nagPlan.count <= reminderLimit, true, "never more than iOS will hold")
+let lateNow = Civil.instant("2026-10-31", "17:40", in: kolkata)!
+check(planReminders([nagDay], now: lateNow, timeZone: kolkata).filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Gym")) }.map(\.title),
+      ["15 min late: Gym", "Not done: Gym"], "a sync part-way through plans only the nags still to come")
+
+// The morning callout and the evening report.
+check(HarshReminders.lateWords(days: 1), "1 day", "a day"); check(HarshReminders.lateWords(days: 5), "5 days", "days")
+check(HarshReminders.lateWords(days: 9), "1 week", "a week"); check(HarshReminders.lateWords(days: 23), "3 weeks", "weeks")
+check(HarshReminders.morning(overdue: 14, worst: ("Master CV v1", 21), planned: 5, first: ("LOR: send requests", 12 * 60))?.body,
+      "14 overdue. Worst: Master CV v1, 3 weeks late. Today: 5 planned. First up: LOR: send requests at 12:00.", "the morning callout")
+check(HarshReminders.morning(overdue: 14, worst: ("Master CV v1", 21), planned: 5, first: nil)?.title, "Overdue check", "its title")
+check(HarshReminders.morning(overdue: 0, worst: nil, planned: 0, first: nil) == nil, true, "nothing to say, nothing sent")
+check(HarshReminders.morning(overdue: 0, worst: nil, planned: 0 + 2, first: nil)?.body, "Nothing overdue. Today: 2 planned.", "a clean slate")
+check(HarshReminders.morning(overdue: 3, worst: nil, planned: 0, first: nil)?.body,
+      "3 overdue. Nothing planned today. Plan it, or it will not happen.", "overdue and nothing planned")
+let reportDay: [HarshReminders.ReportItem] = [
+    .init(id: "a", title: "Gym", start: 17 * 60 + 30, done: false),
+    .init(id: "b", title: "Reading", start: 16 * 60, done: true),
+    .init(id: "c", title: "SOP outline", start: nil, done: false),
+    .init(id: "d", title: "Office", start: 21 * 60 + 45, done: false),
+]
+check(HarshReminders.evening(reportDay, at: HarshReminders.eveningMinute)?.body,
+      "You did 1 of 3 today. Skipped: Gym, SOP outline. Still to come tonight: 1.", "the evening report")
+check(HarshReminders.evening(reportDay, at: HarshReminders.eveningMinute)?.title, "Today's report", "its title")
+check(HarshReminders.evening(reportDay.map { var item = $0; item.done = true; return item }, at: HarshReminders.eveningMinute)?.body,
+      "All 3 done today. That is how it's done.", "a day with nothing skipped")
+check(HarshReminders.evening([.init(id: "x", title: "Late", start: 23 * 60, done: false)], at: HarshReminders.eveningMinute) == nil, true,
+      "nothing due yet, no report")
+let six = (1...6).map { HarshReminders.ReportItem(id: "\($0)", title: "T\($0)", start: $0 * 60 + 600, done: false) }
+check(HarshReminders.evening(six, at: HarshReminders.eveningMinute)?.body, "You did 0 of 6 today. Skipped: T1, T2, T3, T4, +2 more.", "a long list is cut short")
+HarshReminders.saveReport(.init(date: "2026-10-31", items: reportDay))
+check(HarshReminders.markReport("a", done: true)?.items.first { $0.id == "a" }?.done, true, "a tick marks tonight's report")
+check(HarshReminders.loadReport()?.items.filter(\.done).count, 2, "and it is saved")
+check(HarshReminders.markReport("nope", done: true) == nil, true, "an unknown task changes nothing")
+check(Civil.days(from: "2026-10-31", to: "2026-11-21"), 21, "days between two dates")
 
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

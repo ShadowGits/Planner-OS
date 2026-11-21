@@ -24,7 +24,7 @@ enum Reminders {
 
     /// Reads the next seven days and replaces the queued reminders with them.
     /// When nothing could be read, the reminders already queued stay.
-    static func sync(api: PlannerAPI, timeZone: TimeZone, now: Date = Date()) async {
+    static func sync(api: PlannerAPI, timeZone: TimeZone, overdue: [RankedTask] = [], now: Date = Date()) async {
         let center = UNUserNotificationCenter.current()
         guard enabled else { center.removeAllPendingNotificationRequests(); return }
         let allowed = await status()
@@ -44,6 +44,48 @@ enum Reminders {
         center.removeAllPendingNotificationRequests()
         for reminder in planReminders(days, now: now, timeZone: zone) {
             try? await center.add(request(reminder, zone))
+        }
+        await scheduleDaily(days, overdue: overdue, timeZone: zone, now: now)
+    }
+
+    /// The morning callout and tonight's report, worded from what the app
+    /// knows now; every sync — and every tick on the widget or through Siri —
+    /// words them again.
+    static func scheduleDaily(_ days: [DayView], overdue: [RankedTask], timeZone: TimeZone, now: Date) async {
+        let center = UNUserNotificationCenter.current()
+        let today = Civil.logicalToday(in: timeZone, now: now)
+        let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
+
+        if let items = byDate[today]?.items {
+            let report = HarshReminders.Report(date: today, items: reportItems(items))
+            HarshReminders.saveReport(report)
+            await HarshReminders.scheduleEvening(report, timeZone: timeZone, now: now)
+        }
+
+        // Tomorrow morning — or this morning, if it is not yet eleven.
+        var morningDay = Civil.today(in: timeZone, now: now)
+        if let at = HarshReminders.moment(morningDay, HarshReminders.morningMinute, in: timeZone), at <= now {
+            morningDay = Civil.add(morningDay, days: 1)
+        }
+        center.removePendingNotificationRequests(withIdentifiers: [HarshReminders.morningId])
+        let planned = (byDate[morningDay]?.items ?? []).filter { !$0.fromCalendar && !$0.done }
+        let first = planned.filter { $0.time != nil }.min { $0.clockMinutes < $1.clockMinutes }
+        let worst = overdue.compactMap { ranked -> (title: String, daysLate: Int)? in
+            guard let since = overdueSince(ranked.task, ranked.reason) else { return nil }
+            return (ranked.task.title, Civil.days(from: since, to: morningDay))
+        }.max { $0.daysLate < $1.daysLate }
+        if let text = HarshReminders.morning(overdue: overdue.count, worst: worst, planned: planned.count,
+                                             first: first.map { ($0.title, $0.clockMinutes) }),
+           let fire = HarshReminders.moment(morningDay, HarshReminders.morningMinute, in: timeZone) {
+            try? await center.add(HarshReminders.request(HarshReminders.morningId, text, at: fire, timeZone: timeZone))
+        }
+    }
+
+    /// A day's items as the evening report counts them: calendar events are
+    /// appointments, not work, and are left out.
+    static func reportItems(_ items: [PlannerTask]) -> [HarshReminders.ReportItem] {
+        items.filter { !$0.fromCalendar }.map {
+            HarshReminders.ReportItem(id: $0.id, title: $0.title, start: $0.time == nil ? nil : $0.clockMinutes, done: $0.done)
         }
     }
 
@@ -87,7 +129,7 @@ enum Reminders {
     static func sendTest() async {
         let content = UNMutableNotificationContent()
         content.title = "Planner OS reminders work"
-        content.body = "Tasks will remind you \(reminderLeadMinutes) minutes before they start."
+        content.body = "\(reminderLeadMinutes) minutes before each task, then again until you tick it."
         content.sound = alert
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "test", content: content, trigger: trigger))
