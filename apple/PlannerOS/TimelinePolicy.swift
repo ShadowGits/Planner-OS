@@ -397,6 +397,50 @@ func paletteIndex(_ task: PlannerTask, count: Int) -> Int {
     return Int(hash % UInt64(max(count, 1)))
 }
 
+// MARK: The floating clock
+
+/// What the Mac's floating clock counts: the task under way, or the next to start.
+struct ClockFocus: Equatable {
+    var task: PlannerTask
+    var running: Bool
+    /// Seconds to its end while it runs, to its start before that.
+    var remaining: Int
+    /// How far round the ring is: through the task, or through the last hour before it.
+    var progress: Double
+    /// Others under way at the same time, or starting at the same moment.
+    var others: Int
+}
+
+/// The latest to start of those under way, else the next to start, today or
+/// tomorrow. Yesterday counts, for a task that runs on past midnight.
+func clockFocus(today: String, seconds: Int, tasks: (String) -> [PlannerTask]) -> ClockFocus? {
+    var timed: [(task: PlannerTask, start: Int, end: Int)] = []
+    for offset in -1...1 {
+        for task in calendarDay(tasks(Civil.add(today, days: offset))) where task.time != nil && !task.done {
+            let start = offset * 86_400 + task.clockMinutes * 60
+            timed.append((task, start, start + task.minutes * 60))
+        }
+    }
+    timed.sort { ($0.start, $0.task.title) < ($1.start, $1.task.title) }
+    let running = timed.filter { $0.start <= seconds && seconds < $0.end }
+    if let current = running.last {
+        return ClockFocus(task: current.task, running: true, remaining: current.end - seconds,
+                          progress: Double(seconds - current.start) / Double(max(current.end - current.start, 1)),
+                          others: running.count - 1)
+    }
+    guard let next = timed.first(where: { $0.start > seconds }) else { return nil }
+    let wait = next.start - seconds
+    return ClockFocus(task: next.task, running: false, remaining: wait, progress: max(1 - Double(wait) / 3600, 0),
+                      others: timed.filter { $0.start == next.start }.count - 1)
+}
+
+/// "4:05", or "1:04:05" from an hour up.
+func countdownText(_ seconds: Int) -> String {
+    let left = max(seconds, 0)
+    if left >= 3600 { return String(format: "%d:%02d:%02d", left / 3600, left / 60 % 60, left % 60) }
+    return String(format: "%d:%02d", left / 60, left % 60)
+}
+
 // MARK: Editing
 
 /// What the task editor's fields hold, as plain values.

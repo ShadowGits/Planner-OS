@@ -98,6 +98,9 @@ struct TodayView: View {
     @Binding var overBin: Bool
     /// The day as a plain list instead of the timeline; remembered between launches.
     @AppStorage("day_list") private var listView = false
+    #if os(macOS)
+    @AppStorage(FloatingClock.shownKey) private var showClock = true
+    #endif
     @State private var pickingDate = false
     /// A picked day, which the scroll stretches to reach.
     @State private var picked: String?
@@ -399,6 +402,9 @@ struct TodayView: View {
                           systemImage: listView ? "calendar.day.timeline.left" : "list.bullet")
                 }
                 Button { Task { await store.refreshAll() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                #if os(macOS)
+                Toggle("Floating clock", isOn: $showClock)
+                #endif
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 20))

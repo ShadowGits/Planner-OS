@@ -66,6 +66,11 @@ struct RootView: View {
         } message: { task in
             Text(task.habit ? "Only this day goes; the habit carries on every other day." : "This removes it for good.")
         }
+        #if os(macOS)
+        .onChange(of: store.connection, initial: true) {
+            FloatingClock.shared.attach(store: store)
+        }
+        #endif
         .task { await store.start() }
         .task { await tick() }
         .onChange(of: phase) { _, phase in

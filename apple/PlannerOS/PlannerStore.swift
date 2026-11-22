@@ -109,7 +109,7 @@ final class PlannerStore {
         await PendingTicks.flush()
         async let selected: Void = loadDay(selectedDate)
         async let today: Void = loadTodayIfAway()
-        async let inView: Void = loadDays(visibleDates.subtracting([selectedDate, logicalToday]))
+        async let inView: Void = loadDays(visibleDates.union(clockDates).subtracting([selectedDate, logicalToday]))
         async let backlog: Void = refreshInbox()
         async let thisWeek: Void = refreshWeek()
         async let targets: Void = refreshMilestones()
@@ -161,6 +161,15 @@ final class PlannerStore {
             if let day: DayView = api.cached("/v2/day?date=\(date)") { days[date] = day }
         }
         Task { await loadDays(coming) }
+    }
+
+    /// The days the Mac's floating clock counts over, wherever the timeline is scrolled to.
+    private var clockDates: Set<String> {
+        #if os(macOS)
+        return Set((-1...1).map { Civil.add(calendarToday, days: $0) })
+        #else
+        return []
+        #endif
     }
 
     private func loadDays(_ dates: Set<String>) async {
@@ -299,7 +308,7 @@ final class PlannerStore {
     private func afterWrite() async {
         await loadDay(selectedDate, quiet: true)
         await loadTodayIfAway()
-        await loadDays(visibleDates.subtracting([selectedDate, logicalToday]))
+        await loadDays(visibleDates.union(clockDates).subtracting([selectedDate, logicalToday]))
         await refreshInbox(quiet: true)
         await refreshWeek(quiet: true)
         syncReminders()

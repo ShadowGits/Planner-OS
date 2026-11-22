@@ -7,12 +7,17 @@ import BackgroundTasks
 @main
 struct PlannerOSApp: App {
     @State private var store = PlannerStore()
+    #if os(macOS)
+    @AppStorage(FloatingClock.shownKey) private var showClock = true
+    #endif
 
     init() {
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
     }
 
     var body: some Scene {
+        // No id: macOS saves the window under the group's name, and a new name
+        // means no window at the first launch after updating.
         WindowGroup {
             RootView()
                 .environment(store)
@@ -24,6 +29,12 @@ struct PlannerOSApp: App {
         #endif
         #if os(macOS)
         .defaultSize(width: 1100, height: 760)
+        .commands {
+            CommandGroup(after: .windowArrangement) {
+                Toggle("Floating Clock", isOn: $showClock)
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+            }
+        }
         #endif
     }
 }

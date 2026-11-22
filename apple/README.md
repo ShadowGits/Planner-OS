@@ -37,6 +37,11 @@ It talks to the same backend as Android, with the same app key.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
   * Hold a card for its menu (Select, Done, Tomorrow, Pick a date, Drop), or tap **Select** to move or drop several.
   * Milestones are in the ⋯ menu.
+* **Floating clock** (Mac): a small clock that stays above every app, on every
+  Space and over full screen. It shows the task under way with its time running
+  down and the ring filling, or the next one with the time until it starts, and
+  pulses as one starts. Tick from it, click the name to open Planner OS, drag it
+  anywhere. Turn it off in ⋯ or Window, Floating Clock (⇧⌘K).
 * **Settings**: server, app key and reminders, and a line saying why a reminder
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).

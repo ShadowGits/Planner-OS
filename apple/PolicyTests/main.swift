@@ -104,6 +104,29 @@ check((try? Connection.origin("https://planner.example.com/"))?.absoluteString, 
 check((try? Connection.origin("http://planner.example.com"))?.absoluteString, nil, "https only")
 check((try? Connection.origin("https://planner.example.com/app"))?.absoluteString, nil, "no path")
 
+// The Mac's floating clock.
+let clockDays = [
+    "2026-05-12": [task("Late film", date: "2026-05-12", time: "23:30", minutes: 90)],
+    "2026-05-13": [task("Standup", date: "2026-05-13", time: "09:00", minutes: 60), task("Review", date: "2026-05-13", time: "09:30", minutes: 60),
+                   task("Skipped", date: "2026-05-13", time: "11:00", done: true), task("Lunch", date: "2026-05-13", time: "13:00"),
+                   task("Any", date: "2026-05-13"), task("Owl", date: "2026-05-14", time: "25:30")],
+    "2026-05-14": [task("Owl", date: "2026-05-14", time: "01:30")],
+]
+func clockAt(_ seconds: Int) -> ClockFocus? { clockFocus(today: "2026-05-13", seconds: seconds) { clockDays[$0] ?? [] } }
+check(clockAt(30 * 60)?.task.id, "Late film", "a task from before midnight is still running after it")
+check(clockAt(30 * 60)?.remaining, 30 * 60, "and runs out at its own end")
+check(clockAt(9 * 3600 - 1)?.running, false, "a second before, it is next")
+check(clockAt(9 * 3600 - 1)?.remaining, 1, "counting down to the start")
+check(clockAt(9 * 3600)?.running, true, "on the second it starts, it runs")
+check(clockAt(9 * 3600)?.progress, 0, "from an empty ring")
+check(clockAt(9 * 3600 + 45 * 60)?.task.id, "Review", "of two under way, the later start")
+check(clockAt(9 * 3600 + 45 * 60)?.others, 1, "saying there is another")
+check(clockAt(10 * 3600 + 30 * 60)?.task.id, "Lunch", "at the end it moves on, past what is already done")
+check(clockAt(20 * 3600)?.task.id, "Owl", "then to tomorrow's first")
+check(clockAt(20 * 3600)?.remaining, 5 * 3600 + 30 * 60, "counted once, at 01:30 of its own date")
+check(clockFocus(today: "2026-05-13", seconds: 0) { _ in [] } == nil, true, "nothing timed, nothing to count")
+check(countdownText(245), "4:05", "minutes"); check(countdownText(3845), "1:04:05", "hours"); check(countdownText(-3), "0:00", "never below zero")
+
 // Timeline layout: 50 points an hour, the same for every hour.
 check(minuteOffset(0), 0, "midnight is the top"); check(minuteOffset(90), 75, "50 points an hour")
 check(timelineDayHeight, 1200, "all 24 hours")
