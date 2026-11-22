@@ -11,6 +11,12 @@ PORT=${PORT:-8765}
 SWIFTC=${SWIFTC:-swiftc}
 URL="http://127.0.0.1:$PORT"
 BUILD=$(mktemp -d)
+# Without this the compiled checks write to the real widget's App Group.
+export PLANNER_TEST_FOLDER="$BUILD/shared"
+if curl -s --max-time 2 "$URL/api/health" >/dev/null; then
+    echo "Something is already serving $URL; run with PORT=<a free port>."
+    exit 1
+fi
 
 python3 "$ROOT/e2e/server.py" "$PORT" &
 SERVER=$!
@@ -39,13 +45,13 @@ echo "== Apple: every screen still parses"
 "$SWIFTC" -parse $APPLE/*.swift apple/Shared/*.swift apple/PlannerWidget/*.swift
 
 echo "== Apple: Focus and timeline rules"
-"$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
+"$SWIFTC" -swift-version 5 -D PLANNER_TESTS $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
     apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift apple/Shared/PlannerVoice.swift \
     apple/Shared/PendingTicks.swift apple/Shared/HarshReminders.swift apple/PolicyTests/main.swift -o "$BUILD/policy"
 "$BUILD/policy"
 
 echo "== Apple: every action against the API"
-"$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
+"$SWIFTC" -swift-version 5 -D PLANNER_TESTS $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
     $APPLE/PlannerStore.swift $APPLE/WidgetBridge.swift apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift \
     apple/Shared/PlannerVoice.swift apple/Shared/PendingTicks.swift apple/Shared/HarshReminders.swift apple/EndToEnd/StandIns.swift apple/EndToEnd/main.swift -o "$BUILD/e2e"
 "$BUILD/e2e" "$URL"

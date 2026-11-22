@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 enum Screen: Hashable { case focus, timeline, settings }
 
@@ -21,6 +20,7 @@ struct RootView: View {
     @State private var screen: Screen = .timeline
     @State private var editor: EditorRequest?
     @State private var showMilestones = false
+    /// Whether a held task is over the bin; the timeline says, as it tracks the drag.
     @State private var overBin = false
 
     var body: some View {
@@ -34,7 +34,7 @@ struct RootView: View {
                         case .focus:
                             NavigationStack { FocusView(screen: $screen, editor: $editor).toolbar { focusToolbar } }
                         case .timeline:
-                            NavigationStack { TodayView(editor: $editor) }
+                            NavigationStack { TodayView(editor: $editor, overBin: $overBin) }
                         case .settings:
                             NavigationStack { SettingsView(firstRun: false) }
                         }
@@ -42,8 +42,7 @@ struct RootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 72) }
                     BottomBar(screen: $screen, dragging: store.draggingID != nil, overBin: $overBin,
-                              onAdd: { editor = EditorRequest(date: screen == .timeline ? store.selectedDate : store.logicalToday) },
-                              onBin: binDrop)
+                              onAdd: { editor = EditorRequest(date: screen == .timeline ? store.selectedDate : store.logicalToday) })
                 }
             }
         }
@@ -56,18 +55,19 @@ struct RootView: View {
             NavigationStack { MilestonesView() }
                 .environment(store)
         }
-        .confirmationDialog("Delete “\(store.confirmingDelete?.title ?? "")”?", isPresented: Binding(
-            get: { store.confirmingDelete != nil }, set: { if !$0 { store.confirmingDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                if let task = store.confirmingDelete { Task { await store.delete(task) } }
-                store.confirmingDelete = nil
-            }
-        } message: {
-            Text("This removes it for good.")
+        // An alert, not a confirmation dialog: on iOS 27 that is a popover
+        // pointing at nothing, with no Cancel. The task is handed to it, as
+        // closing it clears confirmingDelete before the button runs.
+        .alert(deleteQuestion, isPresented: Binding(
+            get: { store.confirmingDelete != nil }, set: { if !$0 { store.confirmingDelete = nil } }),
+               presenting: store.confirmingDelete) { task in
+            Button(task.habit ? "Skip" : "Delete", role: .destructive) { Task { await store.delete(task) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { task in
+            Text(task.habit ? "Only this day goes; the habit carries on every other day." : "This removes it for good.")
         }
         .task { await store.start() }
         .task { await tick() }
-        .task(id: store.draggingID) { await watchDrag() }
         .onChange(of: phase) { _, phase in
             if phase == .active {
                 store.now = Date()
@@ -79,19 +79,9 @@ struct RootView: View {
         }
     }
 
-    /// A task dropped on the bin: find it on the day shown, then ask.
-    private func binDrop(_ id: String) {
-        store.endDrag()
-        store.confirmingDelete = store.days.values.lazy.flatMap(\.items).first { $0.id == id }
-    }
-
-    /// The system sends no word when it cancels a drag, so the bin turns back
-    /// into + once the drag has not been seen moving for a few seconds.
-    private func watchDrag() async {
-        while store.draggingID != nil, !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            if !overBin, Date().timeIntervalSince(store.dragSignal) > 3 { store.endDrag() }
-        }
+    private var deleteQuestion: String {
+        guard let task = store.confirmingDelete else { return "" }
+        return task.habit ? "Skip “\(task.title)” for this day?" : "Delete “\(task.title)”?"
     }
 
     @ToolbarContentBuilder
@@ -183,11 +173,11 @@ struct MilestonesView: View {
 /// a task is dragged: drop on it to delete.
 @MainActor
 struct BottomBar: View {
+    @Environment(PlannerStore.self) private var store
     @Binding var screen: Screen
     let dragging: Bool
     @Binding var overBin: Bool
     let onAdd: () -> Void
-    let onBin: (String) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -211,14 +201,14 @@ struct BottomBar: View {
             .buttonStyle(.hitArea)
             .keyboardShortcut("n", modifiers: .command)
             .accessibilityLabel(dragging ? "Drop here to delete" : "Add task")
-            .onDrop(of: [UTType.plainText], isTargeted: $overBin) { providers in
-                guard let provider = providers.first else { return false }
-                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-                    guard let text = object as? NSString else { return }
-                    let id = text as String
-                    DispatchQueue.main.async { onBin(id) }
+            // The timeline tracks a held task itself, so it needs to know where the bin is.
+            .background {
+                GeometryReader { space in
+                    let frame = space.frame(in: .global)
+                    Color.clear
+                        .onAppear { store.binFrame = frame }
+                        .onChange(of: frame) { _, moved in store.binFrame = moved }
                 }
-                return true
             }
             .animation(.snappy, value: dragging)
             .animation(.snappy, value: overBin)

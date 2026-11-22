@@ -680,6 +680,8 @@ class TaskService:
         status = payload.get("status")
         if status is not None and status not in TASK_STATUSES:
             raise PlannerCoreError(f"Invalid task status: {status}")
+        if "priority" in payload and payload["priority"] not in PRIORITIES:
+            raise PlannerCoreError(f"Invalid priority: {payload['priority']}")
         if "start_time" in payload:
             _parse_time(payload["start_time"])
         if "project_id" in payload or "milestone_id" in payload:

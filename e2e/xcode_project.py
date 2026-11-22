@@ -140,6 +140,23 @@ def main() -> int:
                 if not entitlement.exists():
                     raise SystemExit(f"{name} {config} points at a missing {settings[key]}")
 
+    # The UI tests drive the app itself, so they must name it as their target.
+    tests = targets.get("PlannerOSUITests")
+    if tests is None or tests["productType"] != "com.apple.product-type.bundle.ui-testing":
+        raise SystemExit("the PlannerOSUITests UI test target is missing")
+    for config in objects[tests["buildConfigurationList"]]["buildConfigurations"]:
+        if objects[config]["buildSettings"].get("TEST_TARGET_NAME") != "PlannerOS":
+            raise SystemExit("PlannerOSUITests does not test the PlannerOS app")
+    scheme = PROJECT.parent / "xcshareddata" / "xcschemes" / "PlannerOS.xcscheme"
+    if "PlannerOSUITests.xctest" not in scheme.read_text():
+        raise SystemExit("the shared PlannerOS scheme does not run the UI tests")
+
+    # macOS saves the main window under its group's name. An id renames it, and
+    # the first launch after updating then finds nothing and opens no window.
+    app_file = PROJECT.parent.parent / "PlannerOS" / "PlannerOSApp.swift"
+    if re.search(r"^\s*WindowGroup\s*\(", app_file.read_text(), re.M):
+        raise SystemExit("the main WindowGroup must stay plain: an id or title loses the saved window on update")
+
     print(f"Xcode project: {len(objects)} objects, {len(targets)} targets, every reference resolves.")
     return 0
 

@@ -8,6 +8,7 @@ enum ConnectionStore {
     static func load() -> Connection? { nil }
     static func save(_ connection: Connection) throws {}
     static func clear() {}
+    static var isUITesting: Bool { false }
 }
 
 enum Reminders {

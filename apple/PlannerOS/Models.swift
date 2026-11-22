@@ -274,6 +274,11 @@ enum Civil {
     /// "30 Oct"
     static func dayMonth(_ iso: String) -> String { parse(iso).map(dayMonthUTC.string(from:)) ?? iso }
 
+    private static let longDayUTC = formatter("EEEE d MMMM", TimeZone(identifier: "UTC")!)
+
+    /// "Friday 30 October"
+    static func longDay(_ iso: String) -> String { parse(iso).map(longDayUTC.string(from:)) ?? iso }
+
     private static let monthUTC = formatter("MMMM", TimeZone(identifier: "UTC")!)
     private static let weekdayUTC = formatter("EEE", TimeZone(identifier: "UTC")!)
 

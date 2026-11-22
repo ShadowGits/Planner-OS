@@ -23,10 +23,12 @@ final class PlannerStore {
     var toast: String?
     /// The task being dragged on the Timeline, for the bin the + button turns into.
     var draggingID: String?
-    /// The last moment a drag was seen moving; a drag the system cancels sends no word.
-    var dragSignal = Date.distantPast
-    /// A task dropped on the bin, waiting for the user to confirm.
+    /// A task swiped to Delete or dropped on the bin, waiting for the user to confirm.
     var confirmingDelete: PlannerTask?
+    /// The days on the timeline's screen, which every refresh reads again.
+    @ObservationIgnored private(set) var visibleDates: Set<String> = []
+    /// The round + in the window, which is the bin while a task is held.
+    @ObservationIgnored var binFrame = CGRect.zero
 
     /// Bumped by every write, so a refresh that started before it is not applied.
     private var revision = 0
@@ -45,7 +47,13 @@ final class PlannerStore {
     init(connection saved: Connection? = ConnectionStore.load()) {
         let zone = TimeZone(identifier: UserDefaults.standard.string(forKey: "timezone") ?? "Asia/Kolkata") ?? .current
         timeZone = zone
-        selectedDate = Civil.logicalToday(in: zone)
+        selectedDate = Civil.today(in: zone)
+        if ConnectionStore.isUITesting {
+            // Every UI test starts from the server alone: no day painted from
+            // an earlier run, and the timeline rather than a remembered list.
+            ResponseCache.clear()
+            UserDefaults.standard.removeObject(forKey: "day_list")
+        }
         connection = saved
         api = connection.map { PlannerAPI(connection: $0) }
         paintCached()
@@ -88,6 +96,8 @@ final class PlannerStore {
     func start() async {
         guard api != nil else { return }
         await refreshAll()
+        // The permission prompt would cover the screen the UI tests tap.
+        if ConnectionStore.isUITesting { return }
         if await Reminders.status() == .notDetermined, await Reminders.requestPermission() { syncReminders() }
     }
 
@@ -99,11 +109,12 @@ final class PlannerStore {
         await PendingTicks.flush()
         async let selected: Void = loadDay(selectedDate)
         async let today: Void = loadTodayIfAway()
+        async let inView: Void = loadDays(visibleDates.subtracting([selectedDate, logicalToday]))
         async let backlog: Void = refreshInbox()
         async let thisWeek: Void = refreshWeek()
         async let targets: Void = refreshMilestones()
         async let names: Void = refreshProjects()
-        _ = await (selected, today, backlog, thisWeek, targets, names)
+        _ = await (selected, today, inView, backlog, thisWeek, targets, names)
         loading = false
         lastRefresh = Date()
         syncReminders()
@@ -139,6 +150,23 @@ final class PlannerStore {
             lastRefresh = Date()
             adopt(view.timezone)
         } catch { if !quiet { report(error) } }
+    }
+
+    /// The timeline's days as they come into view: the saved copy at once, then the server's.
+    func showDays(_ dates: [String]) {
+        let coming = Set(dates).subtracting(visibleDates)
+        visibleDates = Set(dates)
+        guard let api, !coming.isEmpty else { return }
+        for date in coming where days[date] == nil {
+            if let day: DayView = api.cached("/v2/day?date=\(date)") { days[date] = day }
+        }
+        Task { await loadDays(coming) }
+    }
+
+    private func loadDays(_ dates: Set<String>) async {
+        await withTaskGroup(of: Void.self) { group in
+            for date in dates { group.addTask { await self.loadDay(date, quiet: true) } }
+        }
     }
 
     func refreshInbox(quiet: Bool = false) async {
@@ -271,6 +299,7 @@ final class PlannerStore {
     private func afterWrite() async {
         await loadDay(selectedDate, quiet: true)
         await loadTodayIfAway()
+        await loadDays(visibleDates.subtracting([selectedDate, logicalToday]))
         await refreshInbox(quiet: true)
         await refreshWeek(quiet: true)
         syncReminders()
@@ -289,10 +318,7 @@ final class PlannerStore {
         }
     }
 
-    func beginDrag(_ id: String) {
-        draggingID = id
-        dragSignal = Date()
-    }
+    func beginDrag(_ id: String) { draggingID = id }
 
     func endDrag() { draggingID = nil }
 
@@ -313,6 +339,46 @@ final class PlannerStore {
             await perform([task], "move “\(task.title)” to \(when)", local: { _ in moved }) {
                 try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: ["scheduled_date": target.date, "start_time": target.time])
             }
+        }
+    }
+
+    /// Swipe, Next day: the same time, one date on. `day` is the date it is shown
+    /// on, which a task with only a deadline has no other record of.
+    func nextDay(_ task: PlannerTask, shownOn day: String) async {
+        let date = Civil.add(task.date ?? day, days: 1)
+        var body: [String: Any] = ["scheduled_date": date]
+        var moved = task
+        moved.date = date
+        if task.time != nil {
+            let time = Civil.clock(task.clockMinutes % (24 * 60))
+            body["start_time"] = time
+            moved.time = time
+        }
+        let response = await perform([task], "move “\(task.title)” to \(Civil.short(date))", local: { _ in moved }) {
+            try await $0.send("PATCH", PlannerAPI.taskPath(task.id), body: body)
+        }
+        guard let response else { return }
+        let notes = milestoneNotes(response)
+        show((["Moved “\(task.title)” to \(Civil.short(date))"] + notes).joined(separator: "\n"))
+        if !notes.isEmpty { await refreshMilestones() }
+    }
+
+    /// Swipe, Archive: no date, no time and high priority, so it leads the Inbox.
+    /// Its deadline is left alone, and until that comes it still shows on that day.
+    func archive(_ task: PlannerTask) async {
+        var filed = task
+        filed.date = nil
+        filed.time = nil
+        filed.priority = "high"
+        let response = await perform([task], "archive “\(task.title)”", local: { _ in filed }) {
+            try await $0.send("PATCH", PlannerAPI.taskPath(task.id),
+                              body: ["scheduled_date": NSNull(), "start_time": NSNull(), "priority": "high"])
+        }
+        guard response != nil else { return }
+        if let due = task.dueDate, due > calendarToday {
+            show("Archived “\(task.title)”. It is due \(Civil.short(due)), so it shows on that day until then.")
+        } else {
+            show("Archived “\(task.title)” to the Inbox")
         }
     }
 
@@ -352,7 +418,7 @@ final class PlannerStore {
         var body: [String: Any] = ["date": selectedDate]
         // The clock only bears on the day being looked at. Fitting out a
         // future day starts at the top of its window instead.
-        if fromNow, selectedDate == logicalToday { body["after"] = "now" }
+        if fromNow, selectedDate == calendarToday { body["after"] = "now" }
         do {
             let data = try await api.send("POST", "/v2/day/fit", body: body)
             revision += 1
@@ -464,7 +530,7 @@ final class PlannerStore {
         days = [:]; inbox = nil; week = nil; milestoneRows = []; projects = [:]
         connection = candidate
         api = probe
-        selectedDate = logicalToday
+        selectedDate = calendarToday
         await start()
     }
 
@@ -482,7 +548,7 @@ final class PlannerStore {
 
     /// Re-queues the coming week's reminders, once things settle.
     func syncReminders() {
-        guard let api else { return }
+        guard let api, !ConnectionStore.isUITesting else { return }
         let zone = timeZone
         let overdue = focusOverdue
         reminderSync?.cancel()

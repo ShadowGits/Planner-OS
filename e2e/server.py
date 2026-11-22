@@ -34,7 +34,25 @@ if __name__ == "__main__":
     import asyncio
 
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    app = create_app(runtime=FakeRuntime(), verifier=FakeVerifier())
+    runtime = FakeRuntime()
+    app = create_app(runtime=runtime, verifier=FakeVerifier())
+
+    # The UI tests start every test from an empty planner. Only this test
+    # server has it; the real API has no such route.
+    @app.post("/e2e/reset")
+    def reset():
+        tables = runtime.service_client.tables
+        for name in [name for name in tables if name != "workspaces"]:
+            del tables[name]
+        return {"success": True}
+
+    # Habits are made through MCP, which this server does not serve.
+    @app.post("/e2e/habit")
+    def habit(body: dict):
+        from planner_api.v2 import build_core
+
+        return build_core(runtime.service_client, USER_ID).habits.add_habit(**body)
+
     # Every write waits a little, like a phone network, so the tests can see a
     # change on screen before the server has it. E2E_WRITE_DELAY=0 turns it off.
     delay = float(os.environ.get("E2E_WRITE_DELAY", "0.4"))

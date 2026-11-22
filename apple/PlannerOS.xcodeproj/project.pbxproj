@@ -10,6 +10,7 @@
 		AA0000000000000000000001 /* PlannerOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PlannerOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000003 /* PlannerWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PlannerWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000004 /* PlannerOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PlannerOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXBuildFile section */
@@ -32,6 +33,11 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		AA0000000000000000000013 /* PlannerOSUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PlannerOSUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,6 +49,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA0000000000000000000024 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000027 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -72,6 +85,7 @@
 				AA0000000000000000000010 /* PlannerOS */,
 				AA0000000000000000000011 /* PlannerWidget */,
 				AA0000000000000000000012 /* Shared */,
+				AA0000000000000000000013 /* PlannerOSUITests */,
 				AA0000000000000000000002 /* Info.plist */,
 				AA0000000000000000000031 /* Products */,
 			);
@@ -82,6 +96,7 @@
 			children = (
 				AA0000000000000000000001 /* PlannerOS.app */,
 				AA0000000000000000000003 /* PlannerWidget.appex */,
+				AA0000000000000000000004 /* PlannerOSUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -137,6 +152,29 @@
 			productReference = AA0000000000000000000003 /* PlannerWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		AA0000000000000000000042 /* PlannerOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000063 /* Build configuration list for PBXNativeTarget "PlannerOSUITests" */;
+			buildPhases = (
+				AA0000000000000000000028 /* Sources */,
+				AA0000000000000000000027 /* Frameworks */,
+				AA0000000000000000000029 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA0000000000000000000092 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA0000000000000000000013 /* PlannerOSUITests */,
+			);
+			name = PlannerOSUITests;
+			packageProductDependencies = (
+			);
+			productName = PlannerOSUITests;
+			productReference = AA0000000000000000000004 /* PlannerOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXTargetDependency section */
@@ -144,6 +182,11 @@
 			isa = PBXTargetDependency;
 			target = AA0000000000000000000041 /* PlannerWidget */;
 			targetProxy = AA0000000000000000000091 /* PBXContainerItemProxy */;
+		};
+		AA0000000000000000000092 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA0000000000000000000040 /* PlannerOS */;
+			targetProxy = AA0000000000000000000093 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -154,6 +197,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = AA0000000000000000000041;
 			remoteInfo = PlannerWidget;
+		};
+		AA0000000000000000000093 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000050 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA0000000000000000000040;
+			remoteInfo = PlannerOS;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -170,6 +220,10 @@
 					};
 					AA0000000000000000000041 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					AA0000000000000000000042 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = AA0000000000000000000040;
 					};
 				};
 			};
@@ -189,6 +243,7 @@
 			targets = (
 				AA0000000000000000000040 /* PlannerOS */,
 				AA0000000000000000000041 /* PlannerWidget */,
+				AA0000000000000000000042 /* PlannerOSUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -208,6 +263,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA0000000000000000000029 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -219,6 +281,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA0000000000000000000023 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000028 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -437,6 +506,74 @@
 			};
 			name = Release;
 		};
+		AA0000000000000000000076 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.planneros.planner.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PlannerOS;
+			};
+			name = Debug;
+		};
+		AA0000000000000000000077 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.planneros.planner.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PlannerOS;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -463,6 +600,15 @@
 			buildConfigurations = (
 				AA0000000000000000000074 /* Debug */,
 				AA0000000000000000000075 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000063 /* Build configuration list for PBXNativeTarget "PlannerOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000076 /* Debug */,
+				AA0000000000000000000077 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

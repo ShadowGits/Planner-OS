@@ -291,6 +291,44 @@ def test_patch_task_milestone_id(client, runtime) -> None:
     assert patched2.status_code == 200
 
 
+def test_patch_priority_archives_task_to_inbox(client) -> None:
+    created = client.post(
+        "/v2/day/tasks",
+        json={"title": "Not this week", "date": "2026-07-22", "start_time": "10:00"},
+        headers=APP_KEY,
+    )
+    task_id = created.json()["data"]["task"]["id"]
+
+    archived = client.patch(
+        f"/v2/day/tasks/{task_id}",
+        json={"scheduled_date": None, "start_time": None, "priority": "high"},
+        headers=APP_KEY,
+    )
+    assert archived.status_code == 200
+    task = archived.json()["data"]["task"]
+    assert (task["scheduled_date"], task["start_time"], task["priority"]) == (None, None, "high")
+
+    day = client.get("/v2/day?date=2026-07-22", headers=APP_KEY).json()["data"]["items"]
+    assert task_id not in [item["id"] for item in day]
+    inbox = client.get("/v2/day/inbox", headers=APP_KEY).json()["data"]["items"]
+    assert [item["priority"] for item in inbox if item["id"] == task_id] == ["high"]
+
+    alone = client.patch(f"/v2/day/tasks/{task_id}", json={"priority": "low"}, headers=APP_KEY)
+    assert alone.status_code == 200
+    assert alone.json()["data"]["task"]["priority"] == "low"
+
+
+@pytest.mark.parametrize("priority", ["urgent", "", None])
+def test_patch_rejects_invalid_priority(client, priority) -> None:
+    task_id = client.post(
+        "/v2/day/tasks", json={"title": "Keep me", "date": "2026-07-22"}, headers=APP_KEY
+    ).json()["data"]["task"]["id"]
+    refused = client.patch(f"/v2/day/tasks/{task_id}", json={"priority": priority}, headers=APP_KEY)
+    assert refused.status_code == 400
+    assert refused.json()["errors"] == ["TASK_UPDATE_INVALID"]
+    assert "priority" in refused.json()["message"]
+
+
 def test_week_endpoint(client) -> None:
     client.post(
         "/v2/day/tasks",

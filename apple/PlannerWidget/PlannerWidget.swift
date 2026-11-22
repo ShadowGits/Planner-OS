@@ -189,6 +189,7 @@ struct PlannerWidgetView: View {
 
     var body: some View {
         switch family {
+#if !os(macOS)
         case .accessoryInline:
             Text(inlineText)
         case .accessoryCircular:
@@ -206,6 +207,7 @@ struct PlannerWidgetView: View {
                 Text(subhead).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+#endif
         case .systemMedium:
             medium
         case .systemLarge, .systemExtraLarge:
@@ -345,8 +347,15 @@ struct PlannerWidget: Widget {
         }
         .configurationDisplayName("Today")
         .description("Your day, with a tick beside each task. The large size shows all of it.")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge,
-                            .accessoryInline, .accessoryCircular, .accessoryRectangular])
+        .supportedFamilies(PlannerWidget.families)
+    }
+
+    private static var families: [WidgetFamily] {
+        var families: [WidgetFamily] = [.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge]
+#if !os(macOS)
+        families += [.accessoryInline, .accessoryCircular, .accessoryRectangular]
+#endif
+        return families
     }
 }
 

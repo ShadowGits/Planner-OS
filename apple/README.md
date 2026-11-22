@@ -3,19 +3,36 @@
 One SwiftUI app for all three, built from Xcode with a free Apple account.
 It talks to the same backend as Android, with the same app key.
 
-* **Timeline** (opens first), matching Structured as measured in `docs/structured-ux.md`:
-  * "16. October 2025 ›" on top, the week strip with each day's task colours under it, untimed tasks as round chips.
-  * Time runs down the page at 1.6 pt a minute. Capsules ahead of now are pale with a coloured icon; the one under way fills with colour down to now and says "28m remaining"; passed and done ones are solid. The line is coloured up to now, and a very subtle now bar runs across the timeline with the current time in bold on the left.
-  * Free time reads "You'll have 30m free. Anything you'd like to fit in?"; a long stretch offers "Add Task".
+* **Timeline** (opens first): one scroll from 14 days back to 60 ahead, opening at now.
+  * **Days end at midnight.** A task at 01:30 is under the next date at 01:30 and
+    nowhere else. Each day starts at a thick line with its date in bold, then its
+    untimed tasks on a line each, then its hours.
+  * **Every hour is 50 points**, all 24 of them, empty ones too, with the hours on
+    the left. A task shorter than half an hour is drawn 24 points tall, so it can
+    still be tapped.
+  * The **date tile** on top is the day in view, read a third of the way down the
+    screen. Tap it to pick a day. + adds to that day, and Fit fits that day.
+  * Tasks ahead of now are pale; the one under way fills down to now and says
+    "28m remaining"; passed and done ones are solid.
   * Tasks at the same time sit **side by side**, each in its own column placed
     by its own clock. Nothing is moved or hidden — a clash is yours to make.
-  * **Hold a task and drag it**: an outlined capsule shows where it will land with the new times in bold, a chip follows your finger, and the + turns into a bin to delete. Scrolling still works everywhere.
-    * Drag past the last task, through midnight, to as late as 3:55 the next morning without leaving the day, as the old timeline did: the night's hours show faintly while you drag, and a drop after midnight saves on the next date and stays at the end of this day.
-    * Drop it on a day in the week strip to move it to that day at the same time.
-  * Tap the ☆ on a task to make it a Top Win. Once something is starred, the Top Wins row shows under the week ("Top Wins · 1 of 3", "Day won"); tap a chip to jump to it.
+  * **Swipe a task left** (on the Mac: two fingers on a trackpad, or pull it left
+    with the mouse):
+    * **Next day**: the same time, one date on.
+    * **Archive**: no date, no time, high priority, so it leads the Inbox. A
+      deadline is left alone, so a task due later still shows on that day until
+      then. Habits, calendar events and finished tasks have no Archive.
+    * **Delete**: asks first. For a habit it skips that day only.
+  * **Hold a task and drag it** (on the Mac, pulling it up or down is enough): an
+    outline, and a badge pinned on top, show the day and time it will land on. Across a day's line is the
+    next date; at the top or bottom edge the timeline scrolls. The + turns into a
+    bin, which asks before deleting.
+  * Tap the ☆ on a task to make it a Top Win. The day's Top Wins then show under
+    its header ("Top Wins · 1 of 3", "Day won"); tap a chip to jump to it. A block
+    too narrow for a star is starred in its editor.
   * Split tasks show "Part 2/3", and logged focus time shows as "25m worked · 35m left".
-  * **Now** (on today) scrolls to the task under way or next; **Today** (on another day) goes back.
-  * Tap a task to edit it.
+  * **Now** scrolls back to now. **⋯** has the list view of the day on the tile, and Refresh.
+  * Tap a task to edit it; tap its circle to tick it.
 * **Inbox** (the Focus board): overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
   * Hold a card for its menu (Select, Done, Tomorrow, Pick a date, Drop), or tap **Select** to move or drop several.
@@ -120,15 +137,33 @@ day's loose ends, and what Siri is allowed to do and says back.
 From `apple/` on a Mac (or any machine with Swift):
 
 ```sh
-swiftc -swift-version 5 PlannerOS/Models.swift PlannerOS/FocusPolicy.swift \
+export PLANNER_TEST_FOLDER=$(mktemp -d)
+swiftc -swift-version 5 -D PLANNER_TESTS PlannerOS/Models.swift PlannerOS/FocusPolicy.swift \
     PlannerOS/TimelinePolicy.swift PlannerOS/PlannerAPI.swift \
     Shared/PlannerSnapshot.swift Shared/SharedConnection.swift Shared/PlannerVoice.swift \
     PolicyTests/main.swift -o /tmp/policy && /tmp/policy
 ```
 
-The screens themselves need Xcode, so `e2e/run.sh` parses them instead and
-refuses a tap gesture or drag source laid over a button — the fault that made
-the Mac open a task when the tick was clicked.
+The screens themselves need Xcode. `e2e/run.sh` parses them and refuses a tap
+gesture or drag source laid over a button — the fault that made the Mac open a
+task when the tick was clicked — and `PlannerOSUITests` drives them for real.
+
+## UI tests
+
+Start the test server from the repo root (`python3 e2e/server.py 8765`; app key
+`app-secret`), then, on an iPhone simulator with iOS 27.3:
+
+```sh
+xcodebuild test -project apple/PlannerOS.xcodeproj -scheme PlannerOS \
+    -destination 'platform=iOS Simulator,name=iPhone 17,OS=27.3' \
+    IPHONEOS_DEPLOYMENT_TARGET=27.3 MACOSX_DEPLOYMENT_TARGET=27.3
+```
+
+* For another port, set `TEST_RUNNER_PLANNER_UI_TEST_SERVER=http://127.0.0.1:<port>`.
+* The tests empty that server before each test; never point them at a real one.
+* On a Mac, XCUITest **quits any running app with the same bundle identifier**,
+  takes over the pointer, and asks for your password. Run it from a copy with a
+  different identifier if Planner OS is in use.
 
 ## Siri, Shortcuts and Spotlight
 
