@@ -32,6 +32,16 @@ struct SettingsView: View {
                 Text("The same server origin and PWA_ACCESS_KEY the Android app uses, without /app. The key stays in this device's Keychain.")
             }
             if store.connection != nil {
+                Section("Sync") {
+                    Text("Planner changes refresh automatically about once a minute while the app is running, and when you return to it.")
+                    #if os(iOS)
+                    Text("In the background, iOS chooses when to update your planner, widget and reminders. Allow Planner OS in Settings → General → Background App Refresh.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    #else
+                    Text("Refresh continues while the app is hidden or minimized. Your Mac must be awake and Planner OS must remain running.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    #endif
+                }
                 Section {
                     Toggle("Remind me \(reminderLeadMinutes) minutes before", isOn: $reminders)
                     LabeledContent("Notifications", value: permission)

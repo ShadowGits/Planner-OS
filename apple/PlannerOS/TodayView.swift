@@ -109,7 +109,8 @@ struct TodayView: View {
                                                previous: color(of: entries, at: place.index - 1),
                                                following: color(of: entries, at: place.index + 1),
                                                now: now, twentyFour: twentyFour) {
-                                            editor = EditorRequest(date: date, time: Civil.clock(((start + 4) / 5) * 5))
+                                            let slot = PendingSlot(day: date, start: start, end: start + minutes)
+                                            editor = EditorRequest(date: slot.target.date, time: slot.target.time, pendingSlot: slot)
                                         }
                                     }
                                 }
@@ -1086,6 +1087,7 @@ struct GapRow: View {
         // The whole gap taps to add, and so does the chip inside it: one
         // action, so it does not matter which of the two the Mac picks.
         .onTapGesture(perform: onAdd) // tap-ok
+        .accessibilityIdentifier("timeline-gap-\(start)")
     }
 }
 

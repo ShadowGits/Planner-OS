@@ -23,9 +23,11 @@ It talks to the same backend as Android, with the same app key.
 * **Settings**: server, app key and reminders, and a line saying why a reminder
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
-* **A change made somewhere else turns up on its own.** An open window re-reads
-  the server about every minute and a half, so what the phone does appears on
-  the Mac without touching it. Skipped while you are saving or dragging.
+* **A change made somewhere else turns up on its own.** The running app re-reads
+  the server about once a minute, including while the Mac is hidden or minimized.
+  Refresh is owned by the store, so it does not depend on a visible window.
+  Skipped while saving or dragging, and stopped on disconnect. The Mac must
+  remain awake and the app must remain running.
 * **Every change shows at once** (add, edit, tick, star, drag, move, drop, delete) and saves in the background. If the server refuses it, just that change is undone and a message says what couldn't be saved and why.
 * **Reminders** arrive 10 minutes before every timed task, with their own
   two-note pop rather than the system default. They are local notifications,
@@ -105,6 +107,27 @@ Each time the app syncs, it reads the next 7 days and queues a notification
 * after every change you make in it;
 * in iOS background refresh, which iOS runs when it chooses.
 
+Background refresh now updates the planner's day, Inbox, week, project context,
+saved responses and shared widget snapshot, then awaits reminder reconciliation
+before its execution window ends. A request is scheduled on launch and on entering
+the background, with an earliest start 15 minutes later; iOS decides when it
+actually runs. Enable Settings → General → Background App Refresh for Planner OS.
+Low Power Mode, force-quitting and the system's scheduling decisions can prevent
+refreshes. Returning to the app triggers another refresh immediately.
+
+Failed reads keep the widget's last good snapshot. A partial seven-day reminder
+read keeps the existing reminder queue. Cancelled background work and a changed
+connection cannot install a stale reminder schedule. The local background-refresh
+harness is `apple/RefreshTests/main.swift`; it checks remote edits, saved-day
+updates, awaited reminders, drag exclusion, automatic polling without a view,
+disconnect and quiet offline failures against the isolated API.
+
+Verification on 2026-11-25: all nine focused refresh checks passed, including
+the real timer picking up an external edit without a view. Five iOS simulator
+task/picker regressions passed, and final iOS and macOS builds succeeded. Actual
+iOS background execution frequency remains a device/OS decision and was not
+established by these tests. The installed personal app still needs this build.
+
 The system delivers queued notifications even when the app is closed.
 
 * A change made somewhere else (web, Android, Claude) reaches this device's reminders the next time the app syncs.
@@ -168,6 +191,47 @@ like this one; Apple does not offer it to App Store or external TestFlight
 builds during the preview. No entitlement or paid account is needed.
 
 ## Checking both apps together
+
+### Fit previous pending here
+
+Tap or click a timeline gap (including its free-time suggestion or Add Task
+chip). The new-task sheet now offers **Fit previous pending here** above the
+new-task fields. Open it to search unfinished tasks, with their original date,
+time, duration and project/milestone context. Tasks that fit appear first;
+longer ones show how much extra room they need and cannot be selected.
+
+Choosing a task moves the existing task to the gap's start. Its identity,
+duration, notes, work history and project links stay intact. Finished/skipped
+tasks, habits and imported calendar appointments are excluded. Cancel and Back
+save nothing. Before moving, the app refreshes the pending task and the selected
+day; a completed task, larger duration or occupied gap leaves the picker open
+with an explanation. Overnight gaps save on the next calendar date.
+
+`apple/PendingSlotTests/main.swift` checks snapping, candidate order, exclusions,
+gap sizes and overnight collisions. `PlannerOSUITests/PendingGapTests.swift`
+uses the existing local fixture API and XCTest UI testing on iOS and macOS.
+Start the fixture with `.venv/bin/python e2e/server.py 8877`, then run:
+
+```sh
+TEST_RUNNER_PLANNER_UI_TEST_SERVER=http://127.0.0.1:8877 xcodebuild \
+  -project apple/PlannerOS.xcodeproj -scheme PlannerOS \
+  -destination 'platform=iOS Simulator,name=PlannerOS UI Tests' \
+  -parallel-testing-enabled NO -only-testing:PlannerOSUITests/PendingGapTests \
+  test CODE_SIGNING_ALLOWED=NO
+```
+
+Use `-destination 'platform=macOS'` with local development signing for Mac UI
+tests. The launch-only fixture connection is compiled out of Release builds;
+it is never saved to Settings or Keychain. These tests use invented tasks.
+
+Verification on 2026-11-24: all five iOS simulator UI cases passed. The four
+pending-picker Mac cases passed; the existing Add-new-task flow was also checked
+separately after correcting its Mac text-field lookup. Screenshots were inspected
+on both platforms. Gap policy checks and Xcode/reference/gesture checks passed.
+The standalone store regression harness still reports its existing widget/Siri
+failures when run without signed App Group storage; this does not establish
+widget/Siri device behavior. macOS UI tests used an ad-hoc signed local build
+with App Group entitlements disabled only through build-command overrides.
 
 `e2e/run.sh` at the repo root runs every backend test, these rules, this app's
 store against a fresh local Planner OS API (add, drag, tick, star, edit, move,

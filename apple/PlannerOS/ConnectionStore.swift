@@ -8,6 +8,9 @@ enum ConnectionStore {
     private static let serverKey = "server"
 
     static func load() -> Connection? {
+        #if DEBUG
+        if let testing = uiTestConnection { return testing }
+        #endif
         guard let server = UserDefaults.standard.string(forKey: serverKey), let base = URL(string: server),
               let key = readKey(), !key.isEmpty else { return nil }
         return Connection(base: base, key: key)
@@ -26,6 +29,26 @@ enum ConnectionStore {
         let status = SecItemAdd(item as CFDictionary, nil)
         guard status == errSecSuccess else { throw PlannerError(message: "The key could not be saved to the Keychain (\(status)).") }
         UserDefaults.standard.set(connection.base.absoluteString, forKey: serverKey)
+    }
+
+    #if DEBUG
+    /// The UI tests' local server (http://127.0.0.1, which the Settings form
+    /// rightly refuses), named in the launch environment by PlannerOSUITests.
+    /// Never saved, and compiled out of Release builds.
+    static var uiTestConnection: Connection? {
+        let env = ProcessInfo.processInfo.environment
+        guard let server = env["PLANNER_UI_TEST_SERVER"], let base = URL(string: server),
+              let key = env["PLANNER_UI_TEST_KEY"], !key.isEmpty else { return nil }
+        return Connection(base: base, key: key)
+    }
+    #endif
+
+    static var isUITesting: Bool {
+        #if DEBUG
+        uiTestConnection != nil
+        #else
+        false
+        #endif
     }
 
     static func clear() {

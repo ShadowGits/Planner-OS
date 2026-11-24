@@ -1,5 +1,53 @@
 import Foundation
 
+/// A chosen timeline gap. Its bounds stay in logical-day minutes; only the
+/// write converts an overnight slot to the next calendar date.
+struct PendingSlot: Equatable {
+    let day: String
+    let start: Int
+    let end: Int
+
+    init(day: String, start: Int, end: Int) {
+        self.day = day
+        self.start = ((start + 4) / 5) * 5
+        self.end = end
+    }
+
+    var target: (date: String, time: String) { dropTarget(day, start) }
+    var minutes: Int { max(0, end - start) }
+
+    func accepts(_ task: PlannerTask) -> Bool {
+        guard !task.done, !task.habit, !task.fromCalendar, !task.id.hasPrefix("pending:") else { return false }
+        guard let date = task.date ?? task.dueDate else { return true }
+        if date != target.date { return date < target.date }
+        guard task.time != nil else { return true }
+        return task.clockMinutes + task.minutes <= start % 1440
+    }
+
+    /// Keep the full scheduled duration: fitting is a move, never a silent
+    /// shortening or split, even when some actual work has already been logged.
+    func fits(_ task: PlannerTask) -> Bool { task.minutes <= minutes }
+
+    func candidates(_ tasks: [PlannerTask]) -> [PlannerTask] {
+        var seen = Set<String>()
+        return tasks.filter { accepts($0) && seen.insert($0.id).inserted }.sorted {
+            if fits($0) != fits($1) { return fits($0) }
+            if $0.starred != $1.starred { return $0.starred }
+            return ($0.date ?? $0.dueDate ?? "9999", $0.title, $0.id) < ($1.date ?? $1.dueDate ?? "9999", $1.title, $1.id)
+        }
+    }
+
+    func isFree(for task: PlannerTask, among tasks: [PlannerTask]) -> Bool {
+        guard fits(task) else { return false }
+        return !tasks.contains { other in
+            var dated = other
+            dated.date = other.date ?? other.dueDate
+            guard other.id != task.id, let displayed = shown(dated, on: day), displayed.time != nil else { return false }
+            return displayed.clockMinutes < start + task.minutes && displayed.clockMinutes + displayed.minutes > start
+        }
+    }
+}
+
 // The day laid out as Structured lays it out (docs/structured-ux.md): time runs
 // down the page at 1.6 pt a minute, each task a capsule on a spine, free time
 // between them. Android follows the same rules in StructuredTimeline.kt.

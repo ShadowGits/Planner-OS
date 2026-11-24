@@ -76,6 +76,7 @@ final class PlannerAPI: Sendable {
     /// GETs and decodes `data`, keeping the body so the screen can paint it offline next time.
     func get<T: Decodable>(_ path: String, cacheAs key: String? = nil) async throws -> T {
         let data = try await send("GET", path)
+        try Task.checkCancellation()
         let value = try JSONDecoder().decode(Envelope<T>.self, from: data).data
         ResponseCache.save(data, key: key ?? path)
         return value

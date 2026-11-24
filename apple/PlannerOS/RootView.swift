@@ -9,6 +9,7 @@ struct EditorRequest: Identifiable {
     var task: PlannerTask?
     var date: String?
     var time: String?
+    var pendingSlot: PendingSlot?
 }
 
 /// As in Structured: the screen above, and along the bottom a floating pill of
@@ -71,10 +72,10 @@ struct RootView: View {
         .onChange(of: phase) { _, phase in
             if phase == .active {
                 store.now = Date()
-                Task { await store.refreshAll() }
+                Task { await store.refreshIfStale(after: 0) }
             }
             #if os(iOS)
-            if phase == .background { BackgroundRefresh.schedule() }
+            if phase == .background, store.connection != nil, !ConnectionStore.isUITesting { BackgroundRefresh.schedule() }
             #endif
         }
     }
@@ -106,14 +107,13 @@ struct RootView: View {
         }
     }
 
-    /// Moves "now" along so overdue cards and the now line stay current, and
-    /// takes the chance to see what else has changed — a change made on the
-    /// phone reaches a Mac window that has been open for hours.
+    /// Advances the now line while this view exists. The store owns server
+    /// refresh independently, including when no window is visible.
     private func tick() async {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard !Task.isCancelled else { return }
             store.now = Date()
-            await store.refreshIfStale()
         }
     }
 }

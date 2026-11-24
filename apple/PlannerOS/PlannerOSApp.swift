@@ -19,7 +19,7 @@ struct PlannerOSApp: App {
         }
         #if os(iOS)
         .backgroundTask(.appRefresh(BackgroundRefresh.identifier)) {
-            await BackgroundRefresh.run()
+            await BackgroundRefresh.run(store: store)
         }
         #endif
         #if os(macOS)
@@ -36,15 +36,19 @@ enum BackgroundRefresh {
 
     static func schedule() {
         let request = BGAppRefreshTaskRequest(identifier: identifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 2 * 3600)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(request)
     }
 
-    static func run() async {
+    static func cancel() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+    }
+
+    @MainActor
+    static func run(store: PlannerStore) async {
+        guard store.connection != nil else { cancel(); return }
         schedule()
-        guard let connection = ConnectionStore.load() else { return }
-        let zone = TimeZone(identifier: UserDefaults.standard.string(forKey: "timezone") ?? "Asia/Kolkata") ?? .current
-        await Reminders.sync(api: PlannerAPI(connection: connection), timeZone: zone)
+        await store.refreshInBackground()
     }
 }
 #endif

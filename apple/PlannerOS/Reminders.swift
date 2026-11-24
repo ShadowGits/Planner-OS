@@ -39,7 +39,10 @@ enum Reminders {
             for await view in group { if let view { views.append(view) } }
             return views
         }
-        guard !days.isEmpty else { return }
+        // Keep the existing week if even one day's read failed. Also reject an
+        // expired background task or an account changed while reads were out.
+        guard !Task.isCancelled, enabled, days.count == dates.count,
+              ConnectionStore.load() == api.connection else { return }
         let zone = TimeZone(identifier: days[0].timezone) ?? timeZone
         center.removeAllPendingNotificationRequests()
         for reminder in planReminders(days, now: now, timeZone: zone) {

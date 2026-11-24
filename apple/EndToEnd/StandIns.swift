@@ -8,11 +8,13 @@ enum ConnectionStore {
     static func load() -> Connection? { nil }
     static func save(_ connection: Connection) throws {}
     static func clear() {}
+    static var isUITesting: Bool { false }
 }
 
 enum Reminders {
+    static var syncCount = 0
     static func status() async -> UNAuthorizationStatus { .denied }
     static func requestPermission() async -> Bool { false }
-    static func sync(api: PlannerAPI, timeZone: TimeZone, now: Date = Date()) async {}
+    static func sync(api: PlannerAPI, timeZone: TimeZone, now: Date = Date()) async { syncCount += 1 }
     static func clear() {}
 }

@@ -27,6 +27,20 @@ struct TaskEditor: View {
 
     var body: some View {
         Form {
+            if existing == nil, let slot = request.pendingSlot {
+                Section {
+                    NavigationLink {
+                        PendingTaskPicker(slot: slot, onFitted: { dismiss() })
+                    } label: {
+                        Label("Fit previous pending here", systemImage: "tray.and.arrow.down")
+                    }
+                    .accessibilityIdentifier("fit-previous-pending")
+                } header: {
+                    Text("\(Self.durationLabel(slot.minutes)) free · \(Civil.clockText(slot.start, twentyFour: Civil.prefers24Hour))–\(Civil.clockText(slot.end, twentyFour: Civil.prefers24Hour))")
+                } footer: {
+                    Text("Choose an unfinished task, or add a new task below.")
+                }
+            }
             Section {
                 TextField("What needs doing?", text: $title)
                 Toggle(isOn: $starred) { Label("Top win", systemImage: "star") }
@@ -151,5 +165,130 @@ struct TaskEditor: View {
         guard let task = existing else { return }
         dismiss()
         Task { await store.delete(task) }
+    }
+}
+
+/// The same picker on iPhone, iPad and Mac. Selecting a card moves its task;
+/// navigating back or cancelling leaves both the task and the new-task draft alone.
+@MainActor
+private struct PendingTaskPicker: View {
+    @Environment(PlannerStore.self) private var store
+    let slot: PendingSlot
+    let onFitted: () -> Void
+    @State private var tasks: [PlannerTask] = []
+    @State private var loading = true
+    @State private var saving: String?
+    @State private var error: String?
+    @State private var query = ""
+
+    private var matching: [PlannerTask] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return needle.isEmpty ? tasks : tasks.filter { $0.title.localizedCaseInsensitiveContains(needle) }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Label("\(Civil.short(slot.target.date)) · \(Civil.clockText(slot.start, twentyFour: Civil.prefers24Hour))", systemImage: "calendar")
+                Text("\(TaskEditor.durationLabel(slot.minutes)) available. Choose a task to move here.")
+                    .font(.callout).foregroundStyle(.secondary)
+                TextField("Search pending tasks", text: $query)
+                    .accessibilityIdentifier("pending-task-search")
+            }
+            if let error {
+                Section {
+                    Text(error).foregroundStyle(.red).accessibilityIdentifier("pending-task-error")
+                    Button("Refresh pending tasks") { Task { await load() } }
+                        .disabled(loading || saving != nil)
+                }
+            }
+            if loading {
+                ProgressView("Loading pending tasks…")
+            } else if matching.isEmpty {
+                Text(tasks.isEmpty ? "No previous pending tasks. Go back to add a new task." : "No tasks match your search.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Section("Fits this gap") {
+                    let fitting = matching.filter { slot.fits($0) }
+                    if fitting.isEmpty { Text("No pending tasks fit this gap.").foregroundStyle(.secondary) }
+                    ForEach(fitting) { task in card(task) }
+                }
+                let longer = matching.filter { !slot.fits($0) }
+                if !longer.isEmpty {
+                    Section("Needs a larger gap") {
+                        ForEach(longer) { task in card(task) }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Previous pending")
+        .inlineTitle()
+        .navigationBarBackButtonHidden(saving != nil)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", action: onFitted).disabled(saving != nil)
+            }
+        }
+        .interactiveDismissDisabled(saving != nil)
+        .task { await load() }
+        .macSheetSize()
+    }
+
+    private func card(_ task: PlannerTask) -> some View {
+        Button {
+            saving = task.id
+            error = nil
+            Task {
+                do {
+                    try await store.fitPending(task, into: slot)
+                    onFitted()
+                } catch {
+                    self.error = error.localizedDescription
+                }
+                saving = nil
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: task.starred ? "star.fill" : "arrow.down.to.line")
+                    .foregroundStyle(Palette.accent)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(task.title).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(originalDate(task)).font(.caption).foregroundStyle(.secondary)
+                    if let context = store.context(task) {
+                        Text(context).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !slot.fits(task) {
+                        Text("Needs \(TaskEditor.durationLabel(task.minutes - slot.minutes)) more")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 4)
+                if saving == task.id { ProgressView() }
+                else { Text(TaskEditor.durationLabel(task.minutes)).font(.callout.monospacedDigit()).foregroundStyle(.primary) }
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!slot.fits(task) || saving != nil || loading)
+        .accessibilityIdentifier("pending-task-\(task.id)")
+    }
+
+    private func originalDate(_ task: PlannerTask) -> String {
+        if let date = task.date {
+            return "Planned \(Civil.short(date))" + (task.time == nil ? " · No time" : " · \(Civil.clockText(task.clockMinutes, twentyFour: Civil.prefers24Hour))")
+        }
+        if let due = task.dueDate { return "Unscheduled · Due \(Civil.short(due))" }
+        return "Unscheduled · No date"
+    }
+
+    private func load() async {
+        loading = true
+        error = nil
+        do { tasks = try await store.pendingTasks(for: slot) }
+        catch { self.error = error.localizedDescription }
+        loading = false
     }
 }

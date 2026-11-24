@@ -499,3 +499,28 @@ When shipping a behavior change, update the relevant focused guide and this hand
 ### Android milestone detail workspace (1.0.17)
 
 See [android_milestone_details.md](android_milestone_details.md) for full-screen milestone task management, web health parity, app-key milestone writes, milestone-scoped paginated task DTOs, and persistent Dashboard cache behavior across mutations.
+
+### Apple pending-gap picker (2026-11-24, local implementation)
+
+The shared SwiftUI iOS/macOS app offers **Fit previous pending here** in the
+task sheet opened from a timeline gap. The searchable picker shows original
+dates, times and durations, with fitting tasks first and oversized tasks
+disabled. Selection reschedules the existing task through the existing day
+PATCH route, preserving its other fields. It refreshes the task and day before
+saving to reject newly completed tasks and newly occupied gaps. It adds no SQL
+migration or backend route. See [Apple README](../apple/README.md#fit-previous-pending-here)
+for the XCTest fixture workflow and verification limits. This entry describes
+local source, not a production deployment.
+
+### Apple automatic/background refresh (2026-11-25, local implementation)
+
+The SwiftUI store now owns its automatic refresh loop independently of a window,
+checking every 15 seconds for a day snapshot older than 60 seconds. Quiet refresh
+does not interrupt writes/dragging, overlap another full refresh, show network
+errors as toasts, or adopt a response from an old connection. Disconnect cancels
+the loop and pending iOS refresh requests. The iOS background handler refreshes
+the full planner and widget, then awaits reminder synchronization. Requests are
+eligible after 15 minutes; actual execution is controlled by iOS. Failed widget
+reads and incomplete reminder-week reads preserve last-known data. See the Apple
+README and `apple/RefreshTests/main.swift`. This is local source; physical-device
+background scheduling frequency has not been established.

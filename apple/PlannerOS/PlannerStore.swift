@@ -34,6 +34,8 @@ final class PlannerStore {
     private(set) var lastRefresh = Date.distantPast
     private var reminderSync: Task<Void, Never>?
     private var toastClear: Task<Void, Never>?
+    @ObservationIgnored private var automaticRefresh: Task<Void, Never>?
+    private var refreshing = false
 
     /// Writes still saving, counting the refresh after each; tests wait for 0.
     private(set) var writesInFlight = 0
@@ -46,6 +48,12 @@ final class PlannerStore {
         let zone = TimeZone(identifier: UserDefaults.standard.string(forKey: "timezone") ?? "Asia/Kolkata") ?? .current
         timeZone = zone
         selectedDate = Civil.logicalToday(in: zone)
+        if ConnectionStore.isUITesting {
+            // Every UI test starts from the server alone: no day painted from
+            // an earlier run, and the timeline rather than a remembered list.
+            ResponseCache.clear()
+            UserDefaults.standard.removeObject(forKey: "day_list")
+        }
         connection = saved
         api = connection.map { PlannerAPI(connection: $0) }
         paintCached()
@@ -88,38 +96,70 @@ final class PlannerStore {
     func start() async {
         guard api != nil else { return }
         await refreshAll()
+        startAutomaticRefresh()
+        #if os(iOS)
+        if !ConnectionStore.isUITesting { BackgroundRefresh.schedule() }
+        #endif
+        // The permission prompt would cover the screen the UI tests tap.
+        if ConnectionStore.isUITesting { return }
         if await Reminders.status() == .notDetermined, await Reminders.requestPermission() { syncReminders() }
     }
 
     func refreshAll(quiet: Bool = false) async {
-        guard api != nil else { return }
+        guard api != nil, !refreshing, !Task.isCancelled else { return }
+        if quiet && (writesInFlight > 0 || !busy.isEmpty || draggingID != nil) { return }
+        refreshing = true
+        let connectionAtStart = connection
+        defer { refreshing = false; loading = false }
         if !quiet { loading = true }
         // Ticks made on the widget go up before anything is read back, so the
         // read already includes them.
         await PendingTicks.flush()
-        async let selected: Void = loadDay(selectedDate)
+        async let selected: Void = loadDay(selectedDate, quiet: quiet)
         async let today: Void = loadTodayIfAway()
-        async let backlog: Void = refreshInbox()
-        async let thisWeek: Void = refreshWeek()
+        async let backlog: Void = refreshInbox(quiet: quiet)
+        async let thisWeek: Void = refreshWeek(quiet: quiet)
         async let targets: Void = refreshMilestones()
         async let names: Void = refreshProjects()
         _ = await (selected, today, backlog, thisWeek, targets, names)
-        loading = false
-        lastRefresh = Date()
+        guard !Task.isCancelled, connection == connectionAtStart else { return }
         syncReminders()
         publishWidget()
     }
 
-    /// Reads the server again when what is on screen has been sitting there a
-    /// while. Nothing else would: the app reads on launch, when it comes to the
-    /// front and when you pull down, which is fine for a phone you pick up and
-    /// put down, and useless for a Mac window left open all afternoon while the
-    /// phone changes the same day. Skipped mid-write and mid-drag, where a read
-    /// would fight what you are doing.
-    func refreshIfStale(after seconds: TimeInterval = 90) async {
+    /// Automatic refresh while the app is running, skipped mid-write and
+    /// mid-drag so a server read does not fight a local change.
+    func refreshIfStale(after seconds: TimeInterval = 60) async {
         guard api != nil, writesInFlight == 0, busy.isEmpty, draggingID == nil,
               Date().timeIntervalSince(lastRefresh) >= seconds else { return }
         await refreshAll(quiet: true)
+    }
+
+    /// Owned by the store rather than a window: minimizing or hiding the Mac
+    /// app does not cancel it. iOS suspends this loop when the app is suspended;
+    /// its scheduled background task below gets a separate chance to refresh.
+    private func startAutomaticRefresh() {
+        guard automaticRefresh == nil, !ConnectionStore.isUITesting else { return }
+        automaticRefresh = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 15_000_000_000) }
+                catch { return }
+                guard let self else { return }
+                self.now = Date()
+                await self.refreshIfStale()
+            }
+        }
+    }
+
+    /// Await reminder reconciliation inside the OS's background execution
+    /// window, rather than leaving it in a detached/debounced task afterwards.
+    func refreshInBackground() async {
+        guard let api, writesInFlight == 0, busy.isEmpty, draggingID == nil else { return }
+        now = Date()
+        await refreshAll(quiet: true)
+        guard !Task.isCancelled, connection == api.connection else { return }
+        reminderSync?.cancel()
+        await Reminders.sync(api: api, timeZone: timeZone)
     }
 
     /// Focus needs today's view even while Today shows another day.
@@ -132,7 +172,7 @@ final class PlannerStore {
         let started = revision
         do {
             let view: DayView = try await api.get("/v2/day?date=\(date)")
-            guard started == revision, unconfirmed == 0 else { return }
+            guard !Task.isCancelled, connection == api.connection, started == revision, unconfirmed == 0 else { return }
             days[date] = view
             // Any read of the day counts as being up to date, not just a full
             // refresh — otherwise the window looks stale seconds after a save.
@@ -146,7 +186,7 @@ final class PlannerStore {
         let started = revision
         do {
             let view: DayView = try await api.get("/v2/day/inbox")
-            if started == revision, unconfirmed == 0 { inbox = view }
+            if !Task.isCancelled, connection == api.connection, started == revision, unconfirmed == 0 { inbox = view }
         } catch { if !quiet { report(error) } }
     }
 
@@ -155,12 +195,13 @@ final class PlannerStore {
         let started = revision
         do {
             let view: WeekView = try await api.get("/v2/week?date=\(anchor ?? week?.weekStart ?? calendarToday)", cacheAs: "week")
-            if started == revision, unconfirmed == 0 { week = view }
+            if !Task.isCancelled, connection == api.connection, started == revision, unconfirmed == 0 { week = view }
         } catch { if !quiet { report(error) } }
     }
 
     func refreshMilestones() async {
         guard let api else { return }
+        let started = revision
         var rows: [MilestoneRow] = []
         var offset: Int? = 0
         do {
@@ -169,6 +210,7 @@ final class PlannerStore {
                 rows += page.rows
                 offset = page.nextOffset
             }
+            guard !Task.isCancelled, connection == api.connection, started == revision, unconfirmed == 0 else { return }
             milestoneRows = rows
             cacheMilestones(rows)
         } catch { /* The saved list stays; Focus still works without it. */ }
@@ -186,6 +228,7 @@ final class PlannerStore {
     func refreshProjects() async {
         guard let api else { return }
         if let planning: PlanningContext = try? await api.get("/v2/day/planning-context") {
+            guard !Task.isCancelled, connection == api.connection else { return }
             projects = Dictionary(planning.projects.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         }
     }
@@ -197,6 +240,38 @@ final class PlannerStore {
     }
 
     // MARK: Writing
+
+    func pendingTasks(for slot: PendingSlot) async throws -> [PlannerTask] {
+        guard let api else { throw PlannerError(message: "Connect to your planner first.") }
+        let data = try await api.send("GET", "/v2/day/inbox?date=\(slot.target.date)")
+        guard connection == api.connection else { throw PlannerError(message: "The connection changed. Open the gap again.") }
+        let view = try JSONDecoder().decode(Envelope<DayView>.self, from: data).data
+        return slot.candidates(view.items)
+    }
+
+    /// Refresh both sides before moving an existing task. A changed duration,
+    /// completion or newly occupied gap keeps the picker open with an explanation.
+    func fitPending(_ task: PlannerTask, into slot: PendingSlot) async throws {
+        guard let api else { throw PlannerError(message: "Connect to your planner first.") }
+        let pending = try await pendingTasks(for: slot)
+        let data = try await api.send("GET", "/v2/day?date=\(slot.day)")
+        let day = try JSONDecoder().decode(Envelope<DayView>.self, from: data).data
+        guard connection == api.connection else { throw PlannerError(message: "The connection changed. Open the gap again.") }
+        guard let current = pending.first(where: { $0.id == task.id }) else {
+            throw PlannerError(message: "This task is no longer pending here. Refresh the list.")
+        }
+        guard slot.fits(current) else { throw PlannerError(message: "This task is longer than the gap. Choose a larger gap.") }
+        guard slot.isFree(for: current, among: day.items) else {
+            throw PlannerError(message: "This gap has changed. Close this sheet and choose a free slot again.")
+        }
+        guard busy.isEmpty else { throw PlannerError(message: "Wait for the current change to save, then try again.") }
+        var moved = current
+        moved.date = slot.target.date
+        moved.time = slot.target.time
+        guard await update(current, to: moved) else {
+            throw PlannerError(message: "The task could not be moved. Refresh the list before trying again.")
+        }
+    }
 
     /// Applies `change` on screen (nil removes the task), sends `remote`, and
     /// puts everything back if it fails. Returns the response, or nil on failure.
@@ -469,6 +544,11 @@ final class PlannerStore {
     }
 
     func disconnect() {
+        automaticRefresh?.cancel()
+        automaticRefresh = nil
+        #if os(iOS)
+        BackgroundRefresh.cancel()
+        #endif
         ConnectionStore.clear()
         ResponseCache.clear()
         Reminders.clear()

@@ -44,11 +44,22 @@ echo "== Apple: Focus and timeline rules"
     apple/Shared/PendingTicks.swift apple/PolicyTests/main.swift -o "$BUILD/policy"
 "$BUILD/policy"
 
+echo "== Apple: fitting previous pending tasks into a gap"
+"$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift \
+    apple/PendingSlotTests/main.swift -o "$BUILD/pending-slot"
+"$BUILD/pending-slot"
+
 echo "== Apple: every action against the API"
 "$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
     $APPLE/PlannerStore.swift $APPLE/WidgetBridge.swift apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift \
     apple/Shared/PlannerVoice.swift apple/Shared/PendingTicks.swift apple/EndToEnd/StandIns.swift apple/EndToEnd/main.swift -o "$BUILD/e2e"
 "$BUILD/e2e" "$URL"
+
+echo "== Apple: background refresh, including automatic refresh without a window"
+"$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
+    $APPLE/PlannerStore.swift $APPLE/WidgetBridge.swift apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift \
+    apple/Shared/PlannerVoice.swift apple/Shared/PendingTicks.swift apple/EndToEnd/StandIns.swift apple/RefreshTests/main.swift -o "$BUILD/refresh"
+"$BUILD/refresh" "$URL"
 
 echo "== Android: unit, touch and end-to-end tests"
 (cd android && PLANNER_E2E_URL="$URL" ./gradlew -q ${GRADLE_ARGS:-} testDebugUnitTest)

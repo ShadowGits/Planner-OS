@@ -20,6 +20,9 @@ extension PlannerStore {
         }
 
         let day = logicalToday
+        // A failed background read must not replace the widget's last good
+        // snapshot with an empty day. Disconnect still deliberately clears it.
+        guard connection == nil || days[day] != nil else { return }
         // A tick made on the widget that the server has not taken yet still
         // shows as made, or this fresh copy would undo it on the widget.
         let waiting = PendingTicks.all()
