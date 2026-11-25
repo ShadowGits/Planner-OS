@@ -1,0 +1,12 @@
+[
+  {
+    "name": "delete-obsolete-after-three-days",
+    "action": {"type": "Delete"},
+    "condition": {"tagState": "any", "packageNamePrefixes": ["planner-os-api"], "olderThan": "3d"}
+  },
+  {
+    "name": "keep-live-deployments",
+    "action": {"type": "Keep"},
+    "condition": {"tagState": "tagged", "tagPrefixes": ["planner-live-", "latest"]}
+  }
+]

@@ -102,6 +102,12 @@ steps:
       # has nothing to probe, and health checks are not billed as requests.
       - '--liveness-probe=httpGet.path=/api/health,periodSeconds=60,timeoutSeconds=10,failureThreshold=5'
 
+  # Move protection only after deployment succeeded. Registry cleanup removes
+  # obsolete images after three days; a failed deploy keeps the old live image.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: python3
+    args: ['scripts/protect_live_image.py', '--project=$PROJECT_ID', '--cleanup']
+
 options:
   logging: CLOUD_LOGGING_ONLY
 
