@@ -144,7 +144,7 @@ final class TimelineTests: PlannerScreenTests {
         // Late at night there may be no room left today, and then the server says so.
         let toast = app.staticTexts.matching(NSPredicate(
             // A text's words are its label on the iPhone and its value on the Mac.
-            format: "label CONTAINS[c] 'Loose end' OR label CONTAINS[c] 'room' OR value CONTAINS[c] 'Loose end' OR value CONTAINS[c] 'room'")).firstMatch
+            format: "label CONTAINS[c] 'Loose end' OR label CONTAINS[c] 'room' OR label CONTAINS[c] 'not fit' OR value CONTAINS[c] 'Loose end' OR value CONTAINS[c] 'room' OR value CONTAINS[c] 'not fit'")).firstMatch
         eventually("Fit answered") { try clock(id, on: date) != nil || toast.exists }
     }
 
@@ -270,6 +270,26 @@ final class TimelineTests: PlannerScreenTests {
         eventually("two hours later") { try clock(id, on: today) == "11:00" }
         XCTAssertFalse(editorButton.exists, "dragging opened the editor")
     }
+
+    func testAShortHoldPicksATaskUp() throws {
+        let id = try server.create("Mover", date: today, time: "09:00", minutes: 60)
+        launch()
+        holdAndDrag("Mover", by: 100, hold: 0.32)
+        eventually("two hours later, after only a third of a second's hold") { try clock(id, on: today) == "11:00" }
+        XCTAssertFalse(editorButton.exists, "dragging opened the editor")
+    }
+
+    #if os(iOS)
+    func testASlowTapStillOpensTheTask() throws {
+        let id = try server.create("Slow tap", date: today, time: "09:00", minutes: 60)
+        launch()
+        let task = body("Slow tap")
+        XCTAssertTrue(task.waitForExistence(timeout: 5))
+        point(task, x: min(60, task.frame.width / 3), y: min(12, task.frame.height / 2)).press(forDuration: 0.35)
+        XCTAssertTrue(editorButton.waitForExistence(timeout: 4), "a press a little longer than a tap did not open it")
+        XCTAssertEqual(try clock(id, on: today), "09:00", "it moved")
+    }
+    #endif
 
     func testDragAcrossMidnightIntoTheNextDay() throws {
         let id = try server.create("Late", date: today, time: "23:00", minutes: 30)

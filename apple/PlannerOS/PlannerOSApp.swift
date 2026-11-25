@@ -9,6 +9,7 @@ struct PlannerOSApp: App {
     @State private var store = PlannerStore()
     #if os(macOS)
     @AppStorage(FloatingClock.shownKey) private var showClock = true
+    @AppStorage(FloatingClock.smallKey) private var smallClock = false
     #endif
 
     init() {
@@ -33,6 +34,7 @@ struct PlannerOSApp: App {
             CommandGroup(after: .windowArrangement) {
                 Toggle("Floating Clock", isOn: $showClock)
                     .keyboardShortcut("k", modifiers: [.command, .shift])
+                Toggle("Small Floating Clock", isOn: $smallClock)
             }
         }
         #endif

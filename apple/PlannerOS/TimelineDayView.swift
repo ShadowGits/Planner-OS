@@ -68,8 +68,7 @@ struct TimelineTaskActions {
     var toggle: (PlannerTask) -> Void
     var star: (PlannerTask) -> Void
     var act: (SwipeAction, PlannerTask, _ shownOn: String) -> Void
-    var jump: (PlannerTask, _ shownOn: String) -> Void
-    var add: (PendingSlot) -> Void = { _ in }
+    var add: (_ date: String, _ start: Int) -> Void
 }
 
 @MainActor
@@ -97,27 +96,12 @@ struct TimelineDayView: View, Equatable {
         ZStack(alignment: .topLeading) {
             DayHeader(date: day.date, today: today)
                 .frame(width: width, height: timelineHeaderHeight)
-            if !day.wins.isEmpty {
-                WinsStrip(tasks: day.wins) { actions.jump($0, day.date) }
-                    .frame(width: width, height: timelineWinsHeight)
-                    .offset(y: timelineHeaderHeight)
-            }
             untimed
                 .offset(y: day.untimedTop - day.top)
             HourGrid(width: width, twentyFour: twentyFour, now: day.date == today ? minute : nil)
                 .offset(y: day.gridTop - day.top)
-            ForEach(pendingSlots(day: day.date, tasks: day.blocks.map(\.task)), id: \.start) { slot in
-                Button { actions.add(slot) } label: {
-                    Text("You'll have \(slot.minutes) min free. Anything you'd like to fit in?")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.hitArea)
-                .accessibilityIdentifier("timeline-gap-\(slot.start)")
-                .frame(width: max(width - timelineLabelWidth - timelineTrailing, 1), height: minuteOffset(slot.minutes))
-                .offset(x: timelineLabelWidth, y: day.gridTop - day.top + minuteOffset(slot.start))
-            }
+            freeTime
+                .offset(x: timelineLabelWidth, y: day.gridTop - day.top)
             blocks(now: now)
                 .offset(x: timelineLabelWidth, y: day.gridTop - day.top)
             if day.date == today {
@@ -141,6 +125,13 @@ struct TimelineDayView: View, Equatable {
             ForEach(day.untimed) { task in
                 UntimedRow(task: task, onOpen: { actions.open(task) }, onToggle: { actions.toggle(task) },
                            onStar: { actions.star(task) })
+                    #if os(macOS)
+                    // On the iPhone this is a hold let go without moving, as holding also drags.
+                    .contextMenu {
+                        Button(task.done ? "Reopen" : "Mark done") { actions.toggle(task) }
+                        Button("Edit") { actions.open(task) }
+                    }
+                    #endif
                     .frame(width: rowWidth)
                     .offset(x: slide(task.id))
                     .opacity(hiddenID == task.id ? 0 : 1)
@@ -150,6 +141,27 @@ struct TimelineDayView: View, Equatable {
         .frame(width: rowWidth, alignment: .topLeading)
         .clipped()
         .offset(x: timelineTrailing)
+    }
+
+    /// Under the blocks: what is free between them, or that nothing is planned at all.
+    private var freeTime: some View {
+        let space = max(width - timelineLabelWidth - timelineTrailing, 1)
+        let current = day.date == today ? minute : nil
+        return ZStack(alignment: .topLeading) {
+            Color.clear.allowsHitTesting(false)
+            ForEach(day.gaps) { gap in
+                GapSlot(gap: gap, now: current, twentyFour: twentyFour) { actions.add(day.date, gap.addAt) }
+                    .frame(width: space, height: gap.height)
+                    .offset(y: gap.top)
+            }
+            if day.blocks.isEmpty {
+                EmptyDay(hasUntimed: !day.untimed.isEmpty)
+                    .frame(width: space)
+                    // Just under now today; at nine, where a day usually starts, on the others.
+                    .offset(y: min(current.map { minuteOffset($0) + 30 } ?? minuteOffset(9 * 60), timelineDayHeight - 130))
+            }
+        }
+        .frame(width: space, height: timelineDayHeight, alignment: .topLeading)
     }
 
     private func blocks(now: Int) -> some View {
@@ -261,6 +273,78 @@ private struct HourGrid: View {
     }
 }
 
+/// Free time, all of which taps to add a task that starts with it.
+@MainActor
+private struct GapSlot: View {
+    let gap: TimelineGap
+    let now: Int?
+    let twentyFour: Bool
+    let onAdd: () -> Void
+
+    private var wordsHeight: Double { gap.minutes >= 180 ? 64 : 34 }
+
+    /// At the gap's top, or just under now while now is in it, which is where the screen opens.
+    private var inset: Double {
+        guard let now, now >= gap.start, now < gap.start + gap.minutes else { return 4 }
+        let below = minuteOffset(now) - gap.top + 10
+        return below >= 4 && below + wordsHeight <= gap.height ? below : 4
+    }
+
+    var body: some View {
+        let free = Text(durationText(gap.minutes)).foregroundStyle(Palette.accent)
+        Button(action: onAdd) {
+            VStack(alignment: .leading, spacing: 6) {
+                if gap.minutes >= 180, gap.height >= 60 {
+                    Label {
+                        Text("A window: ") + free + Text(" of potential.")
+                    } icon: {
+                        Image(systemName: "clock")
+                    }
+                    .font(.caption)
+                    Label("Add Task", systemImage: "plus.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Palette.accent.opacity(0.14), in: Capsule())
+                        .foregroundStyle(Palette.accent)
+                } else if gap.minutes >= 30, gap.height >= 14 {
+                    Label {
+                        Text("You'll have ") + free + Text(" free. Anything you'd like to fit in?")
+                    } icon: {
+                        Image(systemName: "clock")
+                    }
+                    .font(.caption)
+                    .lineLimit(gap.height >= 40 ? 2 : 1)
+                    .minimumScaleFactor(0.75)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .padding(.leading, 10)
+            .padding(.trailing, 4)
+            .padding(.top, gap.height < 34 ? max((gap.height - 16) / 2, 0) : inset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
+        }
+        .buttonStyle(.hitArea)
+        .accessibilityLabel("Add a task at \(fullClock(gap.addAt, twentyFour: twentyFour)), \(durationText(gap.minutes)) free")
+        .accessibilityIdentifier("timeline-gap-\(gap.addAt)")
+    }
+}
+
+private struct EmptyDay: View {
+    let hasUntimed: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "sun.horizon").font(.system(size: 36)).foregroundStyle(.secondary)
+            Text(hasUntimed ? "Nothing at a set time" : "Nothing planned").font(.headline)
+            Text("Tap + to add a task.").font(.subheadline).foregroundStyle(.secondary)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// The now bar: the time in bold on the left and a line across the day.
 private struct NowBar: View {
     let label: String
@@ -355,14 +439,29 @@ private struct TaskBlock: View {
     }
 
     private func detail(_ task: PlannerTask, phase: TaskPhase) -> String {
+        [fullWhen(task, phase: phase), extras(task)].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func fullWhen(_ task: PlannerTask, phase: TaskPhase) -> String {
         phase == .underway ? remainingText(task, now: now)
-            : rangeText(task.clockMinutes, task.clockMinutes + task.minutes, twentyFour: twentyFour)
+            : "\(rangeText(task.clockMinutes, task.clockMinutes + task.minutes, twentyFour: twentyFour)) (\(durationWords(task.minutes)))"
+    }
+
+    /// When and how long, for where there is little room: "9:00 · 30m".
+    private func brief(_ task: PlannerTask, phase: TaskPhase) -> String {
+        phase == .underway ? "\(durationText(max(task.clockMinutes + task.minutes - now, 1))) left"
+            : "\(columnClock(task.clockMinutes, twentyFour: twentyFour)) · \(durationText(task.minutes))"
+    }
+
+    private func extras(_ task: PlannerTask) -> String {
+        ([partText(task)].compactMap { $0 } + (task.workedSeconds > 0 ? [workedText(task)] : [])).joined(separator: " · ")
     }
 
     /// One line in a short block; the title, then when, then the extras as room allows.
     private func label(_ task: PlannerTask, parts: BlockParts, color: Color, phase: TaskPhase, solid: Bool) -> some View {
         let height = block.height
         let narrow = width < 120
+        let more = extras(task)
         let ink: Color = solid || (phase == .underway && taskProgress(task, now: now) * height > 24) ? .white : .primary
         // Clear of the buttons, unless the block is tall enough to write above them.
         let clear = height >= 100 ? 6 : width - Double(parts.star?.minX ?? parts.tick.minX) + 2
@@ -381,15 +480,29 @@ private struct TaskBlock: View {
                 if !narrow, task.recurrenceKey != nil || task.habit {
                     Image(systemName: "repeat").font(.system(size: 9))
                 }
+                // Too short for a second line, so it all goes on the first.
+                if height < 40, width >= 160 {
+                    Text(brief(task, phase: phase))
+                        .font(.caption2.monospacedDigit())
+                        .opacity(0.85)
+                        .fixedSize()
+                    if !more.isEmpty {
+                        Text(more).font(.caption2).opacity(0.85).lineLimit(1).layoutPriority(-1)
+                    }
+                }
             }
-            if height >= 40, !narrow {
-                Text([detail(task, phase: phase), partText(task)].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption2.monospacedDigit())
-                    .opacity(0.85)
-                    .lineLimit(1)
+            if height >= 40 {
+                ViewThatFits(in: .horizontal) {
+                    if height >= 64 || more.isEmpty { Text(fullWhen(task, phase: phase)) }
+                    Text([brief(task, phase: phase), height >= 64 ? "" : more].filter { !$0.isEmpty }.joined(separator: " · "))
+                    Text(brief(task, phase: phase))
+                }
+                .font(.caption2.monospacedDigit())
+                .opacity(0.85)
+                .lineLimit(1)
             }
-            if height >= 64, !narrow, task.workedSeconds > 0 {
-                Text(workedText(task)).font(.caption2.weight(.medium)).opacity(0.85).lineLimit(1)
+            if height >= 64, !more.isEmpty {
+                Text(more).font(.caption2.weight(.medium)).opacity(0.85).lineLimit(height >= 80 ? 2 : 1)
             }
         }
         .foregroundStyle(ink)
@@ -466,7 +579,7 @@ struct LandingOutline: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(color, lineWidth: 2)
             HStack(spacing: 6) {
-                Text("\(Civil.short(date)), \(fullClock(start, twentyFour: twentyFour))").fontWeight(.bold)
+                Text("\(Civil.short(date)), \(rangeText(start, start + task.minutes, twentyFour: twentyFour))").fontWeight(.bold)
                 Text(task.title).foregroundStyle(.secondary)
             }
             .font(.caption)

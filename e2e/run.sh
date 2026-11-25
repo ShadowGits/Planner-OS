@@ -51,8 +51,9 @@ echo "== Apple: Focus and timeline rules"
 "$BUILD/policy"
 
 echo "== Apple: fitting previous pending tasks into a gap"
-"$SWIFTC" -swift-version 5 $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift \
-    apple/PendingSlotTests/main.swift -o "$BUILD/pending-slot"
+"$SWIFTC" -swift-version 5 -D PLANNER_TESTS $APPLE/Models.swift $APPLE/FocusPolicy.swift $APPLE/TimelinePolicy.swift $APPLE/PlannerAPI.swift \
+    apple/Shared/PlannerSnapshot.swift apple/Shared/SharedConnection.swift apple/Shared/PlannerVoice.swift \
+    apple/Shared/PendingTicks.swift apple/Shared/HarshReminders.swift apple/PendingSlotTests/main.swift -o "$BUILD/pending-slot"
 "$BUILD/pending-slot"
 
 echo "== Apple: every action against the API"

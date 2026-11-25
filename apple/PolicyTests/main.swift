@@ -692,5 +692,32 @@ check(HarshReminders.loadReport()?.items.filter(\.done).count, 2, "and it is sav
 check(HarshReminders.markReport("nope", done: true) == nil, true, "an unknown task changes nothing")
 check(Civil.days(from: "2026-10-31", to: "2026-11-21"), 21, "days between two dates")
 
+// Free time between timed tasks, which a tap fills.
+let freeBlocks = timelineBlocks([task("A", time: "09:00", minutes: 62), task("Inside", time: "09:10", minutes: 20),
+                                 task("B", time: "11:00", minutes: 10), task("C", time: "11:14", minutes: 60),
+                                 task("D", time: "17:00", minutes: 30), task("Any")])
+let free = timelineGaps(freeBlocks)
+check(free.map(\.start), [602, 734], "gaps follow the latest end; under five minutes is none")
+check(free.map(\.minutes), [58, 286], "how long each is")
+check(free.map(\.addAt), [605, 735], "a new task starts at the next five minutes")
+check(timelineGaps(timelineBlocks([task("Alone", time: "09:00")])).count, 0, "no gap before the first or after the last")
+check(timelineGaps([]).count, 0, "no gap on an empty day")
+let afterTiny = timelineGaps(timelineBlocks([task("Tiny", time: "09:00", minutes: 5), task("Next", time: "10:00")]))
+check(afterTiny.map(\.top), [474], "a gap starts clear of a short task drawn taller")
+check(timelineAnchor([task("Past", time: "08:00"), task("On", time: "09:00", minutes: 60), task("Next", time: "12:00")], now: 570)?.id, "On", "Now is the task under way")
+check(timelineAnchor([task("Past", time: "08:00"), task("Next", time: "12:00"), task("Any")], now: 570)?.id, "Next", "or the one next")
+check(timelineAnchor([task("Past", time: "08:00")], now: 570)?.id, nil, "or none once the day is over")
+
+// The floating clock: only the task under way is the big one; next is beside it.
+let clockDay = [task("Running", time: "09:00", minutes: 60), task("Later", time: "11:00", minutes: 30)]
+let busy = clockFocus(today: "2026-11-22", seconds: 9 * 3600 + 600) { $0 == "2026-11-22" ? clockDay : [] }
+check(busy?.task.id, "Running", "the clock's task is the one under way")
+check(busy?.next?.id, "Later", "with the next one under it")
+let vacant = clockFocus(today: "2026-11-22", seconds: 10 * 3600 + 600) { $0 == "2026-11-22" ? clockDay : [] }
+check(vacant?.running, false, "between two tasks is vacant")
+check(vacant?.remaining, 50 * 60, "for as long as until the next starts")
+let overnight = clockFocus(today: "2026-11-22", seconds: 23 * 3600) { $0 == "2026-11-23" ? [task("Early", time: "07:00")] : [] }
+check(overnight?.nextIsTomorrow, true, "and says when the next is tomorrow")
+
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

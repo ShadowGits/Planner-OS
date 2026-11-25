@@ -50,12 +50,12 @@ private final class TimelineSession {
     private(set) var drag: DragState?
     /// The task hidden while its outline moves. Set once, not per frame.
     private(set) var hiddenID: String?
-    /// Goes up on lifting and on crossing into another date, for the haptic.
+    /// Goes up on lifting and at each five minutes or date it is moved to, for the haptic.
     private(set) var bumps = 0
 
     func setDrag(_ next: DragState?) {
         guard next != drag else { return }
-        if let next, drag == nil || (next.date != nil && next.date != drag?.date) { bumps += 1 }
+        if let next, drag == nil || (next.date != nil && (next.date != drag?.date || next.start != drag?.start)) { bumps += 1 }
         drag = next
         let hidden = next?.date != nil ? next?.hit.task.id : nil
         if hidden != hiddenID { hiddenID = hidden }
@@ -100,6 +100,7 @@ struct TodayView: View {
     @AppStorage("day_list") private var listView = false
     #if os(macOS)
     @AppStorage(FloatingClock.shownKey) private var showClock = true
+    @AppStorage(FloatingClock.smallKey) private var smallClock = false
     #endif
     @State private var pickingDate = false
     /// A picked day, which the scroll stretches to reach.
@@ -110,12 +111,17 @@ struct TodayView: View {
     @State private var session = TimelineSession()
     @State private var memo = LayoutMemo()
     @State private var memory = PressMemory()
+    /// An untimed task held and let go, for its Mark done and Edit.
+    @State private var menuTask: PlannerTask?
+    /// A Top Win tapped in the list.
+    @State private var reveal: String?
+    @State private var refreshing = false
 
     var body: some View {
         let today = store.calendarToday
         let layout = memo.layout(today: today, picked: picked) { store.days[$0]?.items ?? [] }
         VStack(spacing: 0) {
-            header(today: today)
+            top(today: today)
             if listView { list } else { timeline(layout, today: today) }
         }
         .background(Palette.header)
@@ -126,6 +132,12 @@ struct TodayView: View {
         .onAppear {
             picked = store.selectedDate
             if store.selectedDate == today { openAtNow(today) } else { go(to: store.selectedDate) }
+        }
+        .alert(menuTask?.title ?? "", isPresented: Binding(get: { menuTask != nil }, set: { if !$0 { menuTask = nil } }),
+               presenting: menuTask) { task in
+            Button(task.done ? "Reopen" : "Mark done") { Task { await store.setDone(task, !task.done) } }
+            Button("Edit") { editor = EditorRequest(task: task) }
+            Button("Cancel", role: .cancel) {}
         }
         .onDisappear {
             if session.drag != nil { endDrag() }
@@ -151,6 +163,7 @@ struct TodayView: View {
                     .padding(.bottom, 120)
             }
             .scrollIndicators(.never)
+            .refreshable { await store.refreshAll() }
             .accessibilityIdentifier("timeline")
             .background(Palette.card)
             .overlay(alignment: .top) { LandingBadge(session: session, twentyFour: Civil.prefers24Hour) }
@@ -188,14 +201,29 @@ struct TodayView: View {
                 Task { await store.toggleStar(task) }
             },
             act: act,
-            jump: { task, date in
-                let place: ScrollRequest.Place = task.time == nil ? .untimed(date) : .clock(date: date, minute: task.clockMinutes)
-                request = ScrollRequest(place: place, animated: true)
-            },
-            add: { slot in
-                guard mayPress, session.drag == nil else { return }
-                editor = EditorRequest(date: slot.target.date, time: slot.target.time, pendingSlot: slot)
-            })
+            add: add)
+    }
+
+    private func add(_ date: String, _ start: Int) {
+        guard mayPress, !memory.closedSwipe else { return }
+        if session.swipe != nil {
+            withAnimation(.snappy) { session.swipe = nil }
+        } else {
+            let blocks = timelineBlocks(calendarDay(store.days[date]?.items ?? []))
+            guard let gap = timelineGaps(blocks).first(where: { $0.addAt == start }) else { return }
+            let slot = PendingSlot(day: date, start: start, end: gap.start + gap.minutes)
+            editor = EditorRequest(date: slot.target.date, time: slot.target.time, pendingSlot: slot)
+        }
+    }
+
+    private func jump(_ task: PlannerTask) {
+        if listView {
+            reveal = task.id
+        } else {
+            let date = store.selectedDate
+            let place: ScrollRequest.Place = task.time == nil ? .untimed(date) : .clock(date: date, minute: task.clockMinutes)
+            request = ScrollRequest(place: place, animated: true)
+        }
     }
 
     private var mayPress: Bool { Date() >= memory.quietUntil }
@@ -296,6 +324,19 @@ struct TodayView: View {
             quiet()
             endDrag()
         }
+        input.heldStill = { hit, seconds in
+            // A short press is a tap, which the hold took from the task's button.
+            if seconds < 0.5 {
+                memory.quietUntil = .distantPast
+                open(hit.task)
+            } else if hit.task.time == nil, !hit.task.id.hasPrefix("pending:") {
+                menuTask = hit.task
+            }
+        }
+        input.toTop = {
+            session.swipe = nil
+            request = ScrollRequest(place: .day(store.selectedDate), animated: true)
+        }
         input.viewed = { top, height in viewed(layout, top: top, height: height) }
         let store = store
         input.barTop = { store.binFrame.height > 0 ? Double(store.binFrame.minY) : .infinity }
@@ -349,7 +390,25 @@ struct TodayView: View {
     private func go(to date: String) {
         picked = date
         store.selectedDate = date
-        request = ScrollRequest(place: .day(date))
+        if date == store.calendarToday {
+            goToNow()
+        } else if store.days[date] != nil {
+            showStart(of: date)
+        } else {
+            request = ScrollRequest(place: .day(date))
+            let asked = request?.id
+            Task {
+                await store.loadDay(date)
+                // Unless somewhere else has been asked for meanwhile.
+                if request?.id == asked, store.selectedDate == date { showStart(of: date) }
+            }
+        }
+    }
+
+    /// A day opens at its first task, or at its header with none.
+    private func showStart(of date: String) {
+        let first = timelineAnchor(calendarDay(store.days[date]?.items ?? []), now: -1)
+        request = ScrollRequest(place: first.map { .clock(date: date, minute: $0.clockMinutes) } ?? .day(date))
     }
 
     private func goToNow() {
@@ -358,11 +417,40 @@ struct TodayView: View {
         if listView {
             store.selectedDate = today
         } else {
-            request = ScrollRequest(place: .clock(date: today, minute: store.moment.minutes), animated: true)
+            let now = store.moment.minutes
+            let task = timelineAnchor(calendarDay(store.days[today]?.items ?? []), now: now)
+            request = ScrollRequest(place: .clock(date: today, minute: task?.clockMinutes ?? now), animated: true)
         }
     }
 
     // MARK: The top
+
+    /// The date and, pinned under it, that day's Top Wins, over the timeline and the list alike.
+    private func top(today: String) -> some View {
+        let items = calendarDay(store.days[store.selectedDate]?.items ?? [])
+        let wins = items.sorted { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }
+        return VStack(spacing: 0) {
+            header(today: today)
+            WinsStrip(tasks: wins, onJump: jump)
+        }
+        .overlay(alignment: .top) {
+            if refreshing { ProgressView().controlSize(.small).allowsHitTesting(false) }
+        }
+        #if os(iOS)
+        .contentShape(Rectangle())
+        // The timeline's own top is two weeks up, so pulling down from here refreshes.
+        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
+            guard !refreshing, value.translation.height > 70,
+                  value.translation.height > abs(value.translation.width) * 2 else { return }
+            quiet()
+            Task {
+                refreshing = true
+                await store.refreshAll()
+                refreshing = false
+            }
+        })
+        #endif
+    }
 
     /// The tile of the day in view, then Fit, Now and everything else.
     private func header(today: String) -> some View {
@@ -372,7 +460,7 @@ struct TodayView: View {
         // many, so pressing it is never a shot in the dark.
         let loose = looseEnds(items, now: date == today ? store.moment.minutes : nil)
         return HStack(spacing: 0) {
-            Button { pickingDate = true } label: {
+            Button { if mayPress { pickingDate = true } } label: {
                 DateTile(date: date, isToday: date == today)
             }
             .buttonStyle(.hitArea)
@@ -408,6 +496,7 @@ struct TodayView: View {
                 Button { Task { await store.refreshAll() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                 #if os(macOS)
                 Toggle("Floating clock", isOn: $showClock)
+                Toggle("Small floating clock", isOn: $smallClock)
                 #endif
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -432,9 +521,9 @@ struct TodayView: View {
     private var list: some View {
         let date = store.selectedDate
         let items = calendarDay(store.days[date]?.items ?? [])
-        return ScrollView {
+        return ScrollViewReader { proxy in
+        ScrollView {
             VStack(spacing: 0) {
-                WinsStrip(tasks: items) { editor = EditorRequest(task: $0) }
                 DayList(tasks: items, twentyFour: Civil.prefers24Hour,
                         onOpen: { editor = EditorRequest(task: $0) },
                         onToggle: { task in Task { await store.setDone(task, !task.done) } },
@@ -442,11 +531,19 @@ struct TodayView: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
-            .padding(.bottom, 40)
+            // Past the floating bar, or the last row can't be scrolled out from behind it.
+            .padding(.bottom, 120)
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .refreshable { await store.refreshAll() }
         .background(Palette.card)
+        .onChange(of: reveal) { _, id in
+            guard let id else { return }
+            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
+            reveal = nil
+        }
+        }
         .task(id: date) { await store.loadDay(date) }
         .refreshable { await store.refreshAll() }
     }
@@ -510,7 +607,7 @@ private struct LandingBadge: View {
             HStack(spacing: 8) {
                 Circle().fill(Palette.block(drag.hit.task)).frame(width: 10, height: 10)
                 Text(Civil.short(date)).fontWeight(.heavy)
-                Text(fullClock(drag.start, twentyFour: twentyFour)).monospacedDigit()
+                Text(rangeText(drag.start, drag.start + drag.hit.task.minutes, twentyFour: twentyFour)).monospacedDigit()
             }
             .font(.subheadline.weight(.semibold))
             .lineLimit(1)
@@ -695,8 +792,8 @@ struct UntimedRow: View {
     }
 }
 
-/// Top Wins, under the day's header once something is starred: "Top Wins · 1
-/// of 3" (or "Day won"), then a chip for each. Tap one to go to it.
+/// Top Wins, pinned under the date: "Top Wins · 1 of 3" (or "Day won"), then a
+/// chip for each. Tap one to go to it.
 @MainActor
 struct WinsStrip: View {
     let tasks: [PlannerTask]
@@ -704,10 +801,15 @@ struct WinsStrip: View {
 
     var body: some View {
         let wins = tasks.filter(\.starred)
-        if !wins.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "star.fill").font(.caption).foregroundStyle(Palette.accent)
-                Text(winsTitle(wins)).font(.caption.weight(.semibold)).lineLimit(1).fixedSize()
+        HStack(spacing: 8) {
+            Image(systemName: wins.isEmpty ? "star" : "star.fill").font(.caption).foregroundStyle(Palette.accent)
+            Text(wins.isEmpty ? "Top Wins" : winsTitle(wins))
+                .font(.caption.weight(.semibold)).lineLimit(1).fixedSize()
+                .accessibilityIdentifier("top-wins")
+            if wins.isEmpty {
+                Text("Tap ☆ on a task to pin it here.").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
+            } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(wins) { task in
@@ -729,10 +831,11 @@ struct WinsStrip: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(height: timelineWinsHeight)
-            .background(Palette.accent.opacity(0.12))
         }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: timelineWinsHeight)
+        .background(Palette.accent.opacity(0.12))
     }
 }
 

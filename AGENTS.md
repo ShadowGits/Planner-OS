@@ -2,6 +2,12 @@
 
 Read and follow [.agents/AGENTS.md](.agents/AGENTS.md) before making changes.
 
+Before replacing an installed app or merging a feature branch, inspect all local
+worktrees for newer app changes. Committed main is not proof of feature parity
+with the installed app. Preserve existing local features and preferences unless
+the user explicitly requests removal. Include the kept-feature and floating-clock
+UI suites alongside pending-gap and cost tests when integrating Apple changes.
+
 The user explicitly requires future updates to preserve the cost/query budget
 unless they specifically request an increase. See [docs/query_budget.md](docs/query_budget.md).
 Keep automatic refresh at least 120 seconds apart, share one network loop with

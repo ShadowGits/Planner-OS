@@ -114,15 +114,15 @@ class PlannerScreenTests: XCTestCase {
     }
 
     /// Holds a task near its top and drags it by `dy` points.
-    func holdAndDrag(_ title: String, by dy: CGFloat, dx: CGFloat = 0, pause: TimeInterval = 0.3) {
+    func holdAndDrag(_ title: String, by dy: CGFloat, dx: CGFloat = 0, pause: TimeInterval = 0.3, hold: TimeInterval = 0.7) {
         let task = body(title)
         XCTAssertTrue(task.waitForExistence(timeout: 5), "no “\(title)” to drag")
         let from = point(task, x: min(60, task.frame.width / 3), y: min(12, task.frame.height / 2))
         let to = from.withOffset(CGVector(dx: dx, dy: dy))
         #if os(macOS)
-        from.click(forDuration: 0.7, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: pause)
+        from.click(forDuration: hold, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: pause)
         #else
-        from.press(forDuration: 0.7, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: pause)
+        from.press(forDuration: hold, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: pause)
         #endif
         settle()
     }

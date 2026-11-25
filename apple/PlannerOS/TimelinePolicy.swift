@@ -66,6 +66,7 @@ func pendingSlots(day: String, tasks: [PlannerTask]) -> [PendingSlot] {
     return slots
 }
 
+
 // The timeline: one scroll across days. A day runs midnight to midnight, every
 // hour is the same height, and a thick header marks where each one starts.
 // Everything here is plain arithmetic, so the screen that draws it and the
@@ -74,6 +75,8 @@ func pendingSlots(day: String, tasks: [PlannerTask]) -> [PendingSlot] {
 let timelineHourHeight = 50.0
 let timelineDayHeight = 24 * timelineHourHeight
 let timelineHeaderHeight = 64.0
+/// The Top Wins bar pinned above the scroll. Always there: were it to come and go
+/// with the day in view, the scroll would resize and the day in view flip back.
 let timelineWinsHeight = 44.0
 let timelineUntimedHeight = 44.0
 /// Room above 00:00 and below 24:00, so the first hour label is not on the header's line.
@@ -149,6 +152,45 @@ func timelineBlocks(_ tasks: [PlannerTask]) -> [TimelineBlock] {
     return out
 }
 
+/// Free time between two timed tasks, which a tap fills with a new one.
+struct TimelineGap: Equatable, Identifiable {
+    var start: Int
+    var minutes: Int
+    /// Points below 00:00, clear of a short task drawn taller than it is.
+    var top: Double
+    var height: Double
+
+    var id: Int { start }
+    /// A new task's start: the gap's, rounded up to five minutes.
+    var addAt: Int { min((start + 4) / 5 * 5, 24 * 60 - 5) }
+}
+
+/// Five minutes or more free between one timed task and the next. The time
+/// before the first and after the last is not a gap.
+func timelineGaps(_ blocks: [TimelineBlock]) -> [TimelineGap] {
+    var gaps: [TimelineGap] = []
+    var previous: (end: Int, bottom: Double)?
+    for block in blocks.sorted(by: { $0.task.clockMinutes < $1.task.clockMinutes }) {
+        let start = block.task.clockMinutes
+        if let previous, start - previous.end >= 5 {
+            let top = max(minuteOffset(previous.end), previous.bottom)
+            if block.top > top {
+                gaps.append(TimelineGap(start: previous.end, minutes: start - previous.end, top: top, height: block.top - top))
+            }
+        }
+        previous = (max(previous?.end ?? 0, start + max(block.task.minutes, 1)),
+                    max(previous?.bottom ?? 0, block.top + block.height))
+    }
+    return gaps
+}
+
+/// Where Now goes: the task under way or next. Nil once the day's are over.
+func timelineAnchor(_ tasks: [PlannerTask], now: Int) -> PlannerTask? {
+    tasks.filter { $0.time != nil }
+        .sorted { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }
+        .first { $0.clockMinutes + $0.minutes > now }
+}
+
 /// The buttons that sit on a block, in its own coordinates. Neither ever
 /// reaches outside its block, where a tap would belong to the task next to it.
 struct BlockParts: Equatable {
@@ -166,12 +208,12 @@ struct BlockParts: Equatable {
 struct TimelineDay: Equatable, Identifiable {
     var date: String
     var top: Double
-    var wins: [PlannerTask]
     var untimed: [PlannerTask]
     var blocks: [TimelineBlock]
+    var gaps: [TimelineGap]
 
     var id: String { date }
-    var untimedTop: Double { top + timelineHeaderHeight + (wins.isEmpty ? 0 : timelineWinsHeight) }
+    var untimedTop: Double { top + timelineHeaderHeight }
     /// 00:00 of this day.
     var gridTop: Double { untimedTop + Double(untimed.count) * timelineUntimedHeight + timelineGridPadding }
     /// 24:00 of this day.
@@ -201,8 +243,9 @@ struct TimelineLayout: Equatable {
         for date in dates {
             let items = calendarDay(tasks(date))
             let byName = items.sorted { ($0.clockMinutes, $0.title, $0.id) < ($1.clockMinutes, $1.title, $1.id) }
-            let day = TimelineDay(date: date, top: top, wins: byName.filter(\.starred),
-                                  untimed: byName.filter { $0.time == nil }, blocks: timelineBlocks(items))
+            let blocks = timelineBlocks(items)
+            let day = TimelineDay(date: date, top: top, untimed: byName.filter { $0.time == nil },
+                                  blocks: blocks, gaps: timelineGaps(blocks))
             days.append(day)
             top = day.bottom
         }
@@ -462,8 +505,10 @@ func paletteIndex(_ task: PlannerTask, count: Int) -> Int {
 
 // MARK: The floating clock
 
-/// What the Mac's floating clock counts: the task under way, or the next to start.
+/// What the Mac's floating clock counts: the task under way, or the vacant time
+/// until the next, and what is next either way.
 struct ClockFocus: Equatable {
+    /// The one under way; in vacant time, the one that ends it.
     var task: PlannerTask
     var running: Bool
     /// Seconds to its end while it runs, to its start before that.
@@ -472,6 +517,9 @@ struct ClockFocus: Equatable {
     var progress: Double
     /// Others under way at the same time, or starting at the same moment.
     var others: Int
+    /// The next to start, whether or not something is under way.
+    var next: PlannerTask?
+    var nextIsTomorrow = false
 }
 
 /// The latest to start of those under way, else the next to start, today or
@@ -486,15 +534,17 @@ func clockFocus(today: String, seconds: Int, tasks: (String) -> [PlannerTask]) -
     }
     timed.sort { ($0.start, $0.task.title) < ($1.start, $1.task.title) }
     let running = timed.filter { $0.start <= seconds && seconds < $0.end }
+    let upcoming = timed.first { $0.start > seconds }
+    let tomorrow = (upcoming?.start ?? 0) >= 86_400
     if let current = running.last {
         return ClockFocus(task: current.task, running: true, remaining: current.end - seconds,
                           progress: Double(seconds - current.start) / Double(max(current.end - current.start, 1)),
-                          others: running.count - 1)
+                          others: running.count - 1, next: upcoming?.task, nextIsTomorrow: tomorrow)
     }
-    guard let next = timed.first(where: { $0.start > seconds }) else { return nil }
+    guard let next = upcoming else { return nil }
     let wait = next.start - seconds
     return ClockFocus(task: next.task, running: false, remaining: wait, progress: max(1 - Double(wait) / 3600, 0),
-                      others: timed.filter { $0.start == next.start }.count - 1)
+                      others: timed.filter { $0.start == next.start }.count - 1, next: next.task, nextIsTomorrow: tomorrow)
 }
 
 /// "4:05", or "1:04:05" from an hour up.

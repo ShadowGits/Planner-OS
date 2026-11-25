@@ -38,6 +38,10 @@ struct TimelineInput {
     var drag: (TimelineHit, _ top: Double, _ window: CGPoint) -> Void = { _, _, _ in }
     var drop: (TimelineHit, _ top: Double, _ window: CGPoint) -> Void = { _, _, _ in }
     var cancelDrag: () -> Void = {}
+    /// A hold let go without moving: `seconds` from the finger landing.
+    var heldStill: (TimelineHit, _ seconds: Double) -> Void = { _, _ in }
+    /// The iPhone's status bar was tapped.
+    var toTop: () -> Void = {}
     var viewed: (_ top: Double, _ height: Double) -> Void = { _, _ in }
     /// Below this height in the window is the bottom bar, which keeps its own clicks.
     var barTop: () -> Double = { .infinity }
@@ -56,6 +60,8 @@ final class ScrollKeeper {
     private var handled: UUID?
     private var pending: (y: Double, animated: Bool)?
     private var lastReport: (top: Double, height: Double)?
+    /// The last request met, and the height of screen it was worked out for.
+    private var placed: (place: ScrollRequest.Place, y: Double, viewport: Double)?
 
     /// Takes a new layout and request, keeping what is in view where it was.
     func update(layout next: TimelineLayout, request: ScrollRequest?, top: Double?, viewport: Double) {
@@ -66,8 +72,18 @@ final class ScrollKeeper {
             if let y = target(request.place, viewport: viewport) {
                 handled = request.id
                 pending = (y, request.animated)
+                placed = (request.place, y, viewport)
                 return
             }
+        }
+        // The first height is not the last: the bars are still settling. Until it is
+        // scrolled, what was asked for stays at the third of the screen the tile reads.
+        if let was = placed, viewport > 0, abs(was.viewport - viewport) > 0.5,
+           pending != nil || top.map({ abs($0 - was.y) < 1.5 }) == true,
+           let y = target(was.place, viewport: viewport) {
+            placed = (was.place, y, viewport)
+            pending = (y, false)
+            return
         }
         guard pending == nil, let top, viewport > 0, !old.days.isEmpty,
               old.days.map(\.gridTop) != next.days.map(\.gridTop) || old.days.map(\.date) != next.days.map(\.date)
@@ -150,13 +166,14 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
     private var watching: [NSKeyValueObservation] = []
     private lazy var pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
     private lazy var hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
-    private var pressed: (point: CGPoint, hit: TimelineHit?, swipeable: TimelineHit?)?
+    private var pressed: (point: CGPoint, hit: TimelineHit?, swipeable: TimelineHit?, at: TimeInterval)?
     private var swiping: TimelineHit?
     private var held: (hit: TimelineHit, grab: Double, start: CGPoint, moved: Bool)?
     private var finger = CGPoint.zero
     private var edgeLink: CADisplayLink?
     private var lastCreep: CFTimeInterval?
     private var lastRequest: ScrollRequest?
+    private let catcher = TopTapCatcher()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -164,7 +181,9 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
         backgroundColor = .clear
         pan.maximumNumberOfTouches = 1
         pan.delegate = self
-        hold.minimumPressDuration = 0.4
+        // Quick, as the system's own drag and drop was. A press let go sooner than
+        // half a second without moving still opens the task, as a tap does.
+        hold.minimumPressDuration = 0.25
         hold.allowableMovement = 10
         hold.delegate = self
     }
@@ -199,8 +218,14 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
         while let view = parent, !(view is UIScrollView) { parent = view.superview }
         guard let found = parent as? UIScrollView else { return }
         scroll = found
-        // A tap on the clock would fly two weeks back to the first day.
+        // Its own top is two weeks back, so a tap on the clock is caught and goes to the top of the day in view.
         found.scrollsToTop = false
+        catcher.action = { [weak self] in self?.keeper.input.toTop() }
+        if let host = found.superview {
+            // The whole width: iOS looks straight down from where the bar was tapped.
+            catcher.frame = CGRect(x: 0, y: found.frame.minY, width: host.bounds.width, height: 10)
+            host.insertSubview(catcher, belowSubview: found)
+        }
         found.addGestureRecognizer(pan)
         found.addGestureRecognizer(hold)
         watching = [
@@ -221,6 +246,7 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
         watching = []
         scroll?.removeGestureRecognizer(pan)
         scroll?.removeGestureRecognizer(hold)
+        catcher.removeFromSuperview()
         scroll = nil
     }
 
@@ -254,7 +280,7 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
         let point = touch.location(in: self)
         guard recognizer === pan else { return keeper.input.hit(point) != nil }
         let swipeable = keeper.input.swipeable(point)
-        pressed = (point, keeper.input.hit(point), swipeable)
+        pressed = (point, keeper.input.hit(point), swipeable, touch.timestamp)
         keeper.input.pressed(point)
         return swipeable != nil
     }
@@ -313,7 +339,12 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
             keeper.input.drag(now.hit, Double(point.y) - now.grab, finger)
         case .ended:
             if let now = held, now.moved { keeper.input.drop(now.hit, Double(point.y) - now.grab, finger) }
-            else { keeper.input.cancelDrag() }
+            else {
+                keeper.input.cancelDrag()
+                if let still = held?.hit {
+                    keeper.input.heldStill(still, ProcessInfo.processInfo.systemUptime - (pressed?.at ?? 0))
+                }
+            }
             letGo()
         case .cancelled, .failed:
             if held != nil { keeper.input.cancelDrag() }
@@ -359,6 +390,30 @@ final class TimelineTracker: UIView, UIGestureRecognizerDelegate {
         guard next != top else { return }
         scroll.contentOffset.y += next - top
         keeper.input.drag(held.hit, Double(convert(finger, from: nil).y) - held.grab, finger)
+    }
+}
+
+/// Never seen or touched: the one scroll view iOS offers a status bar tap to.
+private final class TopTapCatcher: UIScrollView, UIScrollViewDelegate {
+    var action: () -> Void = {}
+
+    init() {
+        super.init(frame: .zero)
+        autoresizingMask = .flexibleWidth
+        contentSize = CGSize(width: 10, height: 100)
+        contentOffset = CGPoint(x: 0, y: 50)
+        contentInsetAdjustmentBehavior = .never
+        backgroundColor = .clear
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        action()
+        return false
     }
 }
 

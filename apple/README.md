@@ -23,15 +23,25 @@ It talks to the same backend as Android, with the same app key.
       deadline is left alone, so a task due later still shows on that day until
       then. Habits, calendar events and finished tasks have no Archive.
     * **Delete**: asks first. For a habit it skips that day only.
-  * **Hold a task and drag it** (on the Mac, pulling it up or down is enough): an
+  * **Hold a task a moment (a quarter of a second on iPhone) and drag it** (on the Mac, pulling it up or down is enough): an
     outline, and a badge pinned on top, show the day and time it will land on. Across a day's line is the
     next date; at the top or bottom edge the timeline scrolls. The + turns into a
     bin, which asks before deleting.
-  * Tap the ☆ on a task to make it a Top Win. The day's Top Wins then show under
-    its header ("Top Wins · 1 of 3", "Day won"); tap a chip to jump to it. A block
-    too narrow for a star is starred in its editor.
+  * **Free time between tasks** says "You'll have 1h free. Anything you'd like to
+    fit in?", and from three hours "A window: 4h of potential." with Add Task.
+    Tap any gap of five minutes or more to add a task that starts with it. A day
+    with no timed task says so.
+  * Tap the ☆ on a task to make it a Top Win. **Top Wins are pinned in a bar
+    under the date**, for the day in view, in the timeline and the list ("Top
+    Wins · 1 of 3", "Day won"); tap a chip to jump to it. A block too narrow for
+    a star is starred in its editor.
+  * **Pull down from the date or the Top Wins bar** (iPhone) to refresh, or pull
+    the list down. Tap the status bar for the top of the day in view.
+  * An untimed task has **Mark done and Edit**: hold it and let go on the
+    iPhone, right-click it on the Mac.
   * Split tasks show "Part 2/3", and logged focus time shows as "25m worked · 35m left".
-  * **Now** scrolls back to now. **⋯** has the list view of the day on the tile, and Refresh.
+  * **Now** goes to the task under way or next, or to the time once none is left.
+    A picked day opens at its first task. **⋯** has the list view of the day on the tile, and Refresh.
   * Tap a task to edit it; tap its circle to tick it.
 * **Inbox** (the Focus board): overdue cards ranked by deadline (starred and high priority, then broken deadlines, missed slots, never scheduled, then work for a milestone due within 14 days), today's remaining tasks, and the week as milestone rows.
   * Each card has Done, Tomorrow, Date and Drop. Drop closes a task as skipped and never deletes it.
@@ -39,9 +49,12 @@ It talks to the same backend as Android, with the same app key.
   * Milestones are in the ⋯ menu.
 * **Floating clock** (Mac): a small clock that stays above every app, on every
   Space and over full screen. It shows the task under way with its time running
-  down and the ring filling, or the next one with the time until it starts, and
-  pulses as one starts. Tick from it, click the name to open Planner OS, drag it
-  anywhere. Turn it off in ⋯ or Window, Floating Clock (⇧⌘K).
+  down and the ring filling, or, with none under way, **Vacant** and how much
+  free time is left. What is next is the small line below. It pulses as a task
+  starts. Tick from it, click the name to open Planner OS, drag it
+  anywhere. The button in its corner (or ⋯ / Window, Small Floating Clock) shrinks
+  it to a slim pill with the countdown, the task and its tick, and back. Turn it
+  off in ⋯ or Window, Floating Clock (⇧⌘K).
 * **Settings**: server, app key and reminders, and a line saying why a reminder
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
