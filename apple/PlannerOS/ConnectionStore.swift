@@ -17,6 +17,7 @@ enum ConnectionStore {
     }
 
     static func save(_ connection: Connection) throws {
+        if isUITesting { return }
         deleteKey()
         let item: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -41,6 +42,13 @@ enum ConnectionStore {
               let key = env["PLANNER_UI_TEST_KEY"], !key.isEmpty else { return nil }
         return Connection(base: base, key: key)
     }
+
+    /// The minute the timeline opens at under test, in place of now.
+    static var uiTestStart: Int? {
+        guard uiTestConnection != nil, let start = ProcessInfo.processInfo.environment["PLANNER_UI_TEST_START"] else { return nil }
+        let parts = start.split(separator: ":").compactMap { Int($0) }
+        return parts.count == 2 ? parts[0] * 60 + parts[1] : nil
+    }
     #endif
 
     static var isUITesting: Bool {
@@ -52,6 +60,7 @@ enum ConnectionStore {
     }
 
     static func clear() {
+        if isUITesting { return }
         deleteKey()
         UserDefaults.standard.removeObject(forKey: serverKey)
     }

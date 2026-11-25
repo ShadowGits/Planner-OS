@@ -84,8 +84,9 @@ check(Civil.weekStart("2026-11-01"), "2026-10-26", "week start")
 let kolkata = TimeZone(identifier: "Asia/Kolkata")!
 let noon = Civil.instant("2026-10-31", "13:00", in: kolkata)!
 let plan = planReminders([view, DayView(date: "2026-11-01", items: [task("early", date: "2026-11-01", time: "08:00")])], now: noon, timeZone: kolkata)
-check(plan.map(\.title), ["gym", "cv", "early"], "reminder order")
-check(plan.first?.fire, Civil.instant("2026-10-31", "17:50", in: kolkata), "ten minutes before")
+let leads = plan.filter { !$0.id.hasSuffix("-start") && !$0.id.hasSuffix("-late") && !$0.id.hasSuffix("-end") }
+check(leads.map(\.title), ["gym", "cv", "early"], "reminder order")
+check(leads.first?.fire, Civil.instant("2026-10-31", "17:50", in: kolkata), "ten minutes before")
 
 // Decoding the API's shapes.
 let json = #"{"success":true,"data":{"date":"2026-10-31","timezone":"Asia/Kolkata","items":[{"id":"t1","title":"CV","start_time":"18:30:00","estimated_minutes":null,"done":false,"is_habit":false,"scheduled_date":"2026-10-31","due_date":null,"notes":""}]}}"#
@@ -103,38 +104,101 @@ check((try? Connection.origin("https://planner.example.com/"))?.absoluteString, 
 check((try? Connection.origin("http://planner.example.com"))?.absoluteString, nil, "https only")
 check((try? Connection.origin("https://planner.example.com/app"))?.absoluteString, nil, "no path")
 
-// Timeline layout: gaps, shared edges, heights, icons, colours.
-let day = timelineItems([
-    task("wake", time: "07:00", minutes: 15), task("yoga", time: "07:15"),
-    task("coffee", time: "08:45", minutes: 15), task("anytime"),
-])
-check(day.map(\.id), ["wake", "yoga", "gap-465", "coffee"], "timeline items")
-if case .task(_, let shows) = day[1] { check(shows, false, "shared edge hides the start") }
-if case .task(_, let shows) = day[3] { check(shows, true, "after a gap the start shows") }
-if case .gap(_, let minutes, let next) = day[2] { check(minutes, 60, "gap length"); check(next, "coffee", "gap leads to") }
-check(pillHeight(15), 48, "a 15-minute task is a circle"); check(pillHeight(120), 192, "two hours is about 190 pt"); check(pillHeight(900), 640, "capped")
-check(gapHeight(15), 16, "a few minutes is a short piece of spine"); check(gapHeight(60), 96, "free time keeps the scale"); check(gapHeight(600), 104, "a long window is capped")
+// The Mac's floating clock.
+let clockDays = [
+    "2026-05-12": [task("Late film", date: "2026-05-12", time: "23:30", minutes: 90)],
+    "2026-05-13": [task("Standup", date: "2026-05-13", time: "09:00", minutes: 60), task("Review", date: "2026-05-13", time: "09:30", minutes: 60),
+                   task("Skipped", date: "2026-05-13", time: "11:00", done: true), task("Lunch", date: "2026-05-13", time: "13:00"),
+                   task("Any", date: "2026-05-13"), task("Owl", date: "2026-05-14", time: "25:30")],
+    "2026-05-14": [task("Owl", date: "2026-05-14", time: "01:30")],
+]
+func clockAt(_ seconds: Int) -> ClockFocus? { clockFocus(today: "2026-05-13", seconds: seconds) { clockDays[$0] ?? [] } }
+check(clockAt(30 * 60)?.task.id, "Late film", "a task from before midnight is still running after it")
+check(clockAt(30 * 60)?.remaining, 30 * 60, "and runs out at its own end")
+check(clockAt(9 * 3600 - 1)?.running, false, "a second before, it is next")
+check(clockAt(9 * 3600 - 1)?.remaining, 1, "counting down to the start")
+check(clockAt(9 * 3600)?.running, true, "on the second it starts, it runs")
+check(clockAt(9 * 3600)?.progress, 0, "from an empty ring")
+check(clockAt(9 * 3600 + 45 * 60)?.task.id, "Review", "of two under way, the later start")
+check(clockAt(9 * 3600 + 45 * 60)?.others, 1, "saying there is another")
+check(clockAt(10 * 3600 + 30 * 60)?.task.id, "Lunch", "at the end it moves on, past what is already done")
+check(clockAt(20 * 3600)?.task.id, "Owl", "then to tomorrow's first")
+check(clockAt(20 * 3600)?.remaining, 5 * 3600 + 30 * 60, "counted once, at 01:30 of its own date")
+check(clockFocus(today: "2026-05-13", seconds: 0) { _ in [] } == nil, true, "nothing timed, nothing to count")
+check(countdownText(245), "4:05", "minutes"); check(countdownText(3845), "1:04:05", "hours"); check(countdownText(-3), "0:00", "never below zero")
+
+// Timeline layout: 50 points an hour, the same for every hour.
+check(minuteOffset(0), 0, "midnight is the top"); check(minuteOffset(90), 75, "50 points an hour")
+check(timelineDayHeight, 1200, "all 24 hours")
+let day = timelineBlocks([task("anytime"), task("Breakfast", time: "07:00"), task("Walk", time: "07:30"), task("Late", time: "23:30", minutes: 120)])
+check(day.map(\.id), ["Breakfast", "Walk", "Late"], "untimed work is not on the grid")
+check(day.map(\.columns), [1, 1, 1], "back to back is not an overlap")
+check(day[0].top, 350, "07:00 is seven hours down"); check(day[0].height, 25, "half an hour is 25 points")
+check(day[2].top + day[2].height, 1200, "past midnight is cut at the line")
 check(durationText(15), "15m", "minutes"); check(durationText(60), "1h", "hour"); check(durationText(90), "1h 30m", "mixed")
 check(taskSymbol(task("Wake Up")), "alarm", "wake icon"); check(taskSymbol(task("Bike to Office")), "bicycle", "bike icon")
 check(taskSymbol(task("Coffee")), "cup.and.saucer", "coffee icon"); check(taskSymbol(task("Something else")), "checklist", "default icon")
 check(paletteIndex(task("Yoga"), count: 8), paletteIndex(task("Yoga"), count: 8), "stable colour")
-check(timelineAnchor(day, now: 8 * 60), "coffee", "anchor is next up"); check(timelineAnchor(day, now: nil), "wake", "anchor is first")
 check(Civil.clockText(7 * 60, twentyFour: false), "07:00 AM", "12h"); check(Civil.clockText(13 * 60 + 5, twentyFour: false), "01:05 PM", "pm")
 check(Civil.clockText(1440, twentyFour: true), "00:00", "midnight"); check(Civil.monthName("2026-05-13"), "May", "month")
 check(Civil.weekdayShort("2026-05-13"), "Wed", "weekday")
 
-// Drop maths: a point in the list to a time and back.
-let dropDay = timelineItems([task("wake", time: "07:00", minutes: 15), task("yoga", time: "07:15"), task("coffee", time: "08:45", minutes: 15)])
-// Rows: wake 0-56, yoga 56-112, an hour of free time 112-208, coffee 208-264.
-check(minuteAt(0, in: dropDay), 420, "top of the list is the first start")
-check(minuteAt(56 + 4 + 24, in: dropDay), 450, "halfway down a 30-minute capsule is 15 minutes in")
-check(minuteAt(112 + 48, in: dropDay), 495, "halfway through an hour of free time")
-check(minuteAt(264 + 16, in: dropDay), 550, "below the last task at 1.6 points a minute")
-check(minuteAt(-50, in: dropDay), 390, "above the top is earlier, at scale")
-for minute in stride(from: 420, through: 600, by: 5) {
-    check(minuteAt(offsetFor(minute, in: dropDay), in: dropDay), minute, "round trip \(Civil.clock(minute))")
+// Days: midnight to midnight, one after another down one scroll.
+let spill = [task("Evening", date: "2026-05-13", time: "22:00"), task("Night owl", date: "2026-05-14", time: "25:30"),
+             task("Early", date: "2026-05-14", time: "29:15"), task("Any", date: "2026-05-13")]
+check(calendarDay(spill).map(\.id), ["Evening", "Any"], "the next morning is left to its own date")
+let tomorrow = [task("Night owl", date: "2026-05-14", time: "01:30")]
+let scroll = TimelineLayout(dates: ["2026-05-13", "2026-05-14"]) { $0 == "2026-05-13" ? spill : tomorrow }
+check(scroll.days.flatMap { $0.blocks }.filter { $0.id == "Night owl" }.count, 1, "nothing shows twice")
+let first = scroll.days[0], second = scroll.days[1]
+check(first.gridTop, 64 + 44 + 10, "the untimed list sits under the header")
+check(second.top, first.bottom, "the next day starts where this one ends")
+check(second.blocks.first?.top, 75, "01:30 is at 01:30 of the next date")
+check(scroll.index(at: second.top - 1), 0, "just above the line is the day before")
+check(scroll.index(at: second.top), 1, "the line starts the day")
+check(scroll.index(at: -50), 0, "before the first day is the first"); check(scroll.index(at: 999_999), 1, "past the last is the last")
+
+func lands(_ y: Double) -> String { scroll.landing(at: y).map { "\($0.date) \(Civil.clock($0.start))" } ?? "nowhere" }
+for minute in stride(from: 0, to: 1440, by: 5) {
+    check(lands(second.gridTop + minuteOffset(minute)), "2026-05-14 \(Civil.clock(minute))", "round trip \(Civil.clock(minute))")
 }
-check(minuteAt(30, in: []), 560, "an empty day starts from 09:00")
+check(lands(first.gridBottom - 1), "2026-05-13 23:55", "the last start of a day")
+check(lands(first.gridBottom + 4), "2026-05-13 23:55", "still this day above the line")
+check(lands(second.top + 1), "2026-05-14 00:00", "over the line is midnight of the next date")
+check(lands(second.gridTop + 76), "2026-05-14 01:30", "it snaps to five minutes")
+
+// What is in view stays put when a day above it gains an untimed task.
+let grown = TimelineLayout(dates: ["2026-05-13", "2026-05-14"]) { $0 == "2026-05-13" ? spill + [task("Another")] : tomorrow }
+let kept = scroll.spot(at: second.gridTop + 300)!
+check(grown.y(of: kept), second.gridTop + 300 + 44, "the same clock time, 44 points further down")
+let atMidnight = first.gridTop - 0.25
+check(grown.y(of: scroll.spot(at: atMidnight)!), atMidnight + 44, "opened at midnight, it stays at midnight as the list above fills")
+
+// A finger on a task's body is the task; on its tick or star it is not.
+let body = second.gridTop + 75 + 12
+check(scroll.hit(CGPoint(x: 80, y: body), width: 400)?.task.id, "Night owl", "the body")
+check(scroll.hit(CGPoint(x: 385, y: body), width: 400) == nil, true, "the tick")
+check(scroll.hit(CGPoint(x: 330, y: body), width: 400) == nil, true, "the star")
+check(scroll.hit(CGPoint(x: 330, y: body), width: 400, anywhere: true)?.task.id, "Night owl", "a swipe can start on the star")
+check(scroll.hit(CGPoint(x: 385, y: body), width: 400, anywhere: true)?.task.id, "Night owl", "or on the tick")
+check(scroll.hit(CGPoint(x: 20, y: 64 + 22), width: 400, anywhere: true)?.task.id, "Any", "or on an untimed row's tick")
+check(scroll.hit(CGPoint(x: 20, y: body), width: 400) == nil, true, "the hour labels")
+check(scroll.hit(CGPoint(x: 120, y: 64 + 22), width: 400)?.task.id, "Any", "an untimed row")
+check(scroll.hit(CGPoint(x: 20, y: 64 + 22), width: 400) == nil, true, "an untimed row's tick")
+for (width, height) in [(336.0, 25.0), (84.0, 50.0), (40.0, 24.0), (166.0, 400.0)] {
+    let parts = BlockParts(width: width, height: height)
+    let block = CGRect(x: 0, y: 0, width: width, height: height)
+    check(block.contains(parts.tick), true, "the tick stays inside a \(width) by \(height) block")
+    check(parts.star.map { block.contains($0) && !$0.intersects(parts.tick) } ?? true, true, "so does the star, clear of the tick")
+}
+
+let reach = timelineDates(today: "2026-11-22")
+check(reach.first, "2026-11-08", "14 days back"); check(reach.last, "2027-01-21", "60 days ahead"); check(reach.count, 75, "75 days")
+check(timelineDates(today: "2026-11-22", reaching: "2026-10-01").first, "2026-10-01", "a picked day can be further back")
+check(timelineDates(today: "2026-11-22", reaching: "2027-03-01").last, "2027-03-01", "or further ahead")
+check(hourLabel(0, twentyFour: false), "12 AM", "midnight"); check(hourLabel(12, twentyFour: false), "12 PM", "noon")
+check(hourLabel(19, twentyFour: false), "7 PM", "evening"); check(hourLabel(1, twentyFour: true), "01:00", "24-hour")
+
 check(dropStart(1430), 1430, "a drop near midnight stays where it is shown")
 check(dropStart(5000), 27 * 60 + 55, "27:55 is the latest start, as on the old timeline")
 check(dropStart(-30), 0, "nothing before midnight")
@@ -143,29 +207,7 @@ check(dropTarget("2026-05-13", 25 * 60 + 30).time, "01:30", "at 01:30")
 check(dropTarget("2026-05-13", 22 * 60).date, "2026-05-13", "before midnight it stays on the day")
 check(dropTarget("2026-05-13", 22 * 60).time, "22:00", "at the time shown")
 
-// The now bar shows wherever now falls.
-let barDay = timelineItems([task("Coffee", time: "15:45", minutes: 15), task("Emails", time: "16:00"), task("Home", time: "17:00")])
-check(nowBarOffset(16 * 60 + 10, in: barDay), offsetFor(16 * 60 + 10, in: barDay), "now bar inside a task")
-check(nowBarOffset(16 * 60 + 40, in: barDay), offsetFor(16 * 60 + 40, in: barDay), "now bar in free time")
-check(nowBarOffset(6 * 60, in: barDay), -12, "now bar before the first task, just above it")
-check(nowBarOffset(23 * 60, in: barDay), barDay.reduce(0) { $0 + itemHeight($1) } + 20, "now bar after the last task, just below it")
-check(nowBarOffset(-1, in: barDay), nil, "no now bar on a later day")
-check(nowBarOffset(Int.max, in: barDay), nil, "no now bar on an earlier day")
-
-// A held task can go until 04:00 the next morning, in the same day.
-let night = timelineItems([task("Dinner", time: "20:00", minutes: 60), task("Read", time: "21:30", minutes: 45)])
-let nightBottom: Double = night.reduce(0) { $0 + itemHeight($1) }
-check(timelineLastEnd(night), 22 * 60 + 15, "the end of the day's tasks")
-let nightExpected: Double = Double(timelineLastStart - (22 * 60 + 15)) * 1.6 + pillHeight(60)
-check(nightRoom(night, heldMinutes: 60), nightExpected, "room to the latest start at scale, plus the held capsule")
-check(nightHours(night), [23 * 60, 24 * 60, 25 * 60, 26 * 60, 27 * 60, 28 * 60], "faint hours from the next whole hour to 04:00")
-let halfPastOne: Int = 25 * 60 + 30
-let pastEnd: Double = Double(halfPastOne - (22 * 60 + 15)) * 1.6
-check(minuteAt(nightBottom + pastEnd, in: night), halfPastOne, "01:30 the next morning is reachable")
-check(minuteAt(nightBottom + 5000, in: night), 27 * 60 + 55, "27:55 is the latest start")
-check(nightHours(timelineItems([task("Late", time: "22:50", minutes: 15)])), [24 * 60, 25 * 60, 26 * 60, 27 * 60, 28 * 60], "an hour too close to the last task is left out")
-check(nightRoom([], heldMinutes: 30), 0, "no room on an empty day")
-check(logicalMinutes(Moment(today: "2026-05-14", minutes: 90)), 25 * 60 + 30, "01:30 is 25:30 of the evening's day")
+// The store still keeps 25:30 on the evening for the widget.
 let owl = PlannerTask(id: "owl", title: "Night owl", time: "01:30", minutes: 30, date: "2026-05-14")
 check(shown(owl, on: "2026-05-13")?.time, "25:30", "after midnight it stays at the end of the evening's day")
 check(shown(owl, on: "2026-05-14")?.time, "01:30", "and is at 01:30 on its own date")
@@ -175,11 +217,16 @@ check(shown(owlListed, on: "2026-05-14")?.time, "01:30", "the evening's 25:30 co
 check(shown(owlListed, on: "2026-05-13")?.time, "25:30", "and stays 25:30 on the evening")
 let breakfast = PlannerTask(id: "b", title: "Breakfast", time: "08:00", minutes: 30, date: "2026-05-14")
 check(shown(breakfast, on: "2026-05-13") == nil, true, "a morning task is not the evening's")
+let dueOnly = task("Form", due: "2026-05-13")
+check(shown(dueOnly, on: "2026-05-13")?.id, "Form", "a task with only a deadline stays on the day it is due")
+check(shown(dueOnly, on: "2026-05-14") == nil, true, "and on no other")
+check(shown(task("Idea"), on: "2026-05-13") == nil, true, "with neither it is on no day")
 let listed = DayView(date: "2026-05-13", items: [owlListed]), own = DayView(date: "2026-05-14", items: [owl])
 let owlReminders = planReminders([listed, own], now: Civil.instant("2026-05-13", "12:00", in: kolkata)!, timeZone: kolkata)
-check(owlReminders.count, 1, "one reminder for a task after midnight, though both days list it")
-check(owlReminders.first?.fire, Civil.instant("2026-05-14", "01:20", in: kolkata), "ten minutes before 01:30 on its date")
-check(logicalMinutes(Moment(today: "2026-05-14", minutes: 9 * 60)), 9 * 60, "09:00 is 09:00")
+let owlLeads = owlReminders.filter { !$0.id.hasSuffix("-start") && !$0.id.hasSuffix("-late") && !$0.id.hasSuffix("-end") }
+check(owlLeads.count, 1, "one warning for a task after midnight, though both days list it")
+check(owlLeads.first?.fire, Civil.instant("2026-05-14", "01:20", in: kolkata), "ten minutes before 01:30 on its date")
+check(Set(owlReminders.map(\.id)).count, owlReminders.count, "and no nag twice either")
 
 // What the old timeline showed on each task, kept.
 let piece = PlannerTask(id: "p", title: "Essay", time: "10:00", minutes: 60, parent: "whole", parentTitle: "Essay", partIndex: 2, partCount: 3)
@@ -241,41 +288,19 @@ let widgetRoundTrip = try! JSONDecoder().decode(
 check(widgetRoundTrip, widgetDay, "the snapshot survives being written and read")
 
 // Tasks at the same time sit side by side, as the old timeline had them.
-let clash = timelineItems([task("Standup", time: "11:00", minutes: 30),
-                           task("Deep work", time: "11:00", minutes: 120),
-                           task("Lunch", time: "13:30", minutes: 45)])
-check(clash.map(\.id), ["overlap-660-2", "gap-780", "Lunch"], "two at once become one group")
-guard case .overlap(let clashGroup) = clash[0] else { fatalError("expected a group") }
-check(clashGroup.columns, 2, "two at once means two columns")
-check(clashGroup.start, 11 * 60, "it starts when the first does")
-check(clashGroup.end, 13 * 60, "and ends when the last does")
-check(Set(clashGroup.placed.map(\.column)), [0, 1], "each keeps its own column")
-check(Set(clashGroup.placed.map(\.top)), [0], "both start together, so both sit at the top")
-check(clashGroup.placed.first { $0.task.title == "Standup" }?.height, pillHeight(30),
-      "a short task is still drawn at least a circle tall")
-
-let reused = timelineItems([task("Standup", time: "11:00", minutes: 30),
+let clash = timelineBlocks([task("Standup", time: "11:00", minutes: 30),
                             task("Deep work", time: "11:00", minutes: 120),
-                            task("Call", time: "11:45", minutes: 30)])
-guard case .overlap(let reusedGroup) = reused[0] else { fatalError("expected a group") }
-check(reusedGroup.columns, 2, "the column the short task freed is reused, not a third opened")
-check(reusedGroup.placed.first { $0.task.title == "Call" }?.column,
-      reusedGroup.placed.first { $0.task.title == "Standup" }?.column, "the call takes the free column")
-check(reusedGroup.placed.first { $0.task.title == "Call" }?.top, 45 * 1.6,
-      "and sits where its own clock puts it")
-
-let queue = timelineItems([task("A", time: "09:00", minutes: 30), task("B", time: "09:30", minutes: 30)])
-check(queue.allSatisfy { if case .task = $0 { return true } else { return false } }, true,
-      "back to back is not an overlap: that stays an ordinary row")
-
-// And the clock still reads true across a group, so a drag lands where it looks.
-for minute in stride(from: 11 * 60, through: 14 * 60 + 15, by: 5) {
-    check(minuteAt(offsetFor(minute, in: clash), in: clash), minute, "round trip at \(columnClock(minute, twentyFour: true))")
-}
-let clashHeight = itemHeight(clash[0])
-check(minuteAt(0, in: clash), 11 * 60, "the group starts where it starts")
-check(minuteAt(clashHeight / 2, in: clash), 12 * 60, "and halfway down it is halfway through")
-check(timelineAnchor(clash, now: 11 * 60 + 10)?.isEmpty, false, "a task inside a group can still be scrolled to")
+                            task("Call", time: "11:45", minutes: 30),
+                            task("Lunch", time: "13:30", minutes: 45)])
+let placed = Dictionary(uniqueKeysWithValues: clash.map { ($0.id, $0) })
+check(placed["Standup"]?.columns, 2, "two at once means two columns")
+check(placed["Standup"]?.column == placed["Deep work"]?.column, false, "each keeps its own column")
+check(placed["Call"]?.column, placed["Standup"]?.column, "the column the short task freed is reused, not a third opened")
+check(placed["Call"]?.top, minuteOffset(11 * 60 + 45), "and sits where its own clock puts it")
+check(placed["Lunch"]?.columns, 1, "alone, it has the whole width")
+let tiny = timelineBlocks([task("A", time: "09:00", minutes: 10), task("B", time: "09:10", minutes: 10)])
+check(tiny.map(\.height), [24, 24], "a short task is still tall enough to tap")
+check(tiny.map(\.columns), [2, 2], "so two that would cover each other go side by side")
 
 // The six the widget shows: what is on now and what follows, ticked or not.
 check(widgetDay.window(at: 11 * 60 + 20, count: 6).map(\.title), ["Shortlist", "Dinner", "Night owl"],
@@ -321,7 +346,6 @@ check(rangeText(420, 435, twentyFour: false), "7:00–7:15 AM", "range"); check(
 check(rangeText(420, 435, twentyFour: true), "07:00–07:15", "24-hour range")
 check(durationWords(15), "15 min", "words"); check(durationWords(60), "1 hr", "hour words"); check(durationWords(90), "1 hr, 30 min", "mixed words")
 check(fullClock(16 * 60 + 15, twentyFour: false), "4:15 PM", "drag label")
-check(hourMarks(task("Blog", time: "13:30", minutes: 120)), [14 * 60, 15 * 60], "whole hours inside a long task")
 var colourHash: UInt64 = 5381
 for scalar in "Yoga".unicodeScalars { colourHash = (colourHash &* 33) &+ UInt64(scalar.value) }
 check(paletteIndex(task("Yoga"), count: 8), Int(colourHash % 8), "same colour hash as Android")
@@ -604,6 +628,69 @@ let asList = dayList([task("untimed"), task("late", time: "19:00"), task("ticked
 check(asList.open.map { $0.id }, ["early", "late", "untimed"], "what is still to do, in time order, untimed last")
 check(asList.done.map { $0.id }, ["ticked", "also ticked"], "then what is done")
 check(dayList([]).open.isEmpty && dayList([]).done.isEmpty, true, "an empty day is an empty list")
+
+// Harsh reminders: ten minutes before, then until it is ticked.
+check(HarshReminders.leadBody(start: 9 * 60, minutes: 30), "In 10 min · 09:00 · 30 min. Wrap up what you're doing.", "the warning")
+check(HarshReminders.clock(25 * 60 + 30), "01:30", "a small-hours time reads as the clock")
+check(HarshReminders.nags(minutes: 60).map { "\($0.0.rawValue)+\($0.1)" }, ["start+0", "late+15", "end+60"], "start, fifteen in, and the end")
+check(HarshReminders.nags(minutes: 15).map { $0.0.rawValue }, ["start", "end"], "a short task skips fifteen-in, which would land after it ended")
+check(HarshReminders.nagText(.start, title: "Gym", start: 17 * 60 + 30, minutes: 90).title, "Now: Gym", "start, title")
+check(HarshReminders.nagText(.start, title: "Gym", start: 17 * 60 + 30, minutes: 90).body, "It's 17:30. You planned this. Start it.", "start, body")
+check(HarshReminders.nagText(.late, title: "Gym", start: 17 * 60 + 30, minutes: 90).title, "15 min late: Gym", "late, title")
+check(HarshReminders.nagText(.end, title: "Gym", start: 17 * 60 + 30, minutes: 90).body,
+      "This should have been finished by 19:00. Tick it, or admit you skipped it.", "end, body")
+
+let nagDay = DayView(date: "2026-10-31", items: [
+    task("Gym", date: "2026-10-31", time: "17:30", minutes: 90),
+    { var t = task("Dance class", date: "2026-10-31", time: "18:30", minutes: 50); t.source = "apple_calendar"; return t }(),
+    task("Ticked", date: "2026-10-31", time: "19:00", done: true),
+    task("Tomorrow far", date: "2026-11-01", time: "20:00"),
+])
+let nagPlan = planReminders([nagDay], now: noon, timeZone: kolkata)
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Gym")) }.map(\.title),
+      ["Gym", "Now: Gym", "15 min late: Gym", "Not done: Gym"], "a task gets its warning and three nags")
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Gym")) }.map(\.fire).last,
+      Civil.instant("2026-10-31", "19:00", in: kolkata), "the last one when it should have ended")
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Dance class")) }.map(\.title), ["Dance class"],
+      "a calendar event gets the warning and no nags")
+check(nagPlan.contains { $0.id.hasPrefix(HarshReminders.taskPrefix("Ticked")) }, false, "a ticked task gets nothing")
+check(nagPlan.filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Tomorrow far")) }.map(\.title), ["Tomorrow far"],
+      "a task more than twelve hours off gets its warning; its nags come with a later sync")
+check(nagPlan.count <= reminderLimit, true, "never more than iOS will hold")
+let lateNow = Civil.instant("2026-10-31", "17:40", in: kolkata)!
+check(planReminders([nagDay], now: lateNow, timeZone: kolkata).filter { $0.id.hasPrefix(HarshReminders.taskPrefix("Gym")) }.map(\.title),
+      ["15 min late: Gym", "Not done: Gym"], "a sync part-way through plans only the nags still to come")
+
+// The morning callout and the evening report.
+check(HarshReminders.lateWords(days: 1), "1 day", "a day"); check(HarshReminders.lateWords(days: 5), "5 days", "days")
+check(HarshReminders.lateWords(days: 9), "1 week", "a week"); check(HarshReminders.lateWords(days: 23), "3 weeks", "weeks")
+check(HarshReminders.morning(overdue: 14, worst: ("Master CV v1", 21), planned: 5, first: ("LOR: send requests", 12 * 60))?.body,
+      "14 overdue. Worst: Master CV v1, 3 weeks late. Today: 5 planned. First up: LOR: send requests at 12:00.", "the morning callout")
+check(HarshReminders.morning(overdue: 14, worst: ("Master CV v1", 21), planned: 5, first: nil)?.title, "Overdue check", "its title")
+check(HarshReminders.morning(overdue: 0, worst: nil, planned: 0, first: nil) == nil, true, "nothing to say, nothing sent")
+check(HarshReminders.morning(overdue: 0, worst: nil, planned: 0 + 2, first: nil)?.body, "Nothing overdue. Today: 2 planned.", "a clean slate")
+check(HarshReminders.morning(overdue: 3, worst: nil, planned: 0, first: nil)?.body,
+      "3 overdue. Nothing planned today. Plan it, or it will not happen.", "overdue and nothing planned")
+let reportDay: [HarshReminders.ReportItem] = [
+    .init(id: "a", title: "Gym", start: 17 * 60 + 30, done: false),
+    .init(id: "b", title: "Reading", start: 16 * 60, done: true),
+    .init(id: "c", title: "SOP outline", start: nil, done: false),
+    .init(id: "d", title: "Office", start: 21 * 60 + 45, done: false),
+]
+check(HarshReminders.evening(reportDay, at: HarshReminders.eveningMinute)?.body,
+      "You did 1 of 3 today. Skipped: Gym, SOP outline. Still to come tonight: 1.", "the evening report")
+check(HarshReminders.evening(reportDay, at: HarshReminders.eveningMinute)?.title, "Today's report", "its title")
+check(HarshReminders.evening(reportDay.map { var item = $0; item.done = true; return item }, at: HarshReminders.eveningMinute)?.body,
+      "All 3 done today. That is how it's done.", "a day with nothing skipped")
+check(HarshReminders.evening([.init(id: "x", title: "Late", start: 23 * 60, done: false)], at: HarshReminders.eveningMinute) == nil, true,
+      "nothing due yet, no report")
+let six = (1...6).map { HarshReminders.ReportItem(id: "\($0)", title: "T\($0)", start: $0 * 60 + 600, done: false) }
+check(HarshReminders.evening(six, at: HarshReminders.eveningMinute)?.body, "You did 0 of 6 today. Skipped: T1, T2, T3, T4, +2 more.", "a long list is cut short")
+HarshReminders.saveReport(.init(date: "2026-10-31", items: reportDay))
+check(HarshReminders.markReport("a", done: true)?.items.first { $0.id == "a" }?.done, true, "a tick marks tonight's report")
+check(HarshReminders.loadReport()?.items.filter(\.done).count, 2, "and it is saved")
+check(HarshReminders.markReport("nope", done: true) == nil, true, "an unknown task changes nothing")
+check(Civil.days(from: "2026-10-31", to: "2026-11-21"), 21, "days between two dates")
 
 print(failures == 0 ? "All policy checks passed" : "\(failures) checks failed")
 exit(failures == 0 ? 0 : 1)

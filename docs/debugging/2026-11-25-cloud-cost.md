@@ -67,8 +67,46 @@ still matter. Taxes, other services and shared-account usage are excluded.
 
 ## Change and test log
 
-In progress: projected project/milestone reads, bounded reminder feed,
+Commit `350f03c`: projected project/milestone reads, bounded reminder feed,
 120-second refresh minimum, future-agent rules and query/storage regressions.
+Integrated `origin/main` (`24d46e4`) to retain the latest scrolling timeline,
+floating clock, nags and daily reports. Removed the clock's duplicate network
+loop; the store owns refresh even without a window. Returning to a window now
+respects freshness. Shared in-flight date reads are revision-scoped and cleared
+on disconnect/account changes; scrolling reuses dates fetched within 120 seconds.
+Ordinary edits reconcile source/destination and loaded after-midnight copies;
+split-child edits keep broader reconciliation. Restored the pending-gap picker
+on the current multi-day timeline.
+
+Validation completed against isolated in-memory fixture servers, with no
+production task mutations:
+
+- iOS simulator and macOS app/UI-test builds passed using local beta SDK
+  deployment-target overrides; no local signing settings included in commits.
+- Five pending-gap UI tests passed on iOS and five on macOS: create, fit existing
+  with details retained, search/cancel, remote completion and conflicting booking.
+- Seventeen runtime refresh/query checks passed: overlapping reads coalesce,
+  fresh scrolling/early polling make no requests, one reminder feed replaces
+  full-day downloads, 404 retains seven-day compatibility, errors/incomplete
+  feeds propagate without fallback, unrelated dates stay cached after edits,
+  remote edits update memory/disk/reminders, dragging is protected, window-free
+  refresh runs, and disconnect/offline behavior remains correct.
+- Backend/query/storage suite: 251 tests passed.
+  Habit override/move/completion behavior matches individual day reads while
+  querying each habit table once for the whole week. Reminder projections retain
+  completed/untimed/due-only tasks, calendar provenance and final-night spillover.
+- Xcode project references, task fields, gesture hit areas and Siri registration
+  checks passed. Initial UI failures were obsolete static-text selectors on the
+  new timeline; tests now use the real gap buttons and platform task labels.
+- Signed physical-iPhone and Mac builds also succeeded; both bundle signatures
+  passed verification and retain display name `Planner OS` and bundle ID
+  `dev.planneros.planner`. Prepared bundles are under
+  `/tmp/planner-query-install-ios/Build/Products/Debug-iphoneos/PlannerOS.app`
+  and `/tmp/planner-query-install-mac/Build/Products/Debug/PlannerOS.app`.
+  These builds have not been installed and the backend changes have not been
+  deployed. Deployment/push require explicit live chat approval per repo rules.
+
 Monthly target requested by user: 60–70% of CPU/request free allowances; see
-`../query_budget.md`. No production CPU savings verified until deployment and
-updated app installation. Add final test/commit results here before delivery.
+`../query_budget.md`. This is not yet a measured production result or a hard
+service cap. No production CPU savings verified until deployment and updated
+app installation. Existing November charges cannot be reversed by this fix.

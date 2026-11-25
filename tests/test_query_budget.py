@@ -3,6 +3,19 @@ from test_day_api import APP_KEY, client, runtime
 from test_day_api import USER_ID, WORKSPACE_ID
 from uuid import uuid4
 from fastapi.testclient import TestClient
+from pathlib import Path
+import re
+
+
+def test_apple_automatic_refresh_and_clock_network_contract():
+    root = Path(__file__).resolve().parents[1] / "apple/PlannerOS"
+    store = (root / "PlannerStore.swift").read_text()
+    interval = re.search(r"func refreshIfStale\(after seconds: TimeInterval = (\d+)\)", store)
+    assert interval and int(interval[1]) >= 120, "User approval required to increase automatic polling"
+    clock = (root / "FloatingClock.swift").read_text()
+    for network_entry in ("PlannerAPI", "refreshIfStale(", "refreshAll(", "loadDay(", "loadDays("):
+        assert network_entry not in clock, "The floating clock must share the store's refresh loop"
+    assert "refreshIfStale(after: 0)" not in (root / "RootView.swift").read_text()
 
 
 def track(runtime, monkeypatch):
@@ -87,3 +100,28 @@ def test_reminder_read_failure_is_not_an_empty_success(client, runtime, monkeypa
     response = TestClient(client.app, raise_server_exceptions=False).get(
         "/v2/day/reminder-schedule?date=2099-10-01", headers=APP_KEY)
     assert response.status_code >= 500
+
+
+def test_reminder_habits_match_daily_reads_with_one_query_per_table(client, runtime, monkeypatch):
+    gateway = runtime.service_client
+    tenant = {"user_id": str(USER_ID), "workspace_id": str(WORKSPACE_ID)}
+    habit = gateway.insert("habits", {**tenant, "title": "Practice", "recurrence_key": "practice",
+        "start_date": "2099-10-01", "start_time": "08:00", "estimated_minutes": 20})[0]
+    gateway.insert("habit_overrides", {**tenant, "habit_id": habit["id"], "on_date": "2099-10-02", "skipped": True})
+    gateway.insert("habit_overrides", {**tenant, "habit_id": habit["id"], "on_date": "2099-10-03",
+        "moved_to": "2099-10-05", "start_time": "10:00", "estimated_minutes": 45})
+    gateway.insert("task_completions", {**tenant, "recurrence_key": "practice", "completed_on": "2099-10-04"})
+    calls = track(runtime, monkeypatch)
+    days = client.get("/v2/day/reminder-schedule?date=2099-10-01", headers=APP_KEY).json()["data"]["days"]
+    for table in ("habits", "habit_overrides", "task_completions"):
+        assert sum(name == table for name, _ in calls) == 1
+    keys = ("id", "title", "start_time", "estimated_minutes", "scheduled_date", "done", "source")
+    def projected(items):
+        return sorted(tuple(item.get(key) for key in keys) for item in items)
+    for day in days:
+        ordinary = client.get(f"/v2/day?date={day['date']}", headers=APP_KEY).json()["data"]
+        assert projected(day["items"]) == projected(ordinary["items"])
+    assert days[1]["items"] == []
+    assert days[2]["items"] == []
+    assert days[3]["items"][0]["done"] is True
+    assert len(days[4]["items"]) == 2

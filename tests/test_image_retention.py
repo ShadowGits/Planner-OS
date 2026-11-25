@@ -1,4 +1,6 @@
 from unittest.mock import patch
+from pathlib import Path
+import json
 
 import pytest
 
@@ -7,6 +9,14 @@ from scripts.protect_live_image import canonical_image, protect
 
 PROJECT = "planner-os-502107"
 BASE = f"us-docker.pkg.dev/{PROJECT}/gcr.io/planner-os-api"
+
+
+def test_repository_retention_contract_remains_three_days():
+    policy = json.loads((Path(__file__).resolve().parents[1] / "config/artifact-retention.json").read_text())
+    deletions = [rule for rule in policy if rule["action"]["type"] == "Delete"]
+    assert len(deletions) == 1
+    assert deletions[0]["condition"] == {
+        "tagState": "any", "packageNamePrefixes": ["planner-os-api"], "olderThan": "3d"}
 
 
 def test_unresolved_or_foreign_images_cannot_be_protected():

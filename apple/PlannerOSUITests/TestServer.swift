@@ -19,6 +19,7 @@ struct TestServer {
     /// The planner's day, as the app works it out: Asia/Kolkata, and before 04:00 still the evening before.
     var today: String { Self.civil(Date().addingTimeInterval(-4 * 3600)) }
     /// The calendar date, which Focus's Tomorrow counts from.
+    /// The calendar date in Asia/Kolkata, which the timeline and Focus's Tomorrow go by.
     var calendarToday: String { Self.civil(Date()) }
 
     static func civil(_ date: Date) -> String {
@@ -86,6 +87,16 @@ struct TestServer {
 
     func inbox() throws -> [[String: Any]] {
         ((try send("GET", "/v2/day/inbox")["data"] as? [String: Any])?["items"] as? [[String: Any]]) ?? []
+    }
+
+    /// A habit, which the app's API has no route to make. Only the test server has this one.
+    func habit(_ title: String, time: String, minutes: Int, from date: String) throws {
+        try send("POST", "/e2e/habit", ["title": title, "start_time": time, "estimated_minutes": minutes, "start_date": date])
+    }
+
+    /// The task on its own date, not as the evening before also lists it.
+    func ownTask(_ id: String, on date: String) throws -> [String: Any]? {
+        try day(date).first { $0["id"] as? String == id && $0["scheduled_date"] as? String == date }
     }
 
     /// The task as the server has it on a given day.

@@ -211,10 +211,16 @@ struct Reminder: Hashable {
 }
 
 /// Reminder lead time, as on Android: ten minutes before each timed task.
-let reminderLeadMinutes = 10
+let reminderLeadMinutes = HarshReminders.leadMinutes
 
-/// iOS keeps at most 64 pending notifications; leave room for the test one.
-let reminderLimit = 60
+/// iOS keeps at most 64 pending notifications: leave room for the test one,
+/// the morning callout and the evening report.
+let reminderLimit = 58
+
+/// Nags are planned only this far ahead. Each task can need four
+/// notifications and iOS holds 64, so nags for the coming hours come before
+/// warnings for next week; every sync plans the next stretch.
+let nagHorizonHours = 12
 
 /// The reminders the coming days need, soonest first.
 func planReminders(_ days: [DayView], now: Date, timeZone: TimeZone) -> [Reminder] {
@@ -227,10 +233,22 @@ func planReminders(_ days: [DayView], now: Date, timeZone: TimeZone) -> [Reminde
             let time = Civil.clock(task.clockMinutes)
             guard let start = Civil.instant(task.date ?? view.date, time, in: timeZone) else { continue }
             let fire = start.addingTimeInterval(TimeInterval(-reminderLeadMinutes * 60))
-            let id = "task-\(task.id)-\(task.date ?? view.date)-\(time)"
-            guard fire > now, seen.insert(id).inserted else { continue }
-            reminders.append(Reminder(id: id, title: task.title,
-                                      body: "Starts at \(time) · \(task.minutes) min", fire: fire))
+            let id = HarshReminders.taskPrefix(task.id) + "\(task.date ?? view.date)-\(time)"
+            guard seen.insert(id).inserted else { continue }
+            if fire > now {
+                reminders.append(Reminder(id: id, title: task.title,
+                                          body: HarshReminders.leadBody(start: task.clockMinutes, minutes: task.minutes), fire: fire))
+            }
+            // Until it is ticked: at the start, fifteen minutes in, and when
+            // it should have ended. Not for calendar events: an appointment
+            // happens whether or not anyone ticks it.
+            guard !task.fromCalendar, start.timeIntervalSince(now) < TimeInterval(nagHorizonHours * 3600) else { continue }
+            for (nag, after) in HarshReminders.nags(minutes: task.minutes) {
+                let at = start.addingTimeInterval(TimeInterval(after * 60))
+                guard at > now else { continue }
+                let text = HarshReminders.nagText(nag, title: task.title, start: task.clockMinutes, minutes: task.minutes)
+                reminders.append(Reminder(id: "\(id)-\(nag.rawValue)", title: text.title, body: text.body, fire: at))
+            }
         }
     }
     return Array(reminders.sorted { ($0.fire, $0.id) < ($1.fire, $1.id) }.prefix(reminderLimit))

@@ -41,10 +41,19 @@ struct PlannerSnapshot: Codable, Equatable {
     /// rules are tested, this stands in with a temporary folder so the logic
     /// below can still be exercised.
     static var folder: URL? {
+        // A test must never reach the real folder: it holds the widget's server and key.
+        #if PLANNER_TESTS
+        guard let path = ProcessInfo.processInfo.environment["PLANNER_TEST_FOLDER"] else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+        #else
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["PLANNER_UI_TEST_SERVER"] != nil { return nil }
+        #endif
         #if canImport(Darwin)
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
         #else
         return FileManager.default.temporaryDirectory.appendingPathComponent(group, isDirectory: true)
+        #endif
         #endif
     }
 

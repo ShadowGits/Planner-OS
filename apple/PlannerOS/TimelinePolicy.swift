@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// A chosen timeline gap. Its bounds stay in logical-day minutes; only the
 /// write converts an overnight slot to the next calendar date.
@@ -48,231 +51,252 @@ struct PendingSlot: Equatable {
     }
 }
 
-// The day laid out as Structured lays it out (docs/structured-ux.md): time runs
-// down the page at 1.6 pt a minute, each task a capsule on a spine, free time
-// between them. Android follows the same rules in StructuredTimeline.kt.
-
-enum TimelineItem: Identifiable, Equatable {
-    case task(PlannerTask, showsStart: Bool)
-    /// Tasks running at the same time, side by side in their own columns.
-    case overlap(OverlapGroup)
-    /// Free time between tasks, and the task that follows it.
-    case gap(start: Int, minutes: Int, next: String)
-
-    var id: String {
-        switch self {
-        case .task(let task, _): return task.id
-        case .overlap(let group): return group.id
-        case .gap(let start, _, _): return "gap-\(start)"
-        }
+/// Free stretches on the calendar day, merging overlaps before offering a gap.
+func pendingSlots(day: String, tasks: [PlannerTask]) -> [PendingSlot] {
+    let timed = calendarDay(tasks).filter { $0.time != nil }.sorted { $0.clockMinutes < $1.clockMinutes }
+    var end = 0
+    var slots: [PendingSlot] = []
+    for task in timed {
+        let slot = PendingSlot(day: day, start: end, end: min(task.clockMinutes, 1440))
+        if slot.minutes >= 30 { slots.append(slot) }
+        end = max(end, task.clockMinutes + task.minutes)
     }
+    let last = PendingSlot(day: day, start: end, end: 1440)
+    if last.minutes >= 30 { slots.append(last) }
+    return slots
 }
 
-/// Tasks that run over each other, each placed by its own clock rather than
-/// stacked as though they were a queue. Two things at once is a decision, not
-/// a mistake, so nothing is moved and nothing is hidden.
-struct OverlapGroup: Equatable {
-    var placed: [Placed]
-    var start: Int
-    var end: Int
+// The timeline: one scroll across days. A day runs midnight to midnight, every
+// hour is the same height, and a thick header marks where each one starts.
+// Everything here is plain arithmetic, so the screen that draws it and the
+// gestures that hit-test it cannot disagree, and it is checked without Xcode.
+
+let timelineHourHeight = 50.0
+let timelineDayHeight = 24 * timelineHourHeight
+let timelineHeaderHeight = 64.0
+let timelineWinsHeight = 44.0
+let timelineUntimedHeight = 44.0
+/// Room above 00:00 and below 24:00, so the first hour label is not on the header's line.
+let timelineGridPadding = 10.0
+/// The least a block is drawn: just under half an hour, so half-hour tasks back
+/// to back never collide. Shorter ones that would collide go side by side.
+let timelineMinBlock = 24.0
+let timelineLabelWidth = 56.0
+let timelineTrailing = 8.0
+let timelineDaysBack = 14
+let timelineDaysAhead = 60
+
+/// How far down its day's 24 hours a minute sits.
+func minuteOffset(_ minute: Int) -> Double { Double(minute) * timelineHourHeight / 60 }
+
+/// The day as the timeline shows it, midnight to midnight: the next morning's
+/// tasks the server also lists on this day, at 24:00 and later, are left to their own date.
+func calendarDay(_ items: [PlannerTask]) -> [PlannerTask] {
+    items.filter { $0.time == nil || $0.clockMinutes < 24 * 60 }
+}
+
+/// A timed task's place in its day: which column of how many, and where.
+struct TimelineBlock: Equatable, Identifiable {
+    var task: PlannerTask
+    var column: Int
     var columns: Int
-    var showsStart: Bool
+    /// Points below 00:00.
+    var top: Double
+    var height: Double
+    var id: String { task.id }
 
-    var id: String { "overlap-\(start)-\(placed.count)" }
-
-    /// Where one task sits inside the group: which column, and how far down.
-    struct Placed: Equatable, Identifiable {
-        var task: PlannerTask
-        var column: Int
-        var top: Double
-        var height: Double
-        var id: String { task.id }
+    /// In the day's 24-hour grid, as wide as `width`.
+    func frame(width: Double) -> CGRect {
+        let each = width / Double(max(columns, 1))
+        let gap = columns > 1 ? 3.0 : 0
+        return CGRect(x: each * Double(column), y: top, width: max(each - gap, 1), height: height)
     }
 }
 
-/// Which column each task takes, so two running at once never share one. The
-/// first free column is reused, as a calendar does, so tasks that merely touch
-/// end to end stay in the same column.
-private func columnsFor(_ group: [PlannerTask]) -> [String: Int] {
-    var ends: [Int] = []
-    var out: [String: Int] = [:]
-    for task in group {
-        let start = task.clockMinutes
-        let column: Int
-        if let free = ends.firstIndex(where: { $0 <= start }) {
-            column = free
-        } else {
-            column = ends.count
-            ends.append(0)
+/// Blocks that would touch on screen share the width, each in the first column
+/// free at its start, as a calendar does. Nothing is moved and nothing is hidden.
+func timelineBlocks(_ tasks: [PlannerTask]) -> [TimelineBlock] {
+    let sized = tasks.filter { $0.time != nil }
+        .map { task -> TimelineBlock in
+            let top = min(minuteOffset(task.clockMinutes), timelineDayHeight - timelineMinBlock)
+            // A task that runs past midnight is cut at the line; it is not repeated below it.
+            let height = min(max(minuteOffset(task.minutes), timelineMinBlock), timelineDayHeight - top)
+            return TimelineBlock(task: task, column: 0, columns: 1, top: top, height: height)
         }
-        ends[column] = start + max(task.minutes, 1)
-        out[task.id] = column
+        .sorted { ($0.top, $0.task.title, $0.id) < ($1.top, $1.task.title, $1.id) }
+
+    var out: [TimelineBlock] = []
+    var group: [TimelineBlock] = []
+    var ends: [Double] = []
+    let touch = 0.01
+    func close() {
+        out += group.map { var block = $0; block.columns = ends.count; return block }
+        group = []
+        ends = []
     }
+    for var block in sized {
+        if let last = ends.max(), block.top >= last - touch { close() }
+        if let free = ends.firstIndex(where: { block.top >= $0 - touch }) {
+            block.column = free
+            ends[free] = block.top + block.height
+        } else {
+            block.column = ends.count
+            ends.append(block.top + block.height)
+        }
+        group.append(block)
+    }
+    close()
     return out
 }
 
-/// Timed tasks in order, with free time of five minutes or more between them.
-/// A start time is shown only where it is not the previous task's end.
-func timelineItems(_ tasks: [PlannerTask]) -> [TimelineItem] {
-    let timed = tasks.filter { $0.time != nil }
-        .sorted { ($0.clockMinutes, $0.title) < ($1.clockMinutes, $1.title) }
+/// The buttons that sit on a block, in its own coordinates. Neither ever
+/// reaches outside its block, where a tap would belong to the task next to it.
+struct BlockParts: Equatable {
+    var tick: CGRect
+    var star: CGRect?
 
-    // Everything that overlaps, directly or through a third task, belongs together.
-    var groups: [[PlannerTask]] = []
-    var groupEnd = Int.min
-    for task in timed {
-        if groups.isEmpty || task.clockMinutes >= groupEnd {
-            groups.append([task])
-            groupEnd = task.clockMinutes + max(task.minutes, 1)
-        } else {
-            groups[groups.count - 1].append(task)
-            groupEnd = max(groupEnd, task.clockMinutes + max(task.minutes, 1))
-        }
+    init(width: Double, height: Double) {
+        let tickWidth = min(44, width / 2), side = min(44, height)
+        tick = CGRect(x: width - tickWidth, y: height - side, width: tickWidth, height: side)
+        star = width >= 150 ? CGRect(x: width - tickWidth - 40, y: height - side, width: 40, height: side) : nil
     }
-
-    var items: [TimelineItem] = []
-    var lastEnd: Int?
-    for group in groups {
-        let start = group[0].clockMinutes
-        let end = group.map { $0.clockMinutes + max($0.minutes, 1) }.max() ?? start
-        if let previous = lastEnd, start - previous >= 5 {
-            items.append(.gap(start: previous, minutes: start - previous, next: group[0].title))
-        }
-        if group.count == 1 {
-            items.append(.task(group[0], showsStart: lastEnd != start))
-        } else {
-            let columns = columnsFor(group)
-            let width = (columns.values.max() ?? 0) + 1
-            // Each sits where its own start falls, unless that would let two in
-            // one column touch: a 5-minute task is drawn taller than 5 minutes.
-            var bottoms = [Double](repeating: 0, count: width)
-            let placed = group.map { task -> OverlapGroup.Placed in
-                let column = columns[task.id] ?? 0
-                let height = pillHeight(task.minutes)
-                let top = max(Double(task.clockMinutes - start) * timelinePointsPerMinute, bottoms[column])
-                bottoms[column] = top + height + 2
-                return OverlapGroup.Placed(task: task, column: column, top: top, height: height)
-            }
-            items.append(.overlap(OverlapGroup(placed: placed, start: start, end: end,
-                                               columns: width, showsStart: lastEnd != start)))
-        }
-        lastEnd = max(lastEnd ?? 0, end)
-    }
-    return items
 }
 
-/// Structured's scale: two hours is about 190 pt.
-let timelinePointsPerMinute = 1.6
-/// Capsule width, and the height of the shortest task (a circle).
-let timelinePillWidth = 48.0
-/// Space above and below each capsule inside its row.
-let timelineRowPadding = 4.0
-/// The planner's day runs to 04:00: the next date's tasks before then belong to
-/// the evening, and the server lists them on its day as 24:00 and later (25:30).
+/// One day's part of the scroll.
+struct TimelineDay: Equatable, Identifiable {
+    var date: String
+    var top: Double
+    var wins: [PlannerTask]
+    var untimed: [PlannerTask]
+    var blocks: [TimelineBlock]
+
+    var id: String { date }
+    var untimedTop: Double { top + timelineHeaderHeight + (wins.isEmpty ? 0 : timelineWinsHeight) }
+    /// 00:00 of this day.
+    var gridTop: Double { untimedTop + Double(untimed.count) * timelineUntimedHeight + timelineGridPadding }
+    /// 24:00 of this day.
+    var gridBottom: Double { gridTop + timelineDayHeight }
+    var bottom: Double { gridBottom + timelineGridPadding }
+}
+
+/// A point of the scroll by what it shows, which holds when heights above it change.
+enum TimelineSpot: Equatable {
+    case clock(date: String, minute: Double)
+    case head(date: String, offset: Double)
+}
+
+/// A task under a point of the scroll.
+struct TimelineHit: Equatable {
+    var task: PlannerTask
+    var date: String
+    /// In the scroll's coordinates.
+    var frame: CGRect
+}
+
+struct TimelineLayout: Equatable {
+    private(set) var days: [TimelineDay] = []
+
+    init(dates: [String] = [], tasks: (String) -> [PlannerTask] = { _ in [] }) {
+        var top = 0.0
+        for date in dates {
+            let items = calendarDay(tasks(date))
+            let byName = items.sorted { ($0.clockMinutes, $0.title, $0.id) < ($1.clockMinutes, $1.title, $1.id) }
+            let day = TimelineDay(date: date, top: top, wins: byName.filter(\.starred),
+                                  untimed: byName.filter { $0.time == nil }, blocks: timelineBlocks(items))
+            days.append(day)
+            top = day.bottom
+        }
+    }
+
+    var height: Double { days.last?.bottom ?? 0 }
+
+    func day(_ date: String) -> TimelineDay? { days.first { $0.date == date } }
+
+    /// The day at a height, the nearest one past either end.
+    func index(at y: Double) -> Int? {
+        guard !days.isEmpty else { return nil }
+        var low = 0, high = days.count - 1
+        while low < high {
+            let middle = (low + high) / 2
+            if days[middle].bottom <= y { low = middle + 1 } else { high = middle }
+        }
+        return low
+    }
+
+    func spot(at y: Double) -> TimelineSpot? {
+        guard let index = index(at: y) else { return nil }
+        let day = days[index]
+        // From the room above 00:00 down is the clock's: a hair short of midnight is still midnight.
+        if y < day.gridTop - timelineGridPadding { return .head(date: day.date, offset: y - day.top) }
+        return .clock(date: day.date, minute: (y - day.gridTop) / timelineHourHeight * 60)
+    }
+
+    func y(of spot: TimelineSpot) -> Double? {
+        switch spot {
+        case .head(let date, let offset):
+            return day(date).map { min($0.top + offset, $0.gridTop) }
+        case .clock(let date, let minute):
+            return day(date).map { $0.gridTop + minute / 60 * timelineHourHeight }
+        }
+    }
+
+    /// The date and time a block whose top is at `y` lands on, to five minutes.
+    /// Crossing a day's header is crossing midnight.
+    func landing(at y: Double) -> (date: String, start: Int)? {
+        guard let index = index(at: y) else { return nil }
+        let day = days[index]
+        if y < day.gridTop { return (day.date, 0) }
+        let minute = Int(((y - day.gridTop) / timelineHourHeight * 12).rounded()) * 5
+        return (day.date, min(minute, 24 * 60 - 5))
+    }
+
+    /// The task under a point of a scroll `width` wide: by its body, which is
+    /// what a tap or a hold takes, or `anywhere` on it, which is enough to swipe it.
+    func hit(_ point: CGPoint, width: Double, anywhere: Bool = false) -> TimelineHit? {
+        let x = Double(point.x), y = Double(point.y)
+        guard y >= 0, y < height, let index = index(at: y) else { return nil }
+        let day = days[index]
+        let right = width - timelineTrailing
+        if y >= day.untimedTop, y < day.gridTop - timelineGridPadding {
+            let row = Int((y - day.untimedTop) / timelineUntimedHeight)
+            let button = anywhere ? 0 : timelineUntimedHeight
+            guard day.untimed.indices.contains(row), x >= timelineTrailing + button, x < right - button else { return nil }
+            let frame = CGRect(x: timelineTrailing, y: day.untimedTop + Double(row) * timelineUntimedHeight,
+                               width: right - timelineTrailing, height: timelineUntimedHeight)
+            return TimelineHit(task: day.untimed[row], date: day.date, frame: frame)
+        }
+        for block in day.blocks {
+            let frame = block.frame(width: right - timelineLabelWidth).offsetBy(dx: timelineLabelWidth, dy: day.gridTop)
+            guard frame.contains(point) else { continue }
+            let parts = BlockParts(width: Double(frame.width), height: Double(frame.height))
+            let inside = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+            if !anywhere, parts.tick.contains(inside) || parts.star?.contains(inside) == true { return nil }
+            return TimelineHit(task: block.task, date: day.date, frame: frame)
+        }
+        return nil
+    }
+}
+
+/// The dates the timeline scrolls over: two weeks back to sixty days ahead,
+/// stretched to reach a day picked outside them.
+func timelineDates(today: String, reaching picked: String? = nil) -> [String] {
+    let usual = (Civil.add(today, days: -timelineDaysBack), Civil.add(today, days: timelineDaysAhead))
+    let first = min(usual.0, picked ?? usual.0), last = max(usual.1, picked ?? usual.1)
+    return (0...max(Civil.between(first, last), 0)).map { Civil.add(first, days: $0) }
+}
+
+/// "7 AM", or "07:00" on a 24-hour device: twelve o'clock comes twice in a day, so it says which.
+func hourLabel(_ hour: Int, twentyFour: Bool) -> String {
+    if twentyFour { return String(format: "%02d:00", hour % 24) }
+    let clock = hour % 24
+    return "\(clock % 12 == 0 ? 12 : clock % 12) \(clock < 12 ? "AM" : "PM")"
+}
+
+/// The next morning before this still shows on the widget's evening (the store keeps 25:30 for it).
 let logicalDayCutoff = 4 * 60
 
-/// The latest start a drag can reach: 27:55, as on the old timeline, which let a
-/// task go that far without leaving the day.
+/// The latest start the store takes for a day: 27:55, which saves on the next date.
 let timelineLastStart = 27 * 60 + 55
-
-func pillHeight(_ minutes: Int) -> Double { min(max(Double(minutes) * timelinePointsPerMinute, timelinePillWidth), 640) }
-
-/// A few minutes is a short piece of spine; free time keeps the scale; a long window is capped.
-func gapHeight(_ minutes: Int) -> Double {
-    if minutes < 30 { return 16 }
-    if minutes < 180 { return max(Double(minutes) * timelinePointsPerMinute, 64) }
-    return 104
-}
-
-func itemHeight(_ item: TimelineItem) -> Double {
-    switch item {
-    case .task(let task, _): return pillHeight(task.minutes) + 2 * timelineRowPadding
-    case .overlap(let group): return (group.placed.map { $0.top + $0.height }.max() ?? 0) + 2 * timelineRowPadding
-    case .gap(_, let minutes, _): return gapHeight(minutes)
-    }
-}
-
-/// How far down the list an item starts.
-func itemOffset(_ id: String, in items: [TimelineItem]) -> Double? {
-    var top = 0.0
-    for item in items {
-        if item.id == id { return top }
-        top += itemHeight(item)
-    }
-    return nil
-}
-
-private func snapToFive(_ minute: Double) -> Int { min(max(Int((minute / 5).rounded()) * 5, 0), timelineLastStart) }
-
-private func firstStart(_ items: [TimelineItem]) -> Int? {
-    for item in items {
-        if case .task(let task, _) = item { return task.clockMinutes }
-        if case .overlap(let group) = item { return group.start }
-    }
-    return nil
-}
-
-/// The time a point of the list stands for, y in points from its top, snapped to
-/// five minutes. Inside a capsule time runs over its duration, inside free time
-/// over the gap, beyond the ends at scale.
-func minuteAt(_ y: Double, in items: [TimelineItem]) -> Int {
-    if y < 0 { return snapToFive(Double(firstStart(items) ?? 9 * 60) + y / timelinePointsPerMinute) }
-    var top = 0.0
-    var end: Int?
-    for item in items {
-        let height = itemHeight(item)
-        switch item {
-        case .task(let task, _):
-            if y < top + height {
-                let inside = min(max((y - top - timelineRowPadding) / pillHeight(task.minutes), 0), 1)
-                return snapToFive(Double(task.clockMinutes) + inside * Double(task.minutes))
-            }
-            end = max(end ?? 0, task.clockMinutes + task.minutes)
-        case .overlap(let group):
-            // Time runs evenly over a group: its columns are a way of drawing
-            // the same stretch of clock, not more of it.
-            if y < top + height {
-                return snapToFive(Double(group.start) + (y - top) / height * Double(group.end - group.start))
-            }
-            end = max(end ?? 0, group.end)
-        case .gap(let start, let minutes, _):
-            if y < top + height { return snapToFive(Double(start) + (y - top) / height * Double(minutes)) }
-            end = start + minutes
-        }
-        top += height
-    }
-    return snapToFive(Double(end ?? 9 * 60) + (y - top) / timelinePointsPerMinute)
-}
-
-/// Where a time sits in the list: the inverse of minuteAt.
-func offsetFor(_ minute: Int, in items: [TimelineItem]) -> Double {
-    if let first = firstStart(items), minute < first { return Double(minute - first) * timelinePointsPerMinute }
-    var top = 0.0
-    var end: Int?
-    for item in items {
-        let height = itemHeight(item)
-        switch item {
-        case .task(let task, _):
-            if minute < task.clockMinutes { return top }
-            if minute < task.clockMinutes + task.minutes {
-                return top + timelineRowPadding
-                    + Double(minute - task.clockMinutes) / Double(max(task.minutes, 1)) * pillHeight(task.minutes)
-            }
-            end = max(end ?? 0, task.clockMinutes + task.minutes)
-        case .overlap(let group):
-            if minute < group.start { return top }
-            if minute < group.end {
-                return top + Double(minute - group.start) / Double(max(group.end - group.start, 1)) * height
-            }
-            end = max(end ?? 0, group.end)
-        case .gap(let start, let minutes, _):
-            if minute < start + minutes { return top + Double(minute - start) / Double(max(minutes, 1)) * height }
-            end = start + minutes
-        }
-        top += height
-    }
-    return top + Double(minute - (end ?? 9 * 60)) * timelinePointsPerMinute
-}
 
 /// Where a dropped task starts: at the time shown, from midnight to 27:55.
 func dropStart(_ minute: Int) -> Int { min(max(minute, 0), timelineLastStart) }
@@ -283,35 +307,12 @@ func dropTarget(_ date: String, _ start: Int) -> (date: String, time: String) {
     return (start >= 24 * 60 ? Civil.add(date, days: 1) : date, Civil.clock(start % (24 * 60)))
 }
 
-/// Where the day's tasks finish, for the room below them.
-func timelineLastEnd(_ items: [TimelineItem]) -> Int? {
-    items.compactMap { item -> Int? in
-        if case .task(let task, _) = item { return task.clockMinutes + task.minutes }
-        if case .overlap(let group) = item { return group.end }
-        return nil
-    }.max()
-}
-
-/// While a task is held the timeline carries on below the last task at scale to
-/// the end of the day at 04:00, with room for the held capsule, so it can land there.
-func nightRoom(_ items: [TimelineItem], heldMinutes: Int) -> Double {
-    guard let end = timelineLastEnd(items) else { return 0 }
-    return Double(max(timelineLastStart - end, 0)) * timelinePointsPerMinute + pillHeight(heldMinutes)
-}
-
-/// The whole hours shown in that room, after the last task up to 04:00, where the day ends.
-func nightHours(_ items: [TimelineItem]) -> [Int] {
-    guard let end = timelineLastEnd(items) else { return [] }
-    let first = (end + 59) / 60 * 60, last = 24 * 60 + logicalDayCutoff
-    guard first <= last else { return [] }
-    return stride(from: first, through: last, by: 60).filter { $0 - end >= 15 }
-}
-
 /// A task as a day's view shows it, as the server lists it: on its own date at
 /// its time, or, before 04:00 on the next date, on this day at 24:00 and later
 /// ("01:30" becomes "25:30"). Nil when it is on neither.
 func shown(_ task: PlannerTask, on day: String) -> PlannerTask? {
-    guard let date = task.date else { return nil }
+    // With no date it is listed on the day it is due, as the server lists it.
+    guard let date = task.date else { return task.dueDate == day ? task : nil }
     guard task.time != nil else { return date == day ? task : nil }
     let clock = task.clockMinutes % (24 * 60)
     var copy = task
@@ -325,9 +326,6 @@ func shown(_ task: PlannerTask, on day: String) -> PlannerTask? {
     }
     return nil
 }
-
-/// Minutes into the planner's day, which runs to 04:00: 01:30 is 25:30.
-func logicalMinutes(_ moment: Moment) -> Int { moment.minutes < 4 * 60 ? moment.minutes + 24 * 60 : moment.minutes }
 
 /// "Part 2/3" for a piece of a split task.
 func partText(_ task: PlannerTask) -> String? {
@@ -353,14 +351,6 @@ func workedText(_ task: PlannerTask) -> String {
 /// "Top Wins · 1 of 3", or "Day won" once every starred task is done.
 func winsTitle(_ wins: [PlannerTask]) -> String {
     !wins.isEmpty && wins.allSatisfy(\.done) ? "Day won" : "Top Wins · \(wins.filter(\.done).count) of \(wins.count)"
-}
-
-/// The now bar's height in the list: at the current time's place in the layout, and when now
-/// is before the first task or after the last, just above or below them. Nil on other days.
-func nowBarOffset(_ now: Int, in items: [TimelineItem]) -> Double? {
-    guard !items.isEmpty, now >= 0, now <= 24 * 60 + 240 else { return nil }
-    let bottom = items.reduce(0) { $0 + itemHeight($1) }
-    return min(max(offsetFor(now, in: items), -12), bottom + 20)
 }
 
 /// Where a task stands against the clock, which decides how its capsule is filled.
@@ -421,14 +411,6 @@ func rangeText(_ start: Int, _ end: Int, twentyFour: Bool) -> String {
     return "\(fullClock(start, twentyFour: false))–\(fullClock(end, twentyFour: false))"
 }
 
-/// Whole hours inside a long task, for the left column.
-func hourMarks(_ task: PlannerTask) -> [Int] {
-    let start = task.clockMinutes, end = task.clockMinutes + task.minutes
-    let first = start / 60 + 1, last = (end - 1) / 60
-    guard first <= last else { return [] }
-    return (first...last).map { $0 * 60 }.filter { $0 - start >= 25 && end - $0 >= 25 }
-}
-
 /// Words in a title that pick its icon, first match wins; Android uses the same list.
 private let symbolRules: [([String], String)] = [
     (["wake", "alarm"], "alarm"),
@@ -478,15 +460,48 @@ func paletteIndex(_ task: PlannerTask, count: Int) -> Int {
     return Int(hash % UInt64(max(count, 1)))
 }
 
-/// The task to scroll to: the one under way or next up today, else the first.
-func timelineAnchor(_ items: [TimelineItem], now: Int?) -> String? {
-    let tasks = items.flatMap { item -> [PlannerTask] in
-        if case .task(let task, _) = item { return [task] }
-        if case .overlap(let group) = item { return group.placed.map(\.task) }
-        return []
+// MARK: The floating clock
+
+/// What the Mac's floating clock counts: the task under way, or the next to start.
+struct ClockFocus: Equatable {
+    var task: PlannerTask
+    var running: Bool
+    /// Seconds to its end while it runs, to its start before that.
+    var remaining: Int
+    /// How far round the ring is: through the task, or through the last hour before it.
+    var progress: Double
+    /// Others under way at the same time, or starting at the same moment.
+    var others: Int
+}
+
+/// The latest to start of those under way, else the next to start, today or
+/// tomorrow. Yesterday counts, for a task that runs on past midnight.
+func clockFocus(today: String, seconds: Int, tasks: (String) -> [PlannerTask]) -> ClockFocus? {
+    var timed: [(task: PlannerTask, start: Int, end: Int)] = []
+    for offset in -1...1 {
+        for task in calendarDay(tasks(Civil.add(today, days: offset))) where task.time != nil && !task.done {
+            let start = offset * 86_400 + task.clockMinutes * 60
+            timed.append((task, start, start + task.minutes * 60))
+        }
     }
-    if let now, let current = tasks.first(where: { $0.clockMinutes + $0.minutes > now }) { return current.id }
-    return tasks.first?.id
+    timed.sort { ($0.start, $0.task.title) < ($1.start, $1.task.title) }
+    let running = timed.filter { $0.start <= seconds && seconds < $0.end }
+    if let current = running.last {
+        return ClockFocus(task: current.task, running: true, remaining: current.end - seconds,
+                          progress: Double(seconds - current.start) / Double(max(current.end - current.start, 1)),
+                          others: running.count - 1)
+    }
+    guard let next = timed.first(where: { $0.start > seconds }) else { return nil }
+    let wait = next.start - seconds
+    return ClockFocus(task: next.task, running: false, remaining: wait, progress: max(1 - Double(wait) / 3600, 0),
+                      others: timed.filter { $0.start == next.start }.count - 1)
+}
+
+/// "4:05", or "1:04:05" from an hour up.
+func countdownText(_ seconds: Int) -> String {
+    let left = max(seconds, 0)
+    if left >= 3600 { return String(format: "%d:%02d:%02d", left / 3600, left / 60 % 60, left % 60) }
+    return String(format: "%d:%02d", left / 60, left % 60)
 }
 
 // MARK: Editing

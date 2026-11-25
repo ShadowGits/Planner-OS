@@ -680,6 +680,8 @@ class TaskService:
         status = payload.get("status")
         if status is not None and status not in TASK_STATUSES:
             raise PlannerCoreError(f"Invalid task status: {status}")
+        if "priority" in payload and payload["priority"] not in PRIORITIES:
+            raise PlannerCoreError(f"Invalid priority: {payload['priority']}")
         if "start_time" in payload:
             _parse_time(payload["start_time"])
         if "project_id" in payload or "milestone_id" in payload:
@@ -2766,8 +2768,11 @@ class MetricsService:
 class ReminderService:
     """Decide which reminders are due and record sends idempotently."""
 
-    MORNING_WINDOW = range(6, 12)
-    EVENING_WINDOW = range(18, 23)
+    # The overdue callout lands as the day starts — around eleven, not at six
+    # while still asleep — and the report once the noon-to-nine working
+    # stretch is over. The same times as the iPhone (HarshReminders.swift).
+    MORNING_WINDOW = range(11, 13)
+    EVENING_FROM = (21, 30)
 
     def __init__(
         self,
@@ -2798,8 +2803,8 @@ class ReminderService:
             message = self._morning_brief()
             if message:
                 due.append({"kind": "morning_brief", "message": message})
-        if current.hour in self.EVENING_WINDOW and "evening_nudge" not in sent_today:
-            message = self._evening_nudge()
+        if (current.hour, current.minute) >= self.EVENING_FROM and "evening_nudge" not in sent_today:
+            message = self._evening_nudge(current)
             if message:
                 due.append({"kind": "evening_nudge", "message": message})
         if "deadline_alert" not in sent_today:
@@ -2850,7 +2855,9 @@ class ReminderService:
                 out.append({
                     "kind": kind,
                     "title": title,
-                    "message": f"Starts in 10 min · {hh:02d}:{mm:02d}" + (f" · {minutes} min" if minutes else ""),
+                    # Blunt on purpose; the same words as both apps.
+                    "message": f"In 10 min · {hh:02d}:{mm:02d}" + (f" · {minutes} min" if minutes else "")
+                    + ". Wrap up what you're doing.",
                     "url": "/app/",
                     "tag": f"event-{item_id}",
                 })
@@ -2867,26 +2874,88 @@ class ReminderService:
             },
         )
 
-    def _morning_brief(self) -> str | None:
-        today = self.tasks.today()["data"]
-        lines = [f"Good morning. Plan for {today['date']}:"]
-        for row in today["scheduled"] or today["due_today"]:
-            lines.append(f"- {row['title']}" + (f" (due {row['due_date']})" if row.get("due_date") else ""))
-        if today["overdue"]:
-            lines.append(f"Overdue: {len(today['overdue'])} — oldest: {today['overdue'][0]['title']}")
-        if len(lines) == 1:
-            lines.append("Nothing scheduled. Pick the next milestone task.")
-        return "\n".join(lines)
+    @staticmethod
+    def _late_words(days: int) -> str:
+        """"3 days", "1 week", "3 weeks"."""
+        if days >= 14:
+            return f"{days // 7} weeks"
+        if days >= 7:
+            return "1 week"
+        return "1 day" if days == 1 else f"{days} days"
 
-    def _evening_nudge(self) -> str | None:
-        today = self.tasks.today()["data"]
-        if today["completed_today"]:
+    def _morning_brief(self) -> str | None:
+        """How much is overdue and the worst of it, then what today holds.
+
+        Blunt on purpose, and the same words as the iPhone's morning callout.
+        """
+        today_view = self.tasks.today()["data"]
+        today = _parse_date(today_view["date"]) or _local_today(self.timezone)
+        overdue = today_view["overdue"]
+        planned = [
+            item for item in today_view["scheduled"] + today_view.get("habits", [])
+            if not item.get("done") and not _from_calendar(item)
+        ]
+        if not overdue and not planned:
             return None
-        open_today = today["scheduled"] + today["due_today"]
-        if not open_today and not today["overdue"]:
+        lines = []
+        if overdue:
+            line = f"{len(overdue)} overdue."
+            late = []
+            for row in overdue:
+                since = _parse_date(row.get("due_date")) or _parse_date(row.get("scheduled_date"))
+                if since is not None and since < today:
+                    late.append(((today - since).days, row["title"]))
+            if late:
+                days, title = max(late, key=lambda pair: pair[0])
+                line += f" Worst: {title}, {self._late_words(days)} late."
+            lines.append(line)
+        else:
+            lines.append("Nothing overdue.")
+        if planned:
+            line = f"Today: {len(planned)} planned."
+            timed = [item for item in planned if fitting.parse_clock(item.get("start_time")) is not None]
+            if timed:
+                first = min(timed, key=lambda item: fitting.parse_clock(item.get("start_time")))
+                line += f" First up: {first['title']} at {fitting.format_clock(fitting.parse_clock(first['start_time']) % 1440)}."
+            lines.append(line)
+        else:
+            lines.append("Nothing planned today. Plan it, or it will not happen.")
+        return " ".join(lines)
+
+    def _evening_nudge(self, now: datetime | None = None) -> str | None:
+        """What was planned today against what was ticked, naming what was
+        skipped. Anything still to come tonight is counted apart, not called
+        skipped. Calendar events are appointments and are left out.
+
+        Blunt on purpose, and the same words as the iPhone's evening report.
+        """
+        current = now or datetime.now(ZoneInfo(self.timezone))
+        minute = current.hour * 60 + current.minute
+        items = [
+            item for item in self.tasks.day_view(current.date().isoformat())["data"]["items"]
+            if not _from_calendar(item)
+        ]
+        def start(item: dict[str, Any]) -> int | None:
+            return fitting.parse_clock(item.get("start_time"))
+        due = [item for item in items if (start(item) if start(item) is not None else -1) < minute]
+        later = [item for item in items if not item.get("done") and (start(item) if start(item) is not None else -1) >= minute]
+        if not due:
             return None
-        head = open_today[0]["title"] if open_today else today["overdue"][0]["title"]
-        return f"Nothing ticked today. Smallest win still open: {head}. Even 20 minutes counts."
+        done = sum(1 for item in due if item.get("done"))
+        if done == len(due):
+            body = f"All {len(due)} done today. That is how it's done."
+        else:
+            skipped = sorted(
+                (item for item in due if not item.get("done")),
+                key=lambda item: (start(item) if start(item) is not None else 99_999, str(item.get("title") or "")),
+            )
+            names = ", ".join(str(item.get("title")) for item in skipped[:4])
+            if len(skipped) > 4:
+                names += f", +{len(skipped) - 4} more"
+            body = f"You did {done} of {len(due)} today. Skipped: {names}."
+        if later:
+            body += f" Still to come tonight: {len(later)}."
+        return body
 
     def _deadline_alert(self) -> str | None:
         snapshot = self.metrics.snapshot()

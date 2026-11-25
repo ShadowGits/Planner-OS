@@ -207,6 +207,19 @@ enum Civil {
 
     static func parse(_ iso: String) -> Date? { isoUTC.date(from: String(iso.prefix(10))) }
 
+    /// Whole days from one date to another; negative when `to` is earlier.
+    static func days(from: String, to: String) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func date(_ iso: String) -> Date? {
+            let parts = iso.split(separator: "-").compactMap { Int($0) }
+            guard parts.count == 3 else { return nil }
+            return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+        }
+        guard let start = date(from), let end = date(to) else { return 0 }
+        return calendar.dateComponents([.day], from: start, to: end).day ?? 0
+    }
+
     static func add(_ iso: String, days: Int) -> String {
         guard let date = parse(iso), let moved = utc.date(byAdding: .day, value: days, to: date) else { return iso }
         return isoUTC.string(from: moved)
@@ -260,6 +273,11 @@ enum Civil {
 
     /// "30 Oct"
     static func dayMonth(_ iso: String) -> String { parse(iso).map(dayMonthUTC.string(from:)) ?? iso }
+
+    private static let longDayUTC = formatter("EEEE d MMMM", TimeZone(identifier: "UTC")!)
+
+    /// "Friday 30 October"
+    static func longDay(_ iso: String) -> String { parse(iso).map(longDayUTC.string(from:)) ?? iso }
 
     private static let monthUTC = formatter("MMMM", TimeZone(identifier: "UTC")!)
     private static let weekdayUTC = formatter("EEE", TimeZone(identifier: "UTC")!)

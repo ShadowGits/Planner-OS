@@ -45,12 +45,42 @@ if __name__ == "__main__":
         for name in [name for name in tables if name != "workspaces"]:
             del tables[name]
         return {"success": True}
+
+    # Habits are made through MCP, which this server does not serve.
+    @app.post("/e2e/habit")
+    def habit(body: dict):
+        from planner_api.v2 import build_core
+
+        return build_core(runtime.service_client, USER_ID).habits.add_habit(**body)
+
     # Every write waits a little, like a phone network, so the tests can see a
     # change on screen before the server has it. E2E_WRITE_DELAY=0 turns it off.
     delay = float(os.environ.get("E2E_WRITE_DELAY", "0.4"))
+    read_counts: dict[str, int] = {}
+    reminder_mode = "normal"
+
+    @app.post("/v2/e2e/reminder-mode")
+    def set_reminder_mode(body: dict):
+        global reminder_mode
+        reminder_mode = body["mode"]
+        return {"success": True}
+
+    @app.get("/v2/e2e/read-counts")
+    def counts():
+        return {"success": True, "data": {"counts": dict(read_counts)}}
 
     @app.middleware("http")
     async def network_delay(request, call_next):
+        if request.method == "GET" and request.url.path != "/v2/e2e/read-counts":
+            path = request.url.path
+            if request.query_params.get("date"):
+                path += "?date=" + request.query_params["date"]
+            read_counts[path] = read_counts.get(path, 0) + 1
+        if request.url.path == "/v2/day/reminder-schedule" and reminder_mode != "normal":
+            from starlette.responses import JSONResponse
+            if reminder_mode == "partial":
+                return JSONResponse({"success": True, "data": {"days": []}})
+            return JSONResponse({"detail": "fixture failure"}, status_code=int(reminder_mode))
         if delay and request.method != "GET":
             await asyncio.sleep(delay)
         return await call_next(request)

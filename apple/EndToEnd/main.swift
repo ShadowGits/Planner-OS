@@ -50,7 +50,7 @@ func run() async {
     await settle()
     check(onScreen("Yoga")?.time, "10:00", "stays at the new time after saving and refreshing")
     check(await onServer("Yoga")?.time, "10:00", "server has the new time")
-    check(timelineItems(store.days[today]?.items ?? []).map(\.id).last, yoga.id, "timeline order follows the new time")
+    check(timelineBlocks(calendarDay(store.days[today]?.items ?? [])).map(\.id).last, yoga.id, "timeline order follows the new time")
 
     print("Drag past midnight, in the same day")
     check(await store.create(title: "Night owl", date: today, time: "22:00", minutes: 30, notes: nil, starred: false), true, "add a late task")

@@ -271,7 +271,7 @@ private struct PendingTaskPicker: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hitArea)
         .disabled(!slot.fits(task) || saving != nil || loading)
         .accessibilityIdentifier("pending-task-\(task.id)")
     }

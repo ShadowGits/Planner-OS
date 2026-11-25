@@ -20,6 +20,18 @@ cap. Do not enforce them by dropping reminders, writes or normal reads. Free
 allowances are shared across the billing account. Monthly resets can hide an
 unsustainable daily rate; assess projected whole-month usage as well as totals.
 
+At the November 25 catalog rate, the CPU/request charge is ₹0 if these targets
+are achieved and the shared free allowances remain available. For comparison,
+210,000 CPU seconds would cost about ₹68.57 and 240,000 about ₹137.13 for CPU
+alone. The existing month already incurred usage above the free allowance;
+optimization cannot reverse that. Registry storage was approximately ₹55/month
+at the old inventory size; the retained serving image alone is below its free
+storage tier. A complete project-price prediction also requires actual billed
+network transfer, build activity, shared-account usage, credits and taxes.
+
+Sources: [Cloud Run pricing](https://cloud.google.com/run/pricing) and
+[Artifact Registry pricing](https://cloud.google.com/artifact-registry/pricing).
+
 ## Query contract
 
 - One store-owned automatic refresh loop, never faster than 120 seconds.

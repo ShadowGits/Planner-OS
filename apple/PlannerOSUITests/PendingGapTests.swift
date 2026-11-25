@@ -21,8 +21,14 @@ final class PendingGapTests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["PLANNER_UI_TEST_SERVER"] = server.base
         app.launchEnvironment["PLANNER_UI_TEST_KEY"] = server.key
+        app.launchEnvironment["PLANNER_UI_TEST_START"] = "09:00"
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["Before the gap"].waitForExistence(timeout: 15))
+        #if os(macOS)
+        XCTAssertTrue(app.buttons["Before the gap"].firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+        #else
+        XCTAssertTrue(app.staticTexts["Before the gap"].waitForExistence(timeout: 15), app.debugDescription)
+        #endif
     }
 
     override func tearDown() {
@@ -41,7 +47,7 @@ final class PendingGapTests: XCTestCase {
 
     private func openPicker() {
         // Tap the actual free-time suggestion, exercising its hit target.
-        let suggestion = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Anything you'd like", "Anything you'd like")).firstMatch
+        let suggestion = app.buttons["timeline-gap-570"].firstMatch
         press(suggestion)
         press(app.buttons["fit-previous-pending"])
         XCTAssertTrue(app.buttons["pending-task-\(oldID)"].waitForExistence(timeout: 8), app.debugDescription)
@@ -76,7 +82,11 @@ final class PendingGapTests: XCTestCase {
         XCTAssertNil(try server.task(oldID, on: past))
         XCTAssertEqual(try server.day(server.today).filter { $0["title"] as? String == "Finish previous proposal" }.count, 1)
         eventually("picker closes after saving") { !app.buttons["pending-task-\(oldID)"].exists }
+        #if os(macOS)
+        XCTAssertTrue(app.buttons["Finish previous proposal"].firstMatch.waitForExistence(timeout: 5))
+        #else
         XCTAssertTrue(app.staticTexts["Finish previous proposal"].waitForExistence(timeout: 5))
+        #endif
         screenshot("Previous task fitted on the timeline")
     }
 
@@ -113,7 +123,7 @@ final class PendingGapTests: XCTestCase {
     }
 
     func testAddingANewTaskFromTheGapStillWorks() throws {
-        let suggestion = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Anything you'd like", "Anything you'd like")).firstMatch
+        let suggestion = app.buttons["timeline-gap-570"].firstMatch
         press(suggestion)
         // On Mac the form's title is a separate static label rather than
         // the text field's accessibility label. This is the first form field.

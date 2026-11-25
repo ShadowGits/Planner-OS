@@ -107,6 +107,8 @@ class DayTaskPatch(BaseModel):
     milestone_id: str | None = None
     project_id: str | None = None
     notes: str | None = None
+    # low, medium, high or critical. Archive sets high, so it leads the Inbox.
+    priority: str | None = None
     # One of the few tasks the day is judged by.
     starred: bool | None = None
 
@@ -371,7 +373,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
                 result = None
             updates = {
                 field: getattr(body, field)
-                for field in ("start_time", "scheduled_date", "estimated_minutes", "title", "milestone_id", "project_id", "notes", "starred")
+                for field in ("start_time", "scheduled_date", "estimated_minutes", "title", "milestone_id", "project_id", "notes", "priority", "starred")
                 if field in body.model_fields_set
             }
             
