@@ -105,7 +105,8 @@ steps:
   # Move protection only after deployment succeeded. Registry cleanup removes
   # obsolete images after three days; a failed deploy keeps the old live image.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: python3
+    # The SDK image has bundled Python, but no system python3 on PATH.
+    entrypoint: /usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3
     args: ['scripts/protect_live_image.py', '--project=$PROJECT_ID', '--cleanup']
 
 options:

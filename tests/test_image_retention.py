@@ -19,6 +19,13 @@ def test_repository_retention_contract_remains_three_days():
         "tagState": "any", "packageNamePrefixes": ["planner-os-api"], "olderThan": "3d"}
 
 
+def test_cleanup_runner_uses_cloud_sdk_bundled_python():
+    config = (Path(__file__).resolve().parents[1] / "cloudbuild.yaml").read_text()
+    hook = config[config.index("  # Move protection only after deployment succeeded."):]
+    assert "entrypoint: /usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3" in hook
+    assert "scripts/protect_live_image.py" in hook and "--cleanup" in hook
+
+
 def test_unresolved_or_foreign_images_cannot_be_protected():
     assert canonical_image(f"gcr.io/{PROJECT}/planner-os-api@sha256:abc", PROJECT) == BASE + "@sha256:abc"
     for image in (BASE + ":latest", "gcr.io/another-project/app@sha256:abc"):

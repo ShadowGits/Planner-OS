@@ -110,3 +110,20 @@ Monthly target requested by user: 60–70% of CPU/request free allowances; see
 `../query_budget.md`. This is not yet a measured production result or a hard
 service cap. No production CPU savings verified until deployment and updated
 app installation. Existing November charges cannot be reversed by this fix.
+
+## Approved rollout follow-up
+
+After explicit user approval, pushed `e427cf7` to main. Build
+`75edef31-03e9-4c62-a171-09cf574892c9` deployed revision
+`planner-os-api-00301-494`, and health plus all three authenticated optimized
+endpoints passed. Its final retention step failed before running the script:
+the latest Cloud SDK image no longer has a system `python3` on PATH. Corrected
+the runner to the SDK's documented bundled interpreter and added a regression.
+Reference: Google's [container guide](https://github.com/GoogleCloudPlatform/cloud-sdk-docker/blob/master/docs/user_guide.md).
+No planner-code rollback or extra app rebuild is needed for this runner fix.
+
+Both app updates were installed. Mac launch and binary/signature verification
+passed. iPhone installation succeeded wirelessly on retry; initial launch was
+blocked because the device was locked. Final rollout events and exact statuses
+are stored locally in `logs/cloud-cost-rollout-2026-11-25.jsonl` (ignored by Git
+to avoid rebuilding/deploying just to record operational status).
