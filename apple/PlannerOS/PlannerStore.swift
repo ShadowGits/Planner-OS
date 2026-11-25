@@ -129,7 +129,7 @@ final class PlannerStore {
 
     /// Automatic refresh while the app is running, skipped mid-write and
     /// mid-drag so a server read does not fight a local change.
-    func refreshIfStale(after seconds: TimeInterval = 60) async {
+    func refreshIfStale(after seconds: TimeInterval = 120) async {
         guard api != nil, writesInFlight == 0, busy.isEmpty, draggingID == nil,
               Date().timeIntervalSince(lastRefresh) >= seconds else { return }
         await refreshAll(quiet: true)
@@ -206,7 +206,7 @@ final class PlannerStore {
         var offset: Int? = 0
         do {
             while let next = offset, rows.count < 2000 {
-                let page: DashboardPage<MilestoneRow> = try await api.get("/v2/native/dashboard?section=milestones&offset=\(next)")
+                let page: DashboardPage<MilestoneRow> = try await api.get("/v2/native/dashboard?section=milestones&details=false&offset=\(next)")
                 rows += page.rows
                 offset = page.nextOffset
             }
@@ -227,7 +227,7 @@ final class PlannerStore {
 
     func refreshProjects() async {
         guard let api else { return }
-        if let planning: PlanningContext = try? await api.get("/v2/day/planning-context") {
+        if let planning: PlanningContext = try? await api.get("/v2/day/planning-context?projects_only=true", cacheAs: "/v2/day/planning-context") {
             guard !Task.isCancelled, connection == api.connection else { return }
             projects = Dictionary(planning.projects.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         }

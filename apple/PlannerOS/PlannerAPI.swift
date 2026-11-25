@@ -82,6 +82,27 @@ final class PlannerAPI: Sendable {
         return value
     }
 
+    /// One bounded week feed on updated servers. Older servers retain the
+    /// existing seven-day behavior; transport/server failures keep reminders.
+    func reminderDays(start: String) async throws -> [DayView] {
+        struct Schedule: Decodable { var days: [DayView] }
+        do {
+            let result: Schedule = try await get("/v2/day/reminder-schedule?date=\(start)")
+            guard result.days.count == 7 else { throw PlannerError(message: "Incomplete reminder schedule") }
+            return result.days
+        } catch let error as PlannerError where error.status == 404 {
+            return try await withThrowingTaskGroup(of: DayView.self) { group in
+                for offset in 0..<7 {
+                    let date = Civil.add(start, days: offset)
+                    group.addTask { try await self.get("/v2/day?date=\(date)") }
+                }
+                var days: [DayView] = []
+                for try await day in group { days.append(day) }
+                return days
+            }
+        }
+    }
+
     func cached<T: Decodable>(_ key: String) -> T? {
         ResponseCache.load(key).flatMap { try? JSONDecoder().decode(Envelope<T>.self, from: $0).data }
     }

@@ -176,12 +176,17 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         attach_work_progress(data, core.repository)
         return _envelope(True, "Day view", {**data, "timezone": core.timezone})
 
+    @api.get("/v2/day/reminder-schedule")
+    def reminder_schedule(on_date: datetime.date = Query(alias="date"), x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        return _core().tasks.reminder_schedule(on_date)
+
     @api.get("/v2/day/planning-context")
-    def get_planning_context(x_app_key: str | None = Header(default=None)):
+    def get_planning_context(projects_only: bool = False, x_app_key: str | None = Header(default=None)):
         _authorize(x_app_key)
         core = _core()
         try:
-            result = core.tasks.planning_context()
+            result = core.tasks.planning_context(projects_only=projects_only)
             attach_work_progress(result["data"], core.repository)
         except (PlannerCoreError, ValueError) as error:
             raise HTTPException(status_code=400, detail={"code": "PLANNING_CONTEXT_INVALID", "message": str(error)}) from error

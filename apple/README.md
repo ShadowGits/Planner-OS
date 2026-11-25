@@ -24,7 +24,7 @@ It talks to the same backend as Android, with the same app key.
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).
 * **A change made somewhere else turns up on its own.** The running app re-reads
-  the server about once a minute, including while the Mac is hidden or minimized.
+  the server about every two minutes, including while the Mac is hidden or minimized.
   Refresh is owned by the store, so it does not depend on a visible window.
   Skipped while saving or dragging, and stopped on disconnect. The Mac must
   remain awake and the app must remain running.

@@ -31,14 +31,7 @@ enum Reminders {
         guard allowed == .authorized || allowed == .provisional else { return }
         let start = Civil.today(in: timeZone, now: now)
         let dates = (0..<horizonDays).map { Civil.add(start, days: $0) }
-        let days: [DayView] = await withTaskGroup(of: DayView?.self) { group in
-            for date in dates {
-                group.addTask { try? await api.get("/v2/day?date=\(date)") as DayView }
-            }
-            var views: [DayView] = []
-            for await view in group { if let view { views.append(view) } }
-            return views
-        }
+        guard let days = try? await api.reminderDays(start: start) else { return }
         // Keep the existing week if even one day's read failed. Also reject an
         // expired background task or an account changed while reads were out.
         guard !Task.isCancelled, enabled, days.count == dates.count,

@@ -96,7 +96,7 @@ def _task_details(core: PlannerCoreBundle, rows: list[dict[str, Any]]) -> None:
 
 
 def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -> None:
-    def read(section: str, project_id: UUID | None, offset: int, row_id: UUID | None, on_date: date | None, milestone_id: UUID | None, include_parts: bool):
+    def read(section: str, project_id: UUID | None, offset: int, row_id: UUID | None, on_date: date | None, milestone_id: UUID | None, include_parts: bool, details: bool = True):
         original = build_core(cloud.service_client, _configured_user_id())
         repository = DashboardReads(original.repository)
         core = PlannerCoreBundle(repository, original.timezone)
@@ -115,7 +115,7 @@ def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -
             row = dict(row)
             if milestone_id is not None and str(row.get("milestone_id")) != str(milestone_id):
                 raise HTTPException(404, detail={"message": "This task is not in the selected milestone."})
-            if section == "milestones":
+            if section == "milestones" and details:
                 _milestone_details(core, [row])
             elif section == "tasks":
                 _task_details(core, [row])
@@ -152,6 +152,8 @@ def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -
                 columns = "id,title,status,priority,due_date,scheduled_date,start_time,estimated_minutes,project_id,milestone_id"
                 if milestone_id is not None:
                     columns += ",notes,parent_task_id,starred,recurrence_key,depends_on,completed_at,created_at,updated_at"
+            elif section == "milestones" and not details:
+                query, columns = "order=id.asc", "id,name,target_date,status"
             elif section == "finance_transactions":
                 query, columns = "order=date.desc,id.desc", "*"
             else:
@@ -159,7 +161,7 @@ def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -
             rows = [dict(row) for row in repository.list_rows(TABLES[section], filters, columns=columns,
                                          query_string=f"{query}&limit=100&offset={offset}")]
             data = {"rows": rows, "next_offset": offset + 100 if len(rows) == 100 else None}
-            if section == "milestones":
+            if section == "milestones" and details:
                 _milestone_details(core, rows)
             if section == "tasks" and milestone_id is not None:
                 _task_details(core, rows)
@@ -176,11 +178,11 @@ def register_native_dashboard_routes(api: FastAPI, cloud: Any, authorize: Any) -
     async def dashboard(section: Section = "overview", project_id: UUID | None = None,
                         offset: int = Query(default=0, ge=0, le=100000), row_id: UUID | None = None,
                         on_date: date | None = None, milestone_id: UUID | None = None,
-                        include_parts: bool = False,
+                        include_parts: bool = False, details: bool = True,
                         x_app_key: str | None = Header(default=None)):
         authorize(x_app_key)
         try:
-            return await asyncio.get_running_loop().run_in_executor(_POOL, read, section, project_id, offset, row_id, on_date, milestone_id, include_parts)
+            return await asyncio.get_running_loop().run_in_executor(_POOL, read, section, project_id, offset, row_id, on_date, milestone_id, include_parts, details)
         except HTTPException:
             raise
         except Exception as error:

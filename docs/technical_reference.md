@@ -515,7 +515,7 @@ local source, not a production deployment.
 ### Apple automatic/background refresh (2026-11-25, local implementation)
 
 The SwiftUI store now owns its automatic refresh loop independently of a window,
-checking every 15 seconds for a day snapshot older than 60 seconds. Quiet refresh
+checking every 15 seconds for a day snapshot older than 120 seconds. Quiet refresh
 does not interrupt writes/dragging, overlap another full refresh, show network
 errors as toasts, or adopt a response from an old connection. Disconnect cancels
 the loop and pending iOS refresh requests. The iOS background handler refreshes

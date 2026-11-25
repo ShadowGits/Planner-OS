@@ -38,7 +38,7 @@ func run() async {
         try await api.send("PATCH", PlannerAPI.taskPath(task.id), body: ["title": "Refreshed without a window"])
         // No RootView, activation, manual refresh or UI timer exists here.
         // The store's own timer must pick up this external change.
-        for _ in 0..<100 {
+        for _ in 0..<160 {
             if store.days[day]?.items.first(where: { $0.id == task.id })?.title == "Refreshed without a window" { break }
             try await Task.sleep(nanoseconds: 1_000_000_000)
         }

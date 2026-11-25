@@ -1334,7 +1334,53 @@ class TaskService:
                 items.append(occ)
         return items
 
-    def planning_context(self) -> dict[str, Any]:
+    def reminder_schedule(self, start: date) -> dict[str, Any]:
+        """Seven reminder days in one bounded read, preserving daily reports.
+
+        Completed and untimed items are needed by morning/evening summaries.
+        Keep calendar provenance and the last day's after-midnight spillover,
+        but never fetch notes, work logs or milestone metrics.
+        """
+        end = start + timedelta(days=6)
+        spill = end + timedelta(days=1)
+        rows = self.repository.list_rows(
+            "planner_tasks",
+            columns="id,title,status,scheduled_date,due_date,start_time,estimated_minutes,parent_task_id,source:metadata->>source",
+            query_string=(
+                f"or=(and(scheduled_date.gte.{start},scheduled_date.lte.{end}),"
+                f"and(scheduled_date.is.null,due_date.gte.{start},due_date.lte.{end}),"
+                f"and(scheduled_date.eq.{spill},start_time.lt.{SPILLOVER_CUTOFF}))"
+            ),
+            strict=True,
+        )
+        umbrellas = set()
+        for offset in range(0, len(rows), 100):
+            umbrellas.update(self._umbrella_ids(rows[offset:offset + 100]))
+        rows = [row for row in rows if str(row["id"]) not in umbrellas]
+        habits = self.habits.occurrences(start, end, strict=True)
+        days = []
+        for offset in range(7):
+            target = start + timedelta(days=offset)
+            items = []
+            for row in rows:
+                planned = _parse_date(row.get("scheduled_date"))
+                clock = row.get("start_time")
+                overflow = planned == target + timedelta(days=1) and clock and str(clock) < SPILLOVER_CUTOFF
+                if not (planned == target or (planned is None and _parse_date(row.get("due_date")) == target) or overflow):
+                    continue
+                if overflow:
+                    hour, minute, *seconds = str(clock).split(":")
+                    clock = f"{int(hour) + 24:02d}:{minute}:{seconds[0] if seconds else '00'}"
+                items.append({
+                    **{key: row.get(key) for key in ("id", "title", "estimated_minutes", "scheduled_date")},
+                    "start_time": clock, "done": row.get("status") in CLOSED_TASK_STATUSES,
+                    "source": row.get("source") or (row.get("metadata") or {}).get("source"),
+                })
+            items.extend(row for row in habits if str(row.get("scheduled_date"))[:10] == target.isoformat())
+            days.append({"date": target.isoformat(), "timezone": self.timezone, "items": items})
+        return _envelope(True, "Reminder schedule", {"days": days})
+
+    def planning_context(self, *, projects_only: bool = False) -> dict[str, Any]:
         """Compact shared context for local project matching; never per-keypress.
 
         Include loose tasks on future dates too. This picker feed is distinct
@@ -1347,7 +1393,7 @@ class TaskService:
             "id,title,status,start_time,estimated_minutes,priority,due_date,"
             "scheduled_date,notes,project_id,milestone_id,parent_task_id,starred"
         )
-        rows = self.repository.list_rows(
+        rows = [] if projects_only else self.repository.list_rows(
             "planner_tasks", {"status": sorted(OPEN_TASK_STATUSES)},
             columns=fields, query_string="start_time=is.null&order=title.asc,id.asc", strict=True,
         )
@@ -2744,7 +2790,7 @@ class ReminderService:
             row["kind"]
             for row in self.repository.list_rows(
                 "reminder_log",
-                extra_filters={"sent_on": today.isoformat()},
+                extra_filters={"sent_on": today.isoformat()}, columns="kind", strict=True,
             )
         }
         due: list[dict[str, Any]] = []
