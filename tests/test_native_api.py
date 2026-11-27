@@ -159,7 +159,7 @@ def test_reminder_telegram_fallback_keeps_task_name(client, native_core, monkeyp
     monkeypatch.setenv("CRON_SECRET", "test-cron-secret")
     monkeypatch.setattr(v2.TelegramClient, "from_env", lambda: Telegram())
     monkeypatch.setattr("planner_core.push.send_push_to_all", lambda *args, **kwargs: {"sent": 0, "failed": 0})
-    monkeypatch.setattr(ReminderService, "due_reminders", lambda self: [{
+    monkeypatch.setattr(ReminderService, "due_reminders", lambda self, **kwargs: [{
         "kind": "event10:example", "title": "Study probability exercises",
         "message": "Starts in 10 min · 14:17", "tag": "event-example",
     }])
@@ -167,3 +167,18 @@ def test_reminder_telegram_fallback_keeps_task_name(client, native_core, monkeyp
     assert response.status_code == 200
     assert sent == ["Study probability exercises\nStarts in 10 min · 14:17"]
     assert response.json()["data"]["sent"] == ["event10:example"]
+
+
+def test_five_minute_window_is_scoped_to_authenticated_server_cron(client, native_core, monkeypatch):
+    from planner_core.services import ReminderService
+    seen = []
+    def due(self, now=None, *, sent_kinds=None, delivery_grace_minutes=1):
+        seen.append(delivery_grace_minutes)
+        return []
+    monkeypatch.setenv("CRON_SECRET", "test-cron-secret")
+    monkeypatch.setattr(ReminderService, "due_reminders", due)
+    assert client.post("/v2/reminders/run").status_code == 401
+    assert seen == []
+    assert client.post("/v2/reminders/run", headers={"X-Cron-Key": "test-cron-secret"}).status_code == 200
+    assert client.post("/v2/native/reminders", headers=APP_KEY, json={"sent_kinds": []}).status_code == 200
+    assert seen == [5, 1]

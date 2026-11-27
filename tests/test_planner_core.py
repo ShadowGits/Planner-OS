@@ -695,6 +695,39 @@ def test_event_reminders_skip_done_and_untimed(services) -> None:
     assert reminders._event_reminders(when, set()) == []
 
 
+@pytest.mark.parametrize("start_minute", range(60))
+def test_five_minute_cron_covers_every_exact_minute_start(services, start_minute):
+    tasks, _, _, reminders = services
+    today = _today()
+    task = tasks.create_task("Exact minute", scheduled_date=today.isoformat(), start_time=f"14:{start_minute:02d}")["data"]["task"]
+    hits = []
+    sent = set()
+    for minute in range(13 * 60 + 45, 15 * 60, 5):
+        at = datetime(today.year, today.month, today.day, minute // 60, minute % 60, 7, tzinfo=ZoneInfo(TZ))
+        due = reminders._event_reminders(at, sent, delivery_grace_minutes=5)
+        for event in due:
+            sent.add(event["kind"])
+            hits.append((at, event))
+    assert len(hits) == 1
+    when, event = hits[0]
+    until = 14 * 60 + start_minute - (when.hour * 60 + when.minute + when.second / 60)
+    assert 5 <= until <= 10
+    assert event["kind"] == f"event10:{task['id']}"
+    assert event["message"].startswith(f"In {__import__('math').ceil(until)} min")
+
+
+def test_five_minute_cron_handles_midnight_without_broadening_native_window(services):
+    tasks, _, _, reminders = services
+    today = _today()
+    tasks.create_task("After midnight", scheduled_date=(today + timedelta(days=1)).isoformat(), start_time="00:03")
+    now = datetime(today.year, today.month, today.day, 23, 55, 7, tzinfo=ZoneInfo(TZ))
+    assert reminders._event_reminders(now, set()) == []
+    due = reminders._event_reminders(now, set(), delivery_grace_minutes=5)
+    assert len(due) == 1 and due[0]["title"] == "After midnight"
+    assert due[0]["message"].startswith("In 8 min")
+    assert reminders._event_reminders(now, {due[0]["kind"]}, delivery_grace_minutes=5) == []
+
+
 def test_the_evening_report_says_so_when_nothing_was_skipped(services) -> None:
     tasks, _, _, reminders = services
     created = tasks.create_task("Anything", scheduled_date=_today().isoformat())

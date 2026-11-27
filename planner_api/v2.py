@@ -146,7 +146,9 @@ def register_v2_routes(api: FastAPI, cloud: Any, current_user: Callable) -> None
             logger.error("Recurring charges failed to post: %s", error)
             posted = 0
 
-        due = core.reminders.due_reminders()
+        # Temporary user-approved five-minute cron: cover exact-minute starts
+        # without changing native callers' narrower delivery window.
+        due = core.reminders.due_reminders(delivery_grace_minutes=5)
         sent, failed = [], []
         for reminder in due:
             # Send via push notifications (macOS/iOS/iPadOS popups)

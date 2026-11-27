@@ -67,3 +67,17 @@ continue profiling instead of declaring the budget achieved.
 Keep investigation evidence and validation results in
 `docs/debugging/2026-11-25-cloud-cost.md`. Do not store access keys, tokens or
 private task content in logs.
+
+The [November 27 audit](debugging/2026-11-27-cloud-cost.md) confirmed that the
+production target is still unmet: 8,434 CPU-seconds on November 26 UTC. The
+minute reminder job dominates remaining active time. The user requested a
+larger redesign that avoids repeated reconstruction and idle HTTP calls; see
+[the reminder queue design](reminder_queue_design.md). That queue is proposed,
+not implemented or deployed. Do not report it as an achieved optimization.
+
+On November 27 the user explicitly approved an interim five-minute server
+schedule and task alerts delivered 5–10 minutes before start. The cron route
+uses a five-minute delivery grace, while native callers keep their existing
+one-minute grace and local notification schedules. Preserve the stable delivery
+keys and midnight handling. This reduces cron executions about 80%; it does
+not implement the proposed database queue or prove the monthly CPU target.

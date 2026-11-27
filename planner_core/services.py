@@ -8,6 +8,7 @@ plan, how to phrase advice) stays with the AI client calling the MCP tools.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -2787,8 +2788,11 @@ class ReminderService:
         self.timezone = timezone
 
     def due_reminders(
-        self, now: datetime | None = None, *, sent_kinds: set[str] | None = None
+        self, now: datetime | None = None, *, sent_kinds: set[str] | None = None,
+        delivery_grace_minutes: int = 1,
     ) -> list[dict[str, Any]]:
+        if delivery_grace_minutes not in (1, 5):
+            raise PlannerCoreError("Reminder delivery grace must be one or five minutes")
         current = now or datetime.now(ZoneInfo(self.timezone))
         today = current.date()
         sent_today = sent_kinds if sent_kinds is not None else {
@@ -2811,16 +2815,15 @@ class ReminderService:
             message = self._deadline_alert()
             if message:
                 due.append({"kind": "deadline_alert", "message": message})
-        due.extend(self._event_reminders(current, sent_today))
+        due.extend(self._event_reminders(current, sent_today, delivery_grace_minutes=delivery_grace_minutes))
         return due
 
-    # One task alert, ten minutes before start. The scheduler checks each
-    # minute; a bounded one-minute grace catches delivery jitter without
-    # bringing back the old five-minute or starting-now alerts.
+    # Native callers retain the one-minute grace. The temporary five-minute
+    # server cron opts into a wider window and keeps the same delivery keys.
     TASK_LEAD_MINUTES = 10
     DELIVERY_GRACE_MINUTES = 1
 
-    def _event_reminders(self, current: datetime, sent_today: set[str]) -> list[dict[str, Any]]:
+    def _event_reminders(self, current: datetime, sent_today: set[str], *, delivery_grace_minutes: int = 1) -> list[dict[str, Any]]:
         today = current.date()
         dates = [today]
         # A 00:05 task needs its reminder at 23:55 the previous day.
@@ -2844,7 +2847,7 @@ class ReminderService:
                 except (TypeError, ValueError):
                     continue
                 until = (start.timestamp() - current.timestamp()) / 60
-                if not self.TASK_LEAD_MINUTES - self.DELIVERY_GRACE_MINUTES <= until <= self.TASK_LEAD_MINUTES:
+                if not self.TASK_LEAD_MINUTES - delivery_grace_minutes <= until <= self.TASK_LEAD_MINUTES:
                     continue
                 item_id = str(item["id"])
                 kind = f"event10:{item_id}"
@@ -2856,7 +2859,7 @@ class ReminderService:
                     "kind": kind,
                     "title": title,
                     # Blunt on purpose; the same words as both apps.
-                    "message": f"In 10 min · {hh:02d}:{mm:02d}" + (f" · {minutes} min" if minutes else "")
+                    "message": f"In {math.ceil(until) if delivery_grace_minutes == 5 else self.TASK_LEAD_MINUTES} min · {hh:02d}:{mm:02d}" + (f" · {minutes} min" if minutes else "")
                     + ". Wrap up what you're doing.",
                     "url": "/app/",
                     "tag": f"event-{item_id}",
