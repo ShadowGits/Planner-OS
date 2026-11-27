@@ -503,6 +503,34 @@ def test_the_pwa_can_tick_move_and_skip_a_habit_day(client, runtime) -> None:
     assert core.habits.list_habits()["data"]["habits"][0]["id"] == habit["id"]
 
 
+def test_habit_move_recovers_when_another_save_creates_the_override(client, runtime, monkeypatch):
+    from adapters.supabase.client import SupabaseError
+    from planner_api.v2 import build_core
+
+    core = build_core(runtime.service_client, USER_ID)
+    habit = core.habits.add_habit("Gym", start_date="2026-07-20")["data"]["habit"]
+    original = runtime.service_client.insert
+
+    def competing_insert(table, payload):
+        if table == "habit_overrides":
+            original(table, {**payload, "starred": True, "estimated_minutes": 45})
+            raise SupabaseError("conflict", status_code=409)
+        return original(table, payload)
+
+    monkeypatch.setattr(runtime.service_client, "insert", competing_insert)
+    result = client.patch(
+        f"/v2/day/tasks/habit:{habit['id']}:2026-07-22",
+        json={"scheduled_date": "2026-07-23", "start_time": "18:00"}, headers=APP_KEY,
+    )
+    assert result.status_code == 200, result.json()
+    override = result.json()["data"]["override"]
+    assert override["moved_to"] == "2026-07-23"
+    assert override["start_time"] == "18:00"
+    assert override["starred"] is True
+    assert override["estimated_minutes"] == 45
+    assert len(runtime.service_client.tables["habit_overrides"]) == 1
+
+
 def test_starring_a_habit_day_sticks(client, runtime) -> None:
     """Starring a habit used to tick on screen and spring straight back.
 

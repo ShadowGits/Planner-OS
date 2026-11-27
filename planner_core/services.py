@@ -16,6 +16,7 @@ from uuid import UUID
 from planner_engine.models import DailyPlan, ScheduledBlock
 from zoneinfo import ZoneInfo
 
+from adapters.supabase.client import SupabaseError
 from planner_core import fitting
 from planner_core.repository import PlannerCoreError, PlannerCoreRepository
 
@@ -2255,10 +2256,26 @@ class HabitService:
         for row in self.repository.list_rows("habit_overrides", {"habit_id": habit_id, "on_date": rule_day.isoformat()}, columns="id,on_date,moved_to", strict=True):
             if str(row.get("on_date"))[:10] == rule_day.isoformat():
                 return self.repository.update_row("habit_overrides", str(row["id"]), patch)
-        return self.repository.insert_row(
-            "habit_overrides",
-            {"habit_id": habit_id, "on_date": rule_day.isoformat(), "skipped": False, **patch},
-        )
+        try:
+            return self.repository.insert_row(
+                "habit_overrides",
+                {"habit_id": habit_id, "on_date": rule_day.isoformat(), "skipped": False, **patch},
+            )
+        except SupabaseError as error:
+            if error.status_code != 409:
+                raise
+            # Another save can create this occurrence between our read and
+            # insert. Reconcile only a row visible in this tenant, and apply
+            # just this edit so concurrent stars/skips/timing survive. A failed
+            # reread or a different conflict must remain an error.
+            for row in self.repository.list_rows(
+                "habit_overrides",
+                {"habit_id": habit_id, "on_date": rule_day.isoformat()},
+                columns="id,on_date", strict=True,
+            ):
+                if str(row.get("on_date"))[:10] == rule_day.isoformat():
+                    return self.repository.update_row("habit_overrides", str(row["id"]), patch)
+            raise
 
     def reschedule_occurrence(
         self,

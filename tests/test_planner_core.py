@@ -1887,6 +1887,84 @@ def test_one_day_can_be_moved_without_disturbing_the_rest(habits):
     assert by_day["2026-09-04"][0]["start_time"] == "07:00"
 
 
+@pytest.mark.parametrize("operation", ["move", "star", "skip"])
+def test_concurrent_first_habit_edits_preserve_both_changes(habits, repo, monkeypatch, operation):
+    from adapters.supabase.client import SupabaseError
+
+    habit = habits.add_habit("Gym", start_date="2026-09-01")["data"]["habit"]
+    original = repo.gateway.insert
+    inserted = []
+
+    def racing_insert(table, payload):
+        if table == "habit_overrides":
+            # A competing save commits after the initial lookup, before ours.
+            inserted.extend(original(table, {
+                **payload, "starred": True, "skipped": True,
+                "start_time": "18:00", "estimated_minutes": 45,
+            }))
+            raise SupabaseError("conflict", status_code=409)
+        return original(table, payload)
+
+    monkeypatch.setattr(repo.gateway, "insert", racing_insert)
+    day = date(2026, 9, 2)
+    if operation == "move":
+        habits.reschedule_occurrence(habit["id"], day, moved_to="2026-09-03")
+    elif operation == "star":
+        habits.star_occurrence(habit["id"], day, False)
+    else:
+        habits.skip_occurrence(habit["id"], day)
+
+    rows = repo.gateway.tables["habit_overrides"]
+    assert len(rows) == 1 and rows[0]["id"] == inserted[0]["id"]
+    assert rows[0]["start_time"] == "18:00"
+    assert rows[0]["estimated_minutes"] == 45
+    assert rows[0]["skipped"] is True
+    assert rows[0]["starred"] is (operation != "star")
+    assert rows[0].get("moved_to") == ("2026-09-03" if operation == "move" else None)
+
+
+@pytest.mark.parametrize("status,reread_fails,foreign_row", [
+    (409, False, False), (409, True, False), (503, False, False), (409, False, True),
+])
+def test_habit_insert_errors_are_not_hidden(habits, repo, monkeypatch, status, reread_fails, foreign_row):
+    from adapters.supabase.client import SupabaseError
+
+    habit = habits.add_habit("Gym", start_date="2026-09-01")["data"]["habit"]
+    if foreign_row:
+        repo.gateway.tables["habit_overrides"] = [{
+            "id": str(uuid4()), "habit_id": habit["id"], "on_date": "2026-09-02",
+            "user_id": str(uuid4()), "workspace_id": str(uuid4()), "start_time": "07:00",
+        }]
+    original_select = repo.gateway.select
+    reads = []
+
+    def select(table, **kwargs):
+        if table == "habit_overrides":
+            reads.append(kwargs)
+            if len(reads) == 2 and reread_fails:
+                raise RuntimeError("reread unavailable")
+        return original_select(table, **kwargs)
+
+    def failing_insert(table, payload):
+        raise SupabaseError("write failed", status_code=status)
+
+    monkeypatch.setattr(repo.gateway, "select", select)
+    monkeypatch.setattr(repo.gateway, "insert", failing_insert)
+    expected = RuntimeError if reread_fails else SupabaseError
+    with pytest.raises(expected, match="reread unavailable" if reread_fails else "write failed"):
+        habits.reschedule_occurrence(habit["id"], date(2026, 9, 2), start_time="18:00")
+    assert len(reads) == (2 if status == 409 else 1)
+    for read in reads:
+        assert read["filters"] == {
+            **repo._tenant(), "habit_id": habit["id"], "on_date": "2026-09-02",
+        }
+        assert read["columns"] in {"id,on_date,moved_to", "id,on_date"}
+    remaining = repo.gateway.tables.get("habit_overrides", [])
+    assert len(remaining) == int(foreign_row)
+    if foreign_row:
+        assert remaining[0]["start_time"] == "07:00"
+
+
 def test_skipping_a_day_removes_only_that_day(habits):
     habit = habits.add_habit("Gym", start_date="2026-09-01")["data"]["habit"]
 
