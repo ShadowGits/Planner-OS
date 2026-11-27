@@ -81,3 +81,15 @@ uses a five-minute delivery grace, while native callers keep their existing
 one-minute grace and local notification schedules. Preserve the stable delivery
 keys and midnight handling. This reduces cron executions about 80%; it does
 not implement the proposed database queue or prove the monthly CPU target.
+
+## November 28 ASAP category
+
+The user explicitly requested a persistent ASAP category and four-hour alerts.
+Inbox now includes one tenant-scoped projected select of open ASAP records;
+ordinary task projections and polling frequency are unchanged. Existing REST
+pagination can use a data and empty-page request for this select. The alerts
+repeat locally on the device, with no added Scheduler job or reminder HTTP
+poll. Apple Reminders reconciliation is local and uses the existing refresh
+loop; completing a mirrored item invokes the normal task write flow. The
+monthly target remains unchanged and requires production measurement. See
+[ASAP investigation](debugging/2026-11-28-asap.md).

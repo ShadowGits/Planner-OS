@@ -6,6 +6,19 @@
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).refresh</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.planneros.planner.asap</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>planneros</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Keep ASAP items and their completion in sync with your TODOs One time list.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

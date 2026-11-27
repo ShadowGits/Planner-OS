@@ -43,6 +43,7 @@ struct RootView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .safeAreaInset(edge: .top) { ASAPStrip().environment(store) }
                     .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 72) }
                     BottomBar(screen: $screen, dragging: store.draggingID != nil, overBin: $overBin,
                               onAdd: { editor = EditorRequest(date: screen == .timeline ? store.selectedDate : store.logicalToday) })
@@ -84,6 +85,7 @@ struct RootView: View {
         .task { await store.start() }
         .task { await tick() }
         .onAppear { openAtCurrentTime() }
+        .onOpenURL { _ in openAtCurrentTime() }
         .onChange(of: phase) { _, phase in
             if phase == .active {
                 store.now = Date()

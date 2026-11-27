@@ -99,7 +99,8 @@ class MemoryGateway:
     @staticmethod
     def _matches(row, filters):
         for key, value in filters.items():
-            row_val = str(row.get(key)).casefold()
+            value_in_row = (row.get("metadata") or {}).get("asap") if key == "metadata->>asap" else row.get(key)
+            row_val = str(value_in_row).casefold()
             if isinstance(value, list):
                 if not any(row_val == str(v).casefold() for v in value):
                     return False

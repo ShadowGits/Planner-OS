@@ -296,3 +296,27 @@ with App Group entitlements disabled only through build-command overrides.
 store against a fresh local Planner OS API (add, drag, tick, star, edit, move,
 drop, delete, and a failed save), and every Android test including its touch
 tests and the same end-to-end flows. Run it before shipping either app.
+
+### ASAP
+
+ASAP items stay pinned across days and the main app screens until closed.
+Use **Add ASAP** in the strip; its checkmark closes the existing task. The
+category is independent of normal task priority and scheduling.
+
+While any ASAP item remains open, the device repeats a distinct ASAP alert
+with a three-pulse tone every four hours. Refreshing the app does not restart
+that timer. Closing the last item cancels the ASAP alert; ordinary task and
+daily reminders remain. Notification settings still apply.
+
+The strip's Reminders button connects to the existing **TODOs One time** list
+after explicit Reminders permission. Tagged items mirror completion in both
+directions on the existing refresh loop. Completion wins conflicting edits;
+titles and dates are managed in Planner OS. Unrelated Reminders entries remain
+untouched. Missing/ambiguous/read-only lists produce an error instead of
+creating another list or choosing a different one.
+
+`ASAPTests/main.swift` covers completion reconciliation safety.
+`PlannerOSUITests/ASAPTests.swift` covers staying pinned across date scrolling
+and closing. Real list permission and notification delivery require a signed
+app; compilation alone does not prove them. See the
+[ASAP investigation](../docs/debugging/2026-11-28-asap.md).

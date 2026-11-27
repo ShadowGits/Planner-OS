@@ -15,6 +15,13 @@ enum Reminders {
     static var syncCount = 0
     static func status() async -> UNAuthorizationStatus { .denied }
     static func requestPermission() async -> Bool { false }
-    static func sync(api: PlannerAPI, timeZone: TimeZone, overdue: [RankedTask] = [], now: Date = Date()) async { syncCount += 1 }
+    static func sync(api: PlannerAPI, timeZone: TimeZone, overdue: [RankedTask] = [], asap: [PlannerTask]? = nil, now: Date = Date()) async { syncCount += 1 }
     static func clear() {}
+}
+
+@MainActor
+final class AppleASAPReminders {
+    static let shared = AppleASAPReminders()
+    func connect() async throws { }
+    func reconcile(_ open: [PlannerTask], connection: Connection) async throws -> [String] { [] }
 }

@@ -108,8 +108,9 @@ struct DayView: Decodable {
     var timezone: String
     var items: [PlannerTask]
     var starredLimit: Int
+    var asapItems: [PlannerTask]? = nil
 
-    enum CodingKeys: String, CodingKey { case date, timezone, items, starredLimit = "starred_limit" }
+    enum CodingKeys: String, CodingKey { case date, timezone, items, starredLimit = "starred_limit", asapItems = "asap_items" }
 
     init(date: String, timezone: String = "Asia/Kolkata", items: [PlannerTask], starredLimit: Int = 5) {
         self.date = date; self.timezone = timezone; self.items = items; self.starredLimit = starredLimit
@@ -117,6 +118,7 @@ struct DayView: Decodable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        asapItems = try c.decodeIfPresent([PlannerTask].self, forKey: .asapItems)
         date = try c.decode(String.self, forKey: .date)
         timezone = c.text(.timezone) ?? "Asia/Kolkata"
         items = try c.decode([PlannerTask].self, forKey: .items)

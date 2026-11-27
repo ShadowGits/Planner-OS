@@ -40,6 +40,7 @@ final class PlannerStore {
     @ObservationIgnored private var dayLoads: [String: (id: UUID, operation: Task<DayView, Error>)] = [:]
     @ObservationIgnored private var dayFetchedAt: [String: Date] = [:]
     private var refreshing = false
+    @ObservationIgnored private var syncingAppleASAP = false
 
     /// Writes still saving, counting the refresh after each; tests wait for 0.
     private(set) var writesInFlight = 0
@@ -164,7 +165,7 @@ final class PlannerStore {
         await refreshAll(quiet: true)
         guard !Task.isCancelled, connection == api.connection else { return }
         reminderSync?.cancel()
-        await Reminders.sync(api: api, timeZone: timeZone, overdue: focusOverdue)
+        await Reminders.sync(api: api, timeZone: timeZone, overdue: focusOverdue, asap: inbox?.asapItems)
     }
 
     /// Focus needs today's view even while Today shows another day.
@@ -225,7 +226,10 @@ final class PlannerStore {
         let started = revision
         do {
             let view: DayView = try await api.get("/v2/day/inbox")
-            if !Task.isCancelled, connection == api.connection, started == revision, unconfirmed == 0 { inbox = view }
+            if !Task.isCancelled, connection == api.connection, started == revision, unconfirmed == 0 {
+                inbox = view
+                await syncAppleASAP()
+            }
         } catch { if !quiet { report(error) } }
     }
 
@@ -649,6 +653,34 @@ final class PlannerStore {
     }
 
     /// Re-queues the coming week's reminders, once things settle.
+    func connectAppleASAP() async {
+        do {
+            try await AppleASAPReminders.shared.connect()
+            await syncAppleASAP()
+        } catch { report(error) }
+    }
+
+    private func syncAppleASAP() async {
+        guard !syncingAppleASAP, let open = inbox?.asapItems, let original = connection else { return }
+        syncingAppleASAP = true
+        defer { syncingAppleASAP = false }
+        do {
+            let closed = try await AppleASAPReminders.shared.reconcile(open, connection: original)
+            guard connection == original, !Task.isCancelled else { return }
+            for task in open where closed.contains(task.id) { await setDone(task, true) }
+        } catch { show("ASAP list sync failed. Existing reminders were kept.") }
+    }
+
+    func addASAP(_ title: String) async -> Bool {
+        guard let api else { return false }
+        do {
+            _ = try await api.send("POST", "/v2/day/asap", body: ["title": title])
+            await refreshInbox()
+            syncReminders()
+            return true
+        } catch { report(error); return false }
+    }
+
     func syncReminders() {
         guard let api, !ConnectionStore.isUITesting else { return }
         let zone = timeZone
@@ -657,7 +689,7 @@ final class PlannerStore {
         reminderSync = Task {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
-            await Reminders.sync(api: api, timeZone: zone, overdue: overdue)
+            await Reminders.sync(api: api, timeZone: zone, overdue: overdue, asap: self.inbox?.asapItems)
         }
     }
 

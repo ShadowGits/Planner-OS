@@ -194,6 +194,13 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
             raise HTTPException(status_code=400, detail={"code": "PLANNING_CONTEXT_INVALID", "message": str(error)}) from error
         return result
 
+    @api.post("/v2/day/asap", status_code=201)
+    def add_asap(body: DayTaskCreate, x_app_key: str | None = Header(default=None)):
+        _authorize(x_app_key)
+        if not body.title.strip():
+            raise HTTPException(status_code=400, detail="An ASAP item needs a name")
+        return _core().tasks.create_task(body.title, metadata={"asap": True})
+
     @api.get("/v2/day/inbox")
     def get_inbox(
         on_date: str | None = Query(default=None, alias="date"),
@@ -206,7 +213,7 @@ def register_day_routes(api: FastAPI, cloud: Any) -> None:
         except ValueError as error:
             raise HTTPException(status_code=400, detail={"code": "INBOX_DATE_INVALID", "message": str(error)}) from error
         attach_work_progress(data, core.repository)
-        return _envelope(True, "Inbox", {**data, "timezone": core.timezone})
+        return _envelope(True, "Inbox", {**data, "timezone": core.timezone, "asap_items": core.tasks.asap_items()})
 
     @api.get("/v2/week")
     def get_week(

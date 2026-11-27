@@ -24,11 +24,34 @@ enum Reminders {
 
     /// Reads the next seven days and replaces the queued reminders with them.
     /// When nothing could be read, the reminders already queued stay.
-    static func sync(api: PlannerAPI, timeZone: TimeZone, overdue: [RankedTask] = [], now: Date = Date()) async {
+    static func sync(api: PlannerAPI, timeZone: TimeZone, overdue: [RankedTask] = [], asap: [PlannerTask]? = nil, now: Date = Date()) async {
         let center = UNUserNotificationCenter.current()
         guard enabled else { center.removeAllPendingNotificationRequests(); return }
         let allowed = await status()
         guard allowed == .authorized || allowed == .provisional else { return }
+        let pending = await center.pendingNotificationRequests()
+        guard !Task.isCancelled, enabled, ConnectionStore.load() == api.connection else { return }
+        let asapID = "asap.four-hour"
+        // Preserve this repeating request across syncs so its four-hour timer
+        // cannot be postponed by the two-minute refresh loop or ordinary edits.
+        if let asap {
+            if asap.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: [asapID])
+                center.removeDeliveredNotifications(withIdentifiers: [asapID])
+            } else {
+                let body = "Your ASAP list still has unfinished items. Open Planner OS to review or close them."
+                if pending.first(where: { $0.identifier == asapID })?.content.body != body {
+                    let content = UNMutableNotificationContent()
+                    content.title = "ASAP · Still waiting"
+                    content.body = body
+                    content.threadIdentifier = "planner-asap"
+                    content.categoryIdentifier = "PLANNER_ASAP"
+                    content.sound = UNNotificationSound(named: UNNotificationSoundName("asap_reminder.wav"))
+                    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 4 * 60 * 60, repeats: true)
+                    try? await center.add(UNNotificationRequest(identifier: asapID, content: content, trigger: trigger))
+                }
+            }
+        }
         let start = Civil.today(in: timeZone, now: now)
         let dates = (0..<horizonDays).map { Civil.add(start, days: $0) }
         guard let days = try? await api.reminderDays(start: start) else { return }
@@ -37,7 +60,7 @@ enum Reminders {
         guard !Task.isCancelled, enabled, days.count == dates.count,
               ConnectionStore.load() == api.connection else { return }
         let zone = TimeZone(identifier: days[0].timezone) ?? timeZone
-        center.removeAllPendingNotificationRequests()
+        center.removePendingNotificationRequests(withIdentifiers: pending.filter { $0.identifier != asapID }.map(\.identifier))
         for reminder in planReminders(days, now: now, timeZone: zone) {
             try? await center.add(request(reminder, zone))
         }

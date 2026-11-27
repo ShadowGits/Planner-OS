@@ -405,6 +405,15 @@ class TaskService:
         # rather than every caller stitching two lists together.
         self.habits = habits or HabitService(repository, timezone)
 
+    def asap_items(self) -> list[dict[str, Any]]:
+        """Only open ASAP tasks, across all dates; never full planner history."""
+        return self.repository.list_rows(
+            "planner_tasks", {"metadata->>asap": True, "status": ["todo", "in_progress", "blocked"]},
+            query_string="order=created_at.asc,id.asc",
+            columns="id,title,status,scheduled_date,start_time,estimated_minutes,created_at",
+            strict=True,
+        )
+
     def create_task(
         self,
         title: str,
