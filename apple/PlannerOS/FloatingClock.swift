@@ -31,6 +31,12 @@ final class FloatingClock: NSObject {
             self.store = store
             NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
                                                    name: UserDefaults.didChangeNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
+                                                   name: NSApplication.didChangeScreenParametersNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
+                                                   name: NSApplication.didBecomeActiveNotification, object: nil)
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(defaultsChanged),
+                                                              name: NSWorkspace.didWakeNotification, object: nil)
             // PlannerStore owns the single bounded network loop, even without a window.
         }
         update()
@@ -60,6 +66,7 @@ final class FloatingClock: NSObject {
         self.panel = panel
         let size = Self.size(small: small)
         if panel.frame.size != size { panel.resize(to: size) }
+        panel.ensureOnScreen()
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 
@@ -93,6 +100,12 @@ final class FloatingClock: NSObject {
         }
         // Saved on the drop rather than autosaved, which writes defaults on every step of a drag.
         panel.dropped = { $0.saveFrame(usingName: Self.frameName) }
+        #if DEBUG
+        if ConnectionStore.isUITesting,
+           let raw = ProcessInfo.processInfo.environment["PLANNER_UI_TEST_CLOCK_FRAME"] {
+            panel.setFrame(NSRectFromString(raw), display: false)
+        }
+        #endif
         return panel
     }
 
@@ -131,6 +144,15 @@ private final class ClockPanel: NSPanel {
     private static let slop: CGFloat = 4
 
     override var canBecomeMain: Bool { false }
+
+    /// Display rearrangements can strand a visible panel outside every screen.
+    /// Recover on wake/activation as well as display changes; keep valid drops.
+    func ensureOnScreen() {
+        guard !NSScreen.screens.contains(where: { $0.visibleFrame.contains(frame) }) else { return }
+        let before = frame
+        settle()
+        if frame != before { dropped?(self) }
+    }
 
     /// Big to small and back about its top right corner, which is where it sits
     /// unless moved, and still wholly on screen.

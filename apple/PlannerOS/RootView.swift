@@ -21,6 +21,8 @@ struct RootView: View {
     @State private var screen: Screen = .timeline
     @State private var editor: EditorRequest?
     @State private var showMilestones = false
+    @State private var timelineOpening = UUID()
+    @State private var needsCurrentTimeOnActivation = true
     /// Whether a held task is over the bin; the timeline says, as it tracks the drag.
     @State private var overBin = false
 
@@ -35,7 +37,7 @@ struct RootView: View {
                         case .focus:
                             NavigationStack { FocusView(screen: $screen, editor: $editor).toolbar { focusToolbar } }
                         case .timeline:
-                            NavigationStack { TodayView(editor: $editor, overBin: $overBin) }
+                            NavigationStack { TodayView(editor: $editor, overBin: $overBin, opening: timelineOpening) }
                         case .settings:
                             NavigationStack { SettingsView(firstRun: false) }
                         }
@@ -71,18 +73,39 @@ struct RootView: View {
         .onChange(of: store.connection, initial: true) {
             FloatingClock.shared.attach(store: store)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            openAtCurrentTime()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { notification in
+            guard let window = notification.object as? NSWindow, window.canBecomeMain else { return }
+            openAtCurrentTime()
+        }
         #endif
         .task { await store.start() }
         .task { await tick() }
+        .onAppear { openAtCurrentTime() }
         .onChange(of: phase) { _, phase in
             if phase == .active {
                 store.now = Date()
+                if needsCurrentTimeOnActivation { openAtCurrentTime() }
                 Task { await store.refreshIfStale() }
             }
+            if phase == .background { needsCurrentTimeOnActivation = true }
             #if os(iOS)
             if phase == .background, store.connection != nil, !ConnectionStore.isUITesting { BackgroundRefresh.schedule() }
             #endif
         }
+    }
+
+    private func openAtCurrentTime() {
+        needsCurrentTimeOnActivation = false
+        store.now = Date()
+        // Returning must not discard a task being edited or a pending action.
+        guard store.connection != nil, editor == nil, !showMilestones,
+              store.confirmingDelete == nil, store.draggingID == nil else { return }
+        store.selectedDate = store.calendarToday
+        screen = .timeline
+        timelineOpening = UUID()
     }
 
     private var deleteQuestion: String {

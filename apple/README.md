@@ -4,6 +4,9 @@ One SwiftUI app for all three, built from Xcode with a free Apple account.
 It talks to the same backend as Android, with the same app key.
 
 * **Timeline** (opens first): one scroll from 14 days back to 60 ahead, opening at now.
+  * Opening or returning to the app shows today's actual clock time, rather
+    than the date and position left on screen. An open task editor or pending
+    confirmation stays open. Picking dates and scrolling during use still work.
   * **Days end at midnight.** A task at 01:30 is under the next date at 01:30 and
     nowhere else. Each day starts at a thick line with its date in bold, then its
     untimed tasks on a line each, then its hours.
@@ -55,6 +58,9 @@ It talks to the same backend as Android, with the same app key.
   anywhere. The button in its corner (or ⋯ / Window, Small Floating Clock) shrinks
   it to a slim pill with the countdown, the task and its tick, and back. Turn it
   off in ⋯ or Window, Floating Clock (⇧⌘K).
+  If displays move or disconnect, the clock returns wholly onto a connected
+  screen when displays change, the Mac wakes, or Planner OS becomes active.
+  Compact/full-size preference and valid saved positions are preserved.
 * **Settings**: server, app key and reminders, and a line saying why a reminder
   would arrive in silence — notifications off, sounds off, or the file missing.
 * The bottom is a floating pill (Inbox · Timeline · Settings) with a round **+** beside it (⌘N on iPad keyboards and Mac).

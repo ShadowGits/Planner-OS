@@ -18,6 +18,40 @@ final class TimelineTests: PlannerScreenTests {
         XCTAssertTrue(now.frame.midY > area.minY && now.frame.midY < area.maxY, "now is not on screen")
     }
 
+    private func returnToApp() {
+        #if os(macOS)
+        XCUIApplication(bundleIdentifier: "com.apple.finder").activate()
+        #else
+        XCUIDevice.shared.press(.home)
+        #endif
+        settle()
+        app.activate()
+    }
+
+    func testReturningToAppOpensAtCurrentTimeInsteadOfLastScrolledDay() throws {
+        launch(at: nil)
+        for _ in 0..<6 { scroll(by: 420) }
+        XCTAssertFalse(tile.label.contains(tileWords(today)), "the test never scrolled away")
+        returnToApp()
+        waitForTile(today, "returning to the app opens today")
+        let now = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Now, '")).firstMatch
+        eventually("the current time is visible after returning") {
+            guard now.exists else { return false }
+            let area = app.scrollViews["timeline"].firstMatch.frame
+            return now.frame.midY > area.minY && now.frame.midY < area.maxY - 72
+        }
+    }
+
+    func testReturningToAppPreservesAnOpenTaskEditor() throws {
+        try server.create("Keep editing", date: today, time: "09:30", minutes: 30)
+        launch()
+        open("Keep editing")
+        XCTAssertTrue(editorButton.waitForExistence(timeout: 5))
+        returnToApp()
+        XCTAssertTrue(editorButton.waitForExistence(timeout: 5), "returning dismissed the editor")
+        closeEditor()
+    }
+
     func testScrollsAcrossDaysAndTheTileFollows() throws {
         for offset in -1...3 { try server.create("Task on day \(offset)", date: day(offset), time: "09:00", minutes: 60) }
         launch()

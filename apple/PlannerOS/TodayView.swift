@@ -96,6 +96,7 @@ struct TodayView: View {
     @Environment(PlannerStore.self) private var store
     @Binding var editor: EditorRequest?
     @Binding var overBin: Bool
+    var opening: UUID
     /// The day as a plain list instead of the timeline; remembered between launches.
     @AppStorage("day_list") private var listView = false
     #if os(macOS)
@@ -132,6 +133,13 @@ struct TodayView: View {
         .onAppear {
             picked = store.selectedDate
             if store.selectedDate == today { openAtNow(today) } else { go(to: store.selectedDate) }
+        }
+        .onChange(of: opening) {
+            endDrag()
+            session.swipe = nil
+            picked = store.calendarToday
+            store.selectedDate = store.calendarToday
+            openAtNow(store.calendarToday)
         }
         .alert(menuTask?.title ?? "", isPresented: Binding(get: { menuTask != nil }, set: { if !$0 { menuTask = nil } }),
                presenting: menuTask) { task in

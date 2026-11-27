@@ -1,13 +1,15 @@
 #if os(macOS)
 import XCTest
+import AppKit
 
 @MainActor
 final class FloatingClockTests: PlannerScreenTests {
-    private func launchClock() {
+    private func launchClock(frame: String? = nil) {
         app = XCUIApplication()
         app.launchEnvironment["PLANNER_UI_TEST_SERVER"] = server.base
         app.launchEnvironment["PLANNER_UI_TEST_KEY"] = server.key
         app.launchEnvironment["PLANNER_UI_TEST_CLOCK"] = "1"
+        if let frame { app.launchEnvironment["PLANNER_UI_TEST_CLOCK_FRAME"] = frame }
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         app.launch()
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
@@ -19,6 +21,23 @@ final class FloatingClockTests: PlannerScreenTests {
     }
     private var shrink: XCUIElement { clock.buttons["Make the clock small"] }
     private var expand: XCUIElement { clock.buttons["Show the full clock"] }
+
+    func testClockRecoversAnOffscreenFrameWithoutChangingCompactPreference() {
+        launchClock(frame: "{{10000, 10000}, {268, 40}}")
+        let beganSmall = expand.exists
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        eventually("the clock is wholly on a connected display") {
+            let frame = self.clock.frame
+            return NSScreen.screens.contains { screen in
+                let area = screen.visibleFrame
+                let visible = CGRect(x: area.minX, y: top - area.maxY, width: area.width, height: area.height)
+                return visible.insetBy(dx: -2, dy: -2).contains(frame)
+            }
+        }
+        app.terminate()
+        launchClock()
+        XCTAssertEqual(expand.exists, beganSmall, "recovery changed the compact preference")
+    }
 
     func testClockShrinksAndExpandsWithoutLosingItsPosition() {
         launchClock()
